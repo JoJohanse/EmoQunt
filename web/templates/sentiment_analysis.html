@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f2f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .nav {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .nav a {
+            margin-right: 15px;
+            text-decoration: none;
+            color: #007bff;
+        }
+        .nav a:hover {
+            text-decoration: underline;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #0069d9;
+        }
+        .info-box {
+            background-color: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav">
+            <a href="/">首页</a>
+            <a href="/backtest">回测</a>
+            <a href="/strategies">策略列表</a>
+            <a href="/sentiment">舆情分析</a>
+        </div>
+        
+        <h1>{{ title }}</h1>
+        
+        <div class="info-box">
+            <h3>功能说明</h3>
+            <p>本功能基于 TrendRadar 工具获取实时热点舆论数据，分析当日舆情情绪，并生成相应的交易信号。</p>
+            <p>情绪因子范围：-1（极度负面）到 1（极度正面）</p>
+            <p>交易信号：</p>
+            <ul>
+                <li>情绪得分 > 0.3: 买入信号</li>
+                <li>情绪得分 < -0.3: 卖出信号</li>
+                <li>其他: 持有信号</li>
+            </ul>
+        </div>
+        
+        <form action="/analyze_sentiment" method="post">
+            <div class="form-group">
+                <label for="strategy">选择策略：</label>
+                <select id="strategy" name="strategy" class="form-control">
+                    {% for strategy in strategies %}
+                    <option value="{{ strategy }}">{{ strategy }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="stock_code">股票代码：</label>
+                <input type="text" id="stock_code" name="stock_code" value="000001" class="form-control">
+            </div>
+            <div class="form-group">
+                <p>点击下方按钮开始分析当日舆情：</p>
+                <button type="submit" class="btn btn-primary">开始分析</button>
+            </div>
+        </form>
+    </div>
+</body>
+</html>

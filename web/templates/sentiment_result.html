@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f2f5;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .nav {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .nav a {
+            margin-right: 15px;
+            text-decoration: none;
+            color: #007bff;
+        }
+        .nav a:hover {
+            text-decoration: underline;
+        }
+        .result-box {
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .result-item {
+            margin-bottom: 10px;
+        }
+        .result-label {
+            font-weight: bold;
+            display: inline-block;
+            width: 150px;
+        }
+        .signal {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .signal-buy {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .signal-sell {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .signal-hold {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        .chart-container {
+            margin: 20px 0;
+            text-align: center;
+        }
+        .chart-container img {
+            max-width: 100%;
+            border-radius: 4px;
+        }
+        .news-section {
+            margin-top: 30px;
+        }
+        .news-item {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        .news-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .news-source {
+            font-size: 12px;
+            color: #6c757d;
+        }
+        .back-button {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 10px 20px;
+            background-color: #6c757d;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+        }
+        .back-button:hover {
+            background-color: #5a6268;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav">
+            <a href="/">首页</a>
+            <a href="/backtest">回测</a>
+            <a href="/strategies">策略列表</a>
+            <a href="/sentiment">舆情分析</a>
+        </div>
+        
+        <h1>{{ title }}</h1>
+        
+        <div class="result-box">
+            <h2>分析结果</h2>
+            <div class="result-item">
+                <span class="result-label">分析时间:</span>
+                {{ sentiment_result.timestamp }}
+            </div>
+            <div class="result-item">
+                <span class="result-label">选择策略:</span>
+                {{ sentiment_result.strategy or '默认策略' }}
+            </div>
+            <div class="result-item">
+                <span class="result-label">股票代码:</span>
+                {{ sentiment_result.stock_code or '000001' }}
+            </div>
+            <div class="result-item">
+                <span class="result-label">所属行业:</span>
+                {{ sentiment_result.stock_sector or '未知' }}
+            </div>
+            <div class="result-item">
+                <span class="result-label">情绪权重:</span>
+                {{ "%.2f"|format(sentiment_result.sentiment_weight or 0.3) }}
+            </div>
+            <div class="result-item">
+                <span class="result-label">原始情绪得分:</span>
+                {{ "%.2f"|format(sentiment_result.sentiment_score) }}
+            </div>
+            <div class="result-item">
+                <span class="result-label">调整后得分:</span>
+                {{ "%.2f"|format((sentiment_result.sentiment_score * (sentiment_result.sentiment_weight or 0.3))) }}
+            </div>
+            <div class="result-item">
+                <span class="result-label">交易信号:</span>
+                {% if sentiment_result.signal == 'buy' %}
+                <span class="signal signal-buy">买入</span>
+                {% elif sentiment_result.signal == 'sell' %}
+                <span class="signal signal-sell">卖出</span>
+                {% else %}
+                <span class="signal signal-hold">持有</span>
+                {% endif %}
+            </div>
+            <div class="result-item">
+                <span class="result-label">分析新闻数:</span>
+                {{ sentiment_result.analysis_result.total_news }}
+            </div>
+            <div class="result-item">
+                <span class="result-label">正面新闻:</span>
+                {{ sentiment_result.analysis_result.positive_count }}
+            </div>
+            <div class="result-item">
+                <span class="result-label">负面新闻:</span>
+                {{ sentiment_result.analysis_result.negative_count }}
+            </div>
+            <div class="result-item">
+                <span class="result-label">中性新闻:</span>
+                {{ sentiment_result.analysis_result.neutral_count }}
+            </div>
+        </div>
+        
+        <div class="chart-container">
+            <h3>情绪分布</h3>
+            {% if sentiment_chart_url %}
+            <img src="{{ sentiment_chart_url }}" alt="情绪分布图表">
+            {% else %}
+            <p>图表生成失败</p>
+            {% endif %}
+        </div>
+        
+        <div class="news-section">
+            <h3>最新舆情</h3>
+            {% if news_data %}
+            {% for news in news_data %}
+            <div class="news-item">
+                <div class="news-title">{{ news.title }}</div>
+                <div class="news-source">来源: {{ news.source }} | 日期: {{ news.date }}</div>
+            </div>
+            {% endfor %}
+            {% else %}
+            <p>暂无舆情数据</p>
+            {% endif %}
+        </div>
+        
+        <a href="/sentiment" class="back-button">返回分析页面</a>
+    </div>
+</body>
+</html>

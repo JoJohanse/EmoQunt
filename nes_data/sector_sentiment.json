@@ -1,0 +1,153 @@
+{
+  "date": "2026-02-04",
+  "time": "14:53:27",
+  "sectors": {
+    "住宿和餐饮业": {
+      "score": 0.23529411764705882,
+      "positive": 10,
+      "negative": 6,
+      "neutral": 1,
+      "total": 17
+    },
+    "建筑业": {
+      "score": 0.4444444444444444,
+      "positive": 6,
+      "negative": 2,
+      "neutral": 1,
+      "total": 9
+    },
+    "制造业": {
+      "score": 0.5081967213114753,
+      "positive": 173,
+      "negative": 49,
+      "neutral": 22,
+      "total": 244
+    },
+    "金融业": {
+      "score": 0.630718954248366,
+      "positive": 236,
+      "negative": 43,
+      "neutral": 27,
+      "total": 306
+    },
+    "农、林、牧、渔业": {
+      "score": 0.7941176470588235,
+      "positive": 29,
+      "negative": 2,
+      "neutral": 3,
+      "total": 34
+    },
+    "信息传输、软件和信息技术服务业": {
+      "score": 0.5546218487394958,
+      "positive": 90,
+      "negative": 24,
+      "neutral": 5,
+      "total": 119
+    },
+    "房地产业": {
+      "score": 0.39583333333333337,
+      "positive": 31,
+      "negative": 12,
+      "neutral": 5,
+      "total": 48
+    },
+    "文化、体育和娱乐业": {
+      "score": 0.6703296703296704,
+      "positive": 148,
+      "negative": 26,
+      "neutral": 8,
+      "total": 182
+    },
+    "公共管理、社会保障和社会组织": {
+      "score": 0.5384615384615384,
+      "positive": 28,
+      "negative": 7,
+      "neutral": 4,
+      "total": 39
+    },
+    "租赁和商务服务业": {
+      "score": 0.6046511627906976,
+      "positive": 32,
+      "negative": 6,
+      "neutral": 5,
+      "total": 43
+    },
+    "交通运输、仓储和邮政业": {
+      "score": 0.5,
+      "positive": 24,
+      "negative": 7,
+      "neutral": 3,
+      "total": 34
+    },
+    "电力、热力、燃气及水生产和供应业": {
+      "score": 0.9230769230769231,
+      "positive": 12,
+      "negative": 0,
+      "neutral": 1,
+      "total": 13
+    },
+    "水利、环境和公共设施管理业": {
+      "score": 0.9,
+      "positive": 9,
+      "negative": 0,
+      "neutral": 1,
+      "total": 10
+    },
+    "居民服务、修理和其他服务业": {
+      "score": 0.21875,
+      "positive": 19,
+      "negative": 12,
+      "neutral": 1,
+      "total": 32
+    },
+    "批发和零售业": {
+      "score": 0.380952380952381,
+      "positive": 27,
+      "negative": 11,
+      "neutral": 4,
+      "total": 42
+    },
+    "卫生和社会工作": {
+      "score": 0.23529411764705888,
+      "positive": 21,
+      "negative": 13,
+      "neutral": 0,
+      "total": 34
+    },
+    "教育": {
+      "score": 0.07142857142857145,
+      "positive": 7,
+      "negative": 6,
+      "neutral": 1,
+      "total": 14
+    },
+    "采矿业": {
+      "score": 0.52,
+      "positive": 17,
+      "negative": 4,
+      "neutral": 4,
+      "total": 25
+    },
+    "国际关系与地缘政治": {
+      "score": 1.0,
+      "positive": 1,
+      "negative": 0,
+      "neutral": 0,
+      "total": 1
+    },
+    "科学研究和技术服务业": {
+      "score": 0.75,
+      "positive": 7,
+      "negative": 1,
+      "neutral": 0,
+      "total": 8
+    },
+    "专用设备制造业": {
+      "score": 1.0,
+      "positive": 1,
+      "negative": 0,
+      "neutral": 0,
+      "total": 1
+    }
+  }
+}
