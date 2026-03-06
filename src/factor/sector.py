@@ -14,12 +14,9 @@ class StockSectorMapper:
         """
         self.stock_sector_map = self._load_stock_sector_map()
     
-    def _load_stock_sector_map(self) -> Dict[str, str]:
-        """
-        加载股票行业映射数据
-        
-        Returns:
-            Dict[str, str]: 股票代码到行业的映射
+    def _load_stock_sector_map(self):
+        f"""
+        加载股票行业映射数据,股票代码到股票信息的映射
         """
         stock_sector_map = {}
         
@@ -32,14 +29,30 @@ class StockSectorMapper:
                 reader = csv.DictReader(f)
                 for row in reader:
                     stock_code = row['股票代码'].strip()
+                    stock_name = row['股票简称'].strip()
                     sector = row['行业'].strip()
-                    stock_sector_map[stock_code] = sector
-            
+                    stock_sector_map[stock_code] = {"name": stock_name, "sector": sector}
             print(f"成功加载 {len(stock_sector_map)} 只股票的行业信息")
         except Exception as e:
             print(f"加载股票行业映射失败: {e}")
-        
+
         return stock_sector_map
+    
+    def get_info_by_code(self, stock_code: str) -> Optional[Dict[str, str]]:
+        """
+        根据股票代码获取所属行业
+        
+        Args:
+            stock_code: 股票代码
+            
+        Returns:
+            Optional[Dict[str, str]]: 股票信息，包含行业和名称，如果未找到返回 None
+        """
+        # 去除可能的后缀，如 "000001.SZ" 或 "600000.SH"
+        stock_code = stock_code.split('.')[0]
+        stock_info = self.stock_sector_map.get(stock_code, None)
+        
+        return stock_info
     
     def get_sector_by_code(self, stock_code: str) -> Optional[str]:
         """
@@ -51,9 +64,8 @@ class StockSectorMapper:
         Returns:
             Optional[str]: 行业名称，如果未找到返回 None
         """
-        # 去除可能的后缀，如 "000001.SZ" 或 "600000.SH"
-        stock_code = stock_code.split('.')[0]
-        return self.stock_sector_map.get(stock_code)
+        stock_info = self.get_info_by_code(stock_code)
+        return stock_info.get("sector") if stock_info else None
     
     def is_hs300_stock(self, stock_code: str) -> bool:
         """

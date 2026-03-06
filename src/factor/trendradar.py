@@ -216,18 +216,20 @@ def get_trendradar_sentiment():
         logger.warning("没有获取到新闻数据，无法进行情绪分析")
         return {
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'sentiment_score': 0.0,
+            'sentiment_scores': [0.0] * 64,
+            'average_score': 0.0,
             'analysis_result': {
                 'total_news': 0,
-                'positive_count': 0,
-                'negative_count': 0,
-                'neutral_count': 0,
+                'positive_industry_count': 0,
+                'negative_industry_count': 0,
+                'neutral_industry_count': 64,
                 'average_score': 0.0,
                 'score_distribution': {
                     'positive': 0,
                     'negative': 0,
-                    'neutral': 0
-                }
+                    'neutral': 1.0
+                },
+                'industry_details': []
             },
             'signal': 'hold'
         }

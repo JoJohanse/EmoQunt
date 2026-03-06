@@ -3683,3 +3683,4 @@ stock_data/zh_a/688981/qfq/daily/688981_qfq_daily_20200101_20241231.csv
 stock_data/zh_a/688981/qfq/daily/688981_qfq_daily_factor.csv
 stock_data/zh_a/688981/qfq/minute/688981_qfq_minute_factor.csv
 stock_data/zh_a/688981/qfq/minute/688981_qfq_minute.csv
+.env

@@ -1,9 +1,14 @@
 import os
+from dotenv import load_dotenv
 import re
 from typing import List, Dict, Tuple
 from datetime import datetime
 import numpy as np
-import json
+from sector import StockSectorMapper
+# llm #
+from openai import OpenAI
+# 加载环境变量
+load_dotenv()
 
 
 class SentimentAnalyzer:
@@ -11,7 +16,7 @@ class SentimentAnalyzer:
     情绪分析器 - 基于关键词的情感分析
     """
     
-    def __init__(self):
+    def __init__(self, debug: bool = False, model: str = "Qwen/Qwen3-235B-A22B-Instruct-2507", base_url: str = "https://api.siliconflow.cn/v1", api_key: str = os.environ["DASHSCOPE_API_KEY"]):
         """
         初始化情绪分析器
         """
@@ -60,100 +65,168 @@ class SentimentAnalyzer:
             '减持': 0.7,
             '警告': 0.8
         }
+        self.stock_mapper = StockSectorMapper()
+        
+        # 初始化llm
+        self.client = OpenAI(
+            # 示例为阿里云，根据实际情况更改
+            api_key=api_key,
+            # base_url="https://dashscope.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1",
+            base_url=base_url
+        )
+        self.model = model
+        self.debug = debug
     
     def analyze_sentiment(self, text: str) -> float:
         """
         分析文本的情感倾向
         
         Args:
-            text: 要分析的文本
+            text: 分析的新闻文本
+            stock_code: 股票代码
             
         Returns:
-            float: 情绪得分，范围从 -1（极度负面）到 1（极度正面）
+            float: 该股票对于输入新闻的情绪得分，范围从 -1（极度负面）到 1（极度正面）
         """
-        if not text:
-            return 0.0
+        # 获取股票信息
+        # stock_info = self.stock_mapper.get_info_by_code(stock_code)
+        # stock_name = stock_info.get("name")
+        # sector = stock_info.get("sector")
+        prompt = f"""
+        新闻文本：{text}
+        行业种类：
+        '装修建材','能源金属','石油行业','消费电子','电力行业','小金属','电池','工程建设',
+        '燃气','银行','航运港口','家电行业','通信设备','汽车零部件','航天航空','文化传媒',
+        '纺织服装','汽车整车','煤炭行业','交运设备','化学原料','化纤行业','电网设备','软件开发',
+        '行业','光伏设备','医疗器械','有色金属','通信服务','多元金融','医药商业','美容护理',
+        '橡胶制品','食品饮料','中药','贵金属','证券','商业百货','化肥行业','电子元件','化学制品',
+        '铁路公路','医疗服务','家用轻工','水泥建材','半导体','农牧饲渔','酿酒行业','工程机械',
+        '房地产开发','非金属材料','船舶制造','计算机设备','玻璃玻纤','化学制药','电源设备',
+        '航空机场','钢铁行业','旅游酒店','物流行业','保险','生物制品','光学光电子','互联网服务'
+        请返回一个浮点数列表，每个浮点数范围从 -1（极度负面）到 1（极度正面），列表长度为64。表示输入新闻对上列64个行业种类的情绪影响，
+        你只需返回列表，不需要其他解释。
+        """
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": "你是一个专业的金融情绪分析器，你的任务是根据提供的股票以及其所属行业，分析以下新闻文本对该股票的情感倾向。"},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.75
+        )
+        # 解析llm返回的结果
+        content = response.choices[0].message.content.strip()
+        if self.debug:
+            print(content)
+        try:
+            # 提取列表中的浮点数
+            scores = [float(x) for x in content.strip('[]').split(',')]
+            scores = [max(-1.0, min(1.0, score)) for score in scores]
+        except ValueError:
+            scores = [0.0] * 64
         
-        # 计算正面得分
-        positive_score = 0.0
-        for word, weight in self.positive_words.items():
-            if word in text:
-                positive_score += weight
+        return scores
         
-        # 计算负面得分
-        negative_score = 0.0
-        for word, weight in self.negative_words.items():
-            if word in text:
-                negative_score += weight
-        
-        # 计算总得分
-        total_score = positive_score - negative_score
-        
-        # 归一化到 -1 到 1 之间
-        max_possible = max(sum(self.positive_words.values()), sum(self.negative_words.values()))
-        if max_possible > 0:
-            normalized_score = total_score / max_possible
-            # 确保在 -1 到 1 之间
-            return max(-1.0, min(1.0, normalized_score))
-        
-        return 0.0
-    
     def analyze_news_list(self, news_list: List[Dict]) -> Tuple[float, Dict]:
         """
-        分析新闻列表的整体情感倾向
+        分析新闻列表的整体情感倾向，按行业计算情感得分
         
         Args:
             news_list: 新闻数据列表，每个元素包含 'title' 和 'content' 字段
             
         Returns:
-            Tuple[float, Dict]: (整体情绪得分, 详细分析结果)
+            Tuple[list[float], Dict]: 
+                - list[float]: 整体各行业的平均情感得分列表（每个元素范围从 -1 到 1）
+                - Dict: 详细分析结果，包含以下字段：
+                    - total_news: 处理的总新闻数
+                    - positive_industry_count: 正面行业数（得分>0.1）
+                    - negative_industry_count: 负面行业数（得分<-0.1）
+                    - neutral_industry_count: 中性行业数（得分在-0.1到0.1之间）
+                    - average_score: 整体平均得分
+                    - score_distribution: 情感分布比例
+                        - positive: 正面行业占比
+                        - negative: 负面行业占比
+                        - neutral: 中性行业占比
+                    - industry_details: 各行业详细分析列表，每个元素包含：
+                        - industry: 行业名称
+                        - score: 该行业的情感得分（-1到1之间）
+                        - sentiment: 情感分类（'positive'/'negative'/'neutral'）
         """
         if not news_list:
-            return 0.0, {'total_news': 0, 'positive_count': 0, 'negative_count': 0, 'neutral_count': 0}
+            return [0.0] * 64, {
+                'total_news': 0,
+                'positive_industry_count': 0,
+                'negative_industry_count': 0,
+                'neutral_industry_count': 64,
+                'average_score': 0.0,
+                'score_distribution': {
+                    'positive': 0.0,
+                    'negative': 0.0,
+                    'neutral': 1.0
+                },
+                'industry_details': []
+            }
         
-        scores = []
-        positive_count = 0
-        negative_count = 0
-        neutral_count = 0
+        industry_names = [
+            '装修建材','能源金属','石油行业','消费电子','电力行业','小金属','电池','工程建设',
+            '燃气','银行','航运港口','家电行业','通信设备','汽车零部件','航天航空','文化传媒',
+            '纺织服装','汽车整车','煤炭行业','交运设备','化学原料','化纤行业','电网设备','软件开发',
+            '行业','光伏设备','医疗器械','有色金属','通信服务','多元金融','医药商业','美容护理',
+            '橡胶制品','食品饮料','中药','贵金属','证券','商业百货','化肥行业','电子元件','化学制品',
+            '铁路公路','医疗服务','家用轻工','水泥建材','半导体','农牧饲渔','酿酒行业','工程机械',
+            '房地产开发','非金属材料','船舶制造','计算机设备','玻璃玻纤','化学制药','电源设备',
+            '航空机场','钢铁行业','旅游酒店','物流行业','保险','生物制品','光学光电子','互联网服务'
+        ]
+        
+        total_scores = [0.0] * 64
+        total_news = len(news_list)
         
         for news in news_list:
-            # 组合标题和内容进行分析
             text = news.get('title', '') + ' ' + news.get('content', '')
-            score = self.analyze_sentiment(text)
-            scores.append(score)
+            scores = self.analyze_sentiment(text)
             
-            # 统计情绪分布
+            for i in range(64):
+                total_scores[i] += scores[i]
+        
+        avg_scores = [score / total_news for score in total_scores]
+        
+        positive_count = sum(1 for score in avg_scores if score > 0.1)
+        negative_count = sum(1 for score in avg_scores if score < -0.1)
+        neutral_count = 64 - positive_count - negative_count
+        
+        average_score = sum(avg_scores) / 64
+        
+        industry_details = []
+        for i, score in enumerate(avg_scores):
             if score > 0.1:
-                positive_count += 1
+                sentiment = 'positive'
             elif score < -0.1:
-                negative_count += 1
+                sentiment = 'negative'
             else:
-                neutral_count += 1
-        
-        # 计算平均情绪得分
-        if scores:
-            average_score = sum(scores) / len(scores)
-        else:
-            average_score = 0.0
-        
-        # 确保在 -1 到 1 之间
-        average_score = max(-1.0, min(1.0, average_score))
+                sentiment = 'neutral'
+            
+            industry_details.append({
+                'industry': industry_names[i],
+                'score': score,
+                'sentiment': sentiment
+            })
         
         analysis_result = {
-            'total_news': len(news_list),
-            'positive_count': positive_count,
-            'negative_count': negative_count,
-            'neutral_count': neutral_count,
+            'total_news': total_news,
+            'positive_industry_count': positive_count,
+            'negative_industry_count': negative_count,
+            'neutral_industry_count': neutral_count,
             'average_score': average_score,
             'score_distribution': {
-                'positive': positive_count / len(news_list) if news_list else 0,
-                'negative': negative_count / len(news_list) if news_list else 0,
-                'neutral': neutral_count / len(news_list) if news_list else 0
-            }
+                'positive': positive_count / 64,
+                'negative': negative_count / 64,
+                'neutral': neutral_count / 64
+            },
+            'industry_details': industry_details
         }
         
-        return average_score, analysis_result
-
+        return avg_scores, analysis_result
+    
 
 def calculate_sentiment_factor(news_list: List[Dict]) -> Dict:
     """
@@ -166,14 +239,18 @@ def calculate_sentiment_factor(news_list: List[Dict]) -> Dict:
         Dict: 情绪因子结果
     """
     analyzer = SentimentAnalyzer()
-    sentiment_score, analysis_result = analyzer.analyze_news_list(news_list)
+    sentiment_scores, analysis_result = analyzer.analyze_news_list(news_list)
+    
+    # 使用整体平均得分生成交易信号
+    average_score = analysis_result['average_score']
     
     # 生成情绪因子
     sentiment_factor = {
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'sentiment_score': sentiment_score,
+        'sentiment_scores': sentiment_scores,
+        'average_score': average_score,
         'analysis_result': analysis_result,
-        'signal': generate_trading_signal(sentiment_score)
+        'signal': generate_trading_signal(average_score)
     }
     
     return sentiment_factor

@@ -143,11 +143,11 @@
             </div>
             <div class="result-item">
                 <span class="result-label">原始情绪得分:</span>
-                {{ "%.2f"|format(sentiment_result.sentiment_score) }}
+                {{ "%.2f"|format(sentiment_result.average_score) }}
             </div>
             <div class="result-item">
                 <span class="result-label">调整后得分:</span>
-                {{ "%.2f"|format((sentiment_result.sentiment_score * (sentiment_result.sentiment_weight or 0.3))) }}
+                {{ "%.2f"|format((sentiment_result.average_score * (sentiment_result.sentiment_weight or 0.3))) }}
             </div>
             <div class="result-item">
                 <span class="result-label">交易信号:</span>

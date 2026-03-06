@@ -520,7 +520,7 @@ async def analyze_sentiment(
                     logger.error(f"获取策略 {strategy} 参数时出错: {e}")
             
             # 基于策略的情绪权重调整信号
-            adjusted_score = sentiment_result['sentiment_score'] * sentiment_weight
+            adjusted_score = sentiment_result['average_score'] * sentiment_weight
             
             # 生成调整后的交易信号
             if adjusted_score > 0.3:
@@ -536,7 +536,7 @@ async def analyze_sentiment(
             sentiment_result['stock_sector'] = stock_sector
             sentiment_result['sentiment_weight'] = sentiment_weight
         
-        logger.info(f"舆情分析完成 - 情绪得分: {sentiment_result['sentiment_score']}, 调整后得分: {adjusted_score}, 信号: {sentiment_result['signal']}, 行业: {stock_sector}")
+        logger.info(f"舆情分析完成 - 情绪得分: {sentiment_result['average_score']}, 调整后得分: {adjusted_score}, 信号: {sentiment_result['signal']}, 行业: {stock_sector}")
         
         # 生成固定的时间戳
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
