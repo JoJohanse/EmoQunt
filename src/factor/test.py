@@ -1,7 +1,7 @@
 import sentiment,trendradar
 import os
 
-analyzer = sentiment.SentimentAnalyzer()
+analyzer = sentiment.SentimentAnalyzer(debug=True)
 news_list = trendradar.get_latest_trendradar_data()
 if news_list:
     # 分析新闻列表

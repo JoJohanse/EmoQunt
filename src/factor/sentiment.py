@@ -103,7 +103,7 @@ class SentimentAnalyzer:
         '铁路公路','医疗服务','家用轻工','水泥建材','半导体','农牧饲渔','酿酒行业','工程机械',
         '房地产开发','非金属材料','船舶制造','计算机设备','玻璃玻纤','化学制药','电源设备',
         '航空机场','钢铁行业','旅游酒店','物流行业','保险','生物制品','光学光电子','互联网服务'
-        请返回一个浮点数列表，每个浮点数范围从 -1（极度负面）到 1（极度正面），列表长度为64。表示输入新闻对上列64个行业种类的情绪影响，
+        请返回一个浮点数列表，每个浮点数范围从 -1（极度负面）到 1（极度正面），列表长度总是为64。表示输入新闻对上列64个行业种类的情绪影响，
         你只需返回列表，不需要其他解释。
         """
         response = self.client.chat.completions.create(
@@ -122,12 +122,18 @@ class SentimentAnalyzer:
             # 提取列表中的浮点数
             scores = [float(x) for x in content.strip('[]').split(',')]
             scores = [max(-1.0, min(1.0, score)) for score in scores]
+            # 确保列表长度为64
+            if len(scores) != 64:
+                if len(scores) > 64:
+                    scores = scores[:64]
+                else:
+                    scores.extend([0.0] * (64 - len(scores)))
         except ValueError:
             scores = [0.0] * 64
         
         return scores
         
-    def analyze_news_list(self, news_list: List[Dict]) -> Tuple[float, Dict]:
+    def analyze_news_list(self, news_list: List[Dict]) -> Tuple[List[float], Dict]:
         """
         分析新闻列表的整体情感倾向，按行业计算情感得分
         
@@ -180,14 +186,14 @@ class SentimentAnalyzer:
         
         total_scores = [0.0] * 64
         total_news = len(news_list)
-        
         for news in news_list:
             text = news.get('title', '') + ' ' + news.get('content', '')
             scores = self.analyze_sentiment(text)
-            
             for i in range(64):
                 total_scores[i] += scores[i]
-        
+            if self.debug:
+                print(scores)
+                break
         avg_scores = [score / total_news for score in total_scores]
         
         positive_count = sum(1 for score in avg_scores if score > 0.1)

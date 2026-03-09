@@ -73,7 +73,6 @@ def get_latest_trendradar_data(trendradar_path=None):
         
         # 解析 txt 文件
         news_data = parse_trendradar_txt(os.path.join(txt_path, latest_txt_file))
-        logger.info(f"成功解析 {len(news_data)} 条新闻")
         return news_data
     except Exception as e:
         logger.error(f"获取 trendradar 数据时出错: {e}")

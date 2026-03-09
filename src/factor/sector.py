@@ -32,7 +32,6 @@ class StockSectorMapper:
                     stock_name = row['股票简称'].strip()
                     sector = row['行业'].strip()
                     stock_sector_map[stock_code] = {"name": stock_name, "sector": sector}
-            print(f"成功加载 {len(stock_sector_map)} 只股票的行业信息")
         except Exception as e:
             print(f"加载股票行业映射失败: {e}")
 
