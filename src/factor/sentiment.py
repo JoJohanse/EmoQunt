@@ -1,12 +1,14 @@
 import os
+import json
 from dotenv import load_dotenv
 import re
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 import numpy as np
-from sector import StockSectorMapper
+
 # llm #
 from openai import OpenAI
+
 # 加载环境变量
 load_dotenv()
 
@@ -65,6 +67,7 @@ class SentimentAnalyzer:
             '减持': 0.7,
             '警告': 0.8
         }
+        from src.factor.daily_recommend import StockSectorMapper
         self.stock_mapper = StockSectorMapper()
         
         # 初始化llm
@@ -136,6 +139,7 @@ class SentimentAnalyzer:
     def analyze_news_list(self, news_list: List[Dict]) -> Tuple[List[float], Dict]:
         """
         分析新闻列表的整体情感倾向，按行业计算情感得分
+        将所有新闻合并后一次性分析
         
         Args:
             news_list: 新闻数据列表，每个元素包含 'title' 和 'content' 字段
@@ -184,17 +188,14 @@ class SentimentAnalyzer:
             '航空机场','钢铁行业','旅游酒店','物流行业','保险','生物制品','光学光电子','互联网服务'
         ]
         
-        total_scores = [0.0] * 64
-        total_news = len(news_list)
+        combined_text = ""
         for news in news_list:
-            text = news.get('title', '') + ' ' + news.get('content', '')
-            scores = self.analyze_sentiment(text)
-            for i in range(64):
-                total_scores[i] += scores[i]
-            if self.debug:
-                print(scores)
-                break
-        avg_scores = [score / total_news for score in total_scores]
+            title = news.get('title', '')
+            content = news.get('content', '')
+            combined_text += f"标题：{title}\n内容：{content}\n---\n"
+        
+        scores = self.analyze_sentiment(combined_text)
+        avg_scores = scores
         
         positive_count = sum(1 for score in avg_scores if score > 0.1)
         negative_count = sum(1 for score in avg_scores if score < -0.1)
@@ -218,7 +219,7 @@ class SentimentAnalyzer:
             })
         
         analysis_result = {
-            'total_news': total_news,
+            'total_news': len(news_list),
             'positive_industry_count': positive_count,
             'negative_industry_count': negative_count,
             'neutral_industry_count': neutral_count,
@@ -279,11 +280,6 @@ def generate_trading_signal(sentiment_score: float) -> str:
     else:
         return 'hold'
 
-# 18类国民经济分类标准
-NATIONAL_ECONOMY_CATEGORIES = [
-    '农、林、牧、渔业','采矿业','制造业','电力、热力、燃气及水生产和供应业','建筑业','批发和零售业','交通运输、仓储和邮政业','住宿和餐饮业','信息传输、软件和信息技术服务业',
-    '金融业','房地产业','租赁和商务服务业','科学研究和技术服务业','水利、环境和公共设施管理业','居民服务、修理和其他服务业','教育','卫生和社会工作','文化、体育和娱乐业'
-]
 
 # Z-score标准化
 def z_score_normalize(values):
@@ -332,3 +328,67 @@ def analyze_industry_sentiment(news_list):
             continue
 
     return sentiment_list
+
+
+# 舆情结果持久化
+SENTIMENT_SAVE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "nes_data", "sentiment_results")
+
+def _ensure_sentiment_save_dir():
+    if not os.path.exists(SENTIMENT_SAVE_DIR):
+        os.makedirs(SENTIMENT_SAVE_DIR, exist_ok=True)
+        logger.info(f"创建舆情结果保存目录: {SENTIMENT_SAVE_DIR}")
+
+def save_sentiment_result(data: Dict) -> str:
+    _ensure_sentiment_save_dir()
+    
+    date_str = datetime.now().strftime("%Y%m%d")
+    file_path = os.path.join(SENTIMENT_SAVE_DIR, f"{date_str}.json")
+    
+    try:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        
+        logger.info(f"舆情分析结果已保存: {file_path}")
+        return file_path
+    except Exception as e:
+        logger.error(f"保存舆情分析结果失败: {e}")
+        raise
+
+def load_sentiment_result(date_str: str = None) -> Optional[Dict]:
+    if date_str is None:
+        date_str = datetime.now().strftime("%Y%m%d")
+    
+    file_path = os.path.join(SENTIMENT_SAVE_DIR, f"{date_str}.json")
+    
+    if not os.path.exists(file_path):
+        logger.warning(f"舆情结果文件不存在: {file_path}")
+        return None
+    
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        logger.info(f"加载舆情分析结果: {file_path}")
+        return data
+    except Exception as e:
+        logger.error(f"加载舆情分析结果失败: {e}")
+        return None
+
+def get_latest_sentiment_result() -> Optional[Dict]:
+    if not os.path.exists(SENTIMENT_SAVE_DIR):
+        return None
+    
+    files = [f for f in os.listdir(SENTIMENT_SAVE_DIR) if f.endswith('.json')]
+    if not files:
+        return None
+    
+    files.sort(reverse=True)
+    latest_file = files[0]
+    
+    file_path = os.path.join(SENTIMENT_SAVE_DIR, latest_file)
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data
+    except Exception as e:
+        logger.error(f"加载最新舆情结果失败: {e}")
+        return None

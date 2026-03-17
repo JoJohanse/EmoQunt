@@ -10,15 +10,9 @@ from fastapi.templating import Jinja2Templates
 import uvicorn
 import pandas as pd
 import numpy as np
-import json
 from datetime import datetime
-from typing import Dict, List, Optional
 import os
 import sys
-import asyncio
-import io
-import base64
-from contextlib import redirect_stdout
 import traceback
 import logging
 from logging.handlers import RotatingFileHandler
@@ -381,6 +375,11 @@ async def run_backtest(
 async def strategies_list(request: Request):
     """策略列表页面"""
     logger.info(f"用户访问策略列表页面 - 客户端IP: {request.client.host}")
+    
+    from src.Strategy.strategy_manager import load_user_strategies
+    
+    user_strategies = load_user_strategies()
+    
     _, global_strategy_manager, _, _, _ = get_backtest_components()
     strategies = global_strategy_manager.get_all_strategies()
     strategy_details = []
@@ -389,13 +388,12 @@ async def strategies_list(request: Request):
         details = {
             "name": name,
             "description": getattr(strategy_class, '__doc__', 'No description available'),
-            "parameters": []
+            "parameters": [],
+            "is_user_strategy": False
         }
         
-        # 获取策略参数
         if hasattr(strategy_class, 'params'):
             try:
-                # _getpairs() 返回的是 OrderedDict，直接遍历键值对
                 for param_name, default_value in strategy_class.params._getpairs().items():
                     details["parameters"].append({
                         "name": param_name,
@@ -404,9 +402,17 @@ async def strategies_list(request: Request):
                     })
             except Exception as e:
                 logger.error(f"获取策略 {name} 参数时出错: {e}")
-                # 如果参数获取失败，继续执行，添加空参数列表
                 details["parameters"] = []
         
+        strategy_details.append(details)
+    
+    for name, config in user_strategies.items():
+        details = {
+            "name": name,
+            "description": config.get("description", ""),
+            "parameters": config.get("parameters", []),
+            "is_user_strategy": True
+        }
         strategy_details.append(details)
     
     logger.info(f"策略列表页面加载成功，共 {len(strategy_details)} 个策略")
@@ -447,18 +453,170 @@ async def get_strategies_api():
     logger.info(f"API接口返回 {len(result)} 个策略信息")
     return result
 
+@app.get("/api/strategies/detail/{strategy_name}")
+async def get_strategy_detail(strategy_name: str):
+    """API接口：获取单个策略详情"""
+    logger.info(f"API接口被调用：获取策略详情 - {strategy_name}")
+    try:
+        from src.Strategy.strategy_manager import get_user_strategy, is_user_strategy
+        
+        user_strategy = get_user_strategy(strategy_name)
+        is_user = is_user_strategy(strategy_name)
+        
+        if user_strategy:
+            return {
+                "name": strategy_name,
+                "description": user_strategy.get("description", ""),
+                "parameters": user_strategy.get("parameters", []),
+                "is_user_strategy": True
+            }
+        
+        _, global_strategy_manager, _, _, _ = get_backtest_components()
+        strategy_class = global_strategy_manager.get_strategy(strategy_name)
+        
+        if not strategy_class:
+            return {"error": "策略不存在"}, 404
+        
+        parameters = []
+        if hasattr(strategy_class, 'params'):
+            try:
+                for param_name, default_value in strategy_class.params._getpairs().items():
+                    parameters.append({
+                        "name": param_name,
+                        "default": default_value,
+                        "type": type(default_value).__name__
+                    })
+            except Exception as e:
+                logger.error(f"获取策略参数失败: {e}")
+        
+        return {
+            "name": strategy_name,
+            "description": getattr(strategy_class, '__doc__', ''),
+            "parameters": parameters,
+            "is_user_strategy": False
+        }
+    except Exception as e:
+        logger.error(f"获取策略详情失败: {e}")
+        return {"error": str(e)}, 500
+
+@app.post("/api/strategies")
+async def create_strategy(request: Request):
+    """API接口：创建新策略"""
+    logger.info("API接口被调用：创建新策略")
+    try:
+        from src.Strategy.strategy_manager import save_user_strategy, is_user_strategy
+        
+        body = await request.json()
+        name = body.get("name", "").strip()
+        description = body.get("description", "")
+        parameters = body.get("parameters", [])
+        
+        if not name:
+            return {"error": "策略名称不能为空"}, 400
+        
+        if is_user_strategy(name):
+            return {"error": "策略名称已存在"}, 400
+        
+        _, global_strategy_manager, _, _, _ = get_backtest_components()
+        if global_strategy_manager.get_strategy(name):
+            return {"error": "策略名称与现有策略冲突"}, 400
+        
+        config = {
+            "description": description,
+            "parameters": parameters,
+            "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        if save_user_strategy(name, config):
+            logger.info(f"用户策略 {name} 创建成功")
+            return {"success": True, "name": name}
+        else:
+            return {"error": "保存策略失败"}, 500
+    except Exception as e:
+        logger.error(f"创建策略失败: {e}")
+        return {"error": str(e)}, 500
+
+@app.put("/api/strategies/{strategy_name}")
+async def update_strategy(strategy_name: str, request: Request):
+    """API接口：更新策略"""
+    logger.info(f"API接口被调用：更新策略 - {strategy_name}")
+    try:
+        from src.Strategy.strategy_manager import get_user_strategy, save_user_strategy
+        
+        if not get_user_strategy(strategy_name):
+            return {"error": "只能修改用户创建的策略"}, 403
+        
+        body = await request.json()
+        description = body.get("description", "")
+        parameters = body.get("parameters", [])
+        
+        config = {
+            "description": description,
+            "parameters": parameters
+        }
+        
+        if save_user_strategy(strategy_name, config):
+            logger.info(f"用户策略 {strategy_name} 更新成功")
+            return {"success": True, "name": strategy_name}
+        else:
+            return {"error": "保存策略失败"}, 500
+    except Exception as e:
+        logger.error(f"更新策略失败: {e}")
+        return {"error": str(e)}, 500
+
+@app.delete("/api/strategies/{strategy_name}")
+async def delete_strategy(strategy_name: str):
+    """API接口：删除策略"""
+    logger.info(f"API接口被调用：删除策略 - {strategy_name}")
+    try:
+        from src.Strategy.strategy_manager import delete_user_strategy, is_user_strategy
+        
+        if not is_user_strategy(strategy_name):
+            return {"error": "只能删除用户创建的策略"}, 403
+        
+        if delete_user_strategy(strategy_name):
+            logger.info(f"用户策略 {strategy_name} 删除成功")
+            return {"success": True}
+        else:
+            return {"error": "删除策略失败"}, 500
+    except Exception as e:
+        logger.error(f"删除策略失败: {e}")
+        return {"error": str(e)}, 500
+
 @app.get("/sentiment", response_class=HTMLResponse)
 async def sentiment_analysis(request: Request):
-    """舆情分析页面"""
+    """舆情分析页面 - 展示当天热门新闻和板块得分"""
     logger.info(f"用户访问舆情分析页面 - 客户端IP: {request.client.host}")
-    # 获取策略列表
-    strategies = get_cached_strategies()
-    logger.info(f"获取到 {len(strategies)} 个策略")
-    return templates.TemplateResponse("sentiment_analysis.html", {
-        "request": request,
-        "title": "舆情分析",
-        "strategies": strategies
-    })
+    
+    try:
+        from src.factor.trendradar import get_latest_trendradar_data
+        from src.factor.sentiment import get_latest_sentiment_result
+        
+        news_data = get_latest_trendradar_data()
+        sentiment_data = get_latest_sentiment_result()
+        
+        sectors = []
+        if sentiment_data and 'top_sectors' in sentiment_data:
+            sectors = sentiment_data['top_sectors']
+        
+        logger.info(f"获取到 {len(news_data)} 条热门新闻, {len(sectors)} 个板块得分")
+        
+        return templates.TemplateResponse("sentiment_analysis.html", {
+            "request": request,
+            "title": "舆情分析",
+            "news_list": news_data[:20],
+            "sectors": sectors,
+            "news_count": len(news_data),
+            "update_time": sentiment_data.get('timestamp', '') if sentiment_data else ''
+        })
+    except Exception as e:
+        error_msg = f"{str(e)}\n{traceback.format_exc()}"
+        logger.error(f"舆情分析页面加载出错: {error_msg}")
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "error": error_msg,
+            "title": "错误"
+        })
 
 @app.get("/api/sentiment")
 async def get_sentiment_api():
@@ -474,6 +632,57 @@ async def get_sentiment_api():
             'error': str(e),
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
+
+@app.get("/daily_recommend", response_class=HTMLResponse)
+async def daily_recommend_page(request: Request):
+    """每日推荐页面"""
+    client_ip = request.client.host
+    logger.info(f"用户访问每日推荐页面 - 客户端IP: {client_ip}")
+    
+    try:
+        from src.factor.daily_recommend import get_cached_recommendation
+        recommend_data = get_cached_recommendation()
+        logger.info(f"每日推荐数据加载成功，推荐股票数: {len(recommend_data.get('recommendations', []))}")
+        
+        return templates.TemplateResponse("daily_recommend.html", {
+            "request": request,
+            "data": recommend_data,
+            "title": "每日股票推荐"
+        })
+    except Exception as e:
+        error_msg = f"{str(e)}\n{traceback.format_exc()}"
+        logger.error(f"每日推荐页面加载出错: {error_msg}")
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "error": error_msg,
+            "title": "错误"
+        })
+
+@app.get("/refresh_recommend", response_class=HTMLResponse)
+async def refresh_recommend_page(request: Request):
+    """刷新每日推荐"""
+    client_ip = request.client.host
+    logger.info(f"用户刷新每日推荐 - 客户端IP: {client_ip}")
+    
+    try:
+        from src.factor.daily_recommend import refresh_recommendation, reload_sentiment
+        reload_sentiment()
+        recommend_data = refresh_recommendation()
+        logger.info(f"每日推荐刷新成功，推荐股票数: {len(recommend_data.get('recommendations', []))}")
+        
+        return templates.TemplateResponse("daily_recommend.html", {
+            "request": request,
+            "data": recommend_data,
+            "title": "每日股票推荐"
+        })
+    except Exception as e:
+        error_msg = f"{str(e)}\n{traceback.format_exc()}"
+        logger.error(f"每日推荐刷新出错: {error_msg}")
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "error": error_msg,
+            "title": "错误"
+        })
 
 @app.post("/analyze_sentiment", response_class=HTMLResponse)
 async def analyze_sentiment(
@@ -585,6 +794,27 @@ async def analyze_sentiment(
         
         # 获取最新的新闻数据
         news_data = get_latest_trendradar_data()
+        
+        # 保存舆情分析结果
+        try:
+            from src.factor.sentiment import save_sentiment_result
+            from src.factor.daily_recommend import get_sentiment_data
+            
+            sentiment_save_data = {
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "strategy": strategy,
+                "stock_code": stock_code,
+                "stock_sector": stock_sector,
+                "average_score": sentiment_result.get('average_score', 0),
+                "signal": sentiment_result.get('signal', 'hold'),
+                "top_sectors": get_sentiment_data().get('sectors', [])[:10],
+                "news_count": len(news_data)
+            }
+            save_sentiment_result(sentiment_save_data)
+            logger.info("舆情分析结果已保存")
+        except Exception as save_err:
+            logger.warning(f"保存舆情结果失败: {save_err}")
         
         return templates.TemplateResponse("sentiment_result.html", {
             "request": request,

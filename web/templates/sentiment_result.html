@@ -4,203 +4,295 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background-color: #f0f2f5;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f5f7fa;
         }
-        .container {
-            max-width: 1000px;
-            margin: 0 auto;
-            background-color: white;
+        .navbar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .navbar-brand, .nav-link {
+            color: white !important;
+        }
+        .page-header {
+            background: white;
             padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
         }
-        h1 {
-            color: #333;
-            text-align: center;
+        .card {
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            border: none;
+            border-radius: 10px;
         }
-        .nav {
-            background-color: #f8f9fa;
-            padding: 10px;
-            border-radius: 4px;
-            margin-bottom: 20px;
+        .card-header {
+            background: white;
+            border-bottom: 2px solid #e9ecef;
+            border-radius: 10px 10px 0 0 !important;
         }
-        .nav a {
-            margin-right: 15px;
-            text-decoration: none;
-            color: #007bff;
+        .result-card {
+            transition: transform 0.2s;
         }
-        .nav a:hover {
-            text-decoration: underline;
+        .result-card:hover {
+            transform: translateY(-2px);
         }
-        .result-box {
-            background-color: #f8f9fa;
-            padding: 20px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-        }
-        .result-item {
-            margin-bottom: 10px;
-        }
-        .result-label {
-            font-weight: bold;
-            display: inline-block;
-            width: 150px;
-        }
-        .signal {
-            display: inline-block;
-            padding: 5px 10px;
-            border-radius: 4px;
-            font-weight: bold;
+        .signal-badge {
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 1rem;
         }
         .signal-buy {
-            background-color: #d4edda;
-            color: #155724;
+            background: linear-gradient(135deg, #28a745, #48c764);
+            color: white;
         }
         .signal-sell {
-            background-color: #f8d7da;
-            color: #721c24;
+            background: linear-gradient(135deg, #dc3545, #e4606d);
+            color: white;
         }
         .signal-hold {
-            background-color: #fff3cd;
-            color: #856404;
+            background: linear-gradient(135deg, #6c757d, #868e96);
+            color: white;
+        }
+        .metric-item {
+            text-align: center;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        .metric-label {
+            font-size: 0.875rem;
+            color: #6c757d;
+            margin-bottom: 5px;
+        }
+        .metric-value {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #333;
         }
         .chart-container {
-            margin: 20px 0;
-            text-align: center;
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
         }
-        .chart-container img {
-            max-width: 100%;
-            border-radius: 4px;
-        }
-        .news-section {
-            margin-top: 30px;
-        }
-        .news-item {
-            background-color: #f8f9fa;
-            padding: 10px;
-            border-radius: 4px;
+        .news-card {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
             margin-bottom: 10px;
+            border-left: 3px solid #667eea;
+            transition: transform 0.2s;
+        }
+        .news-card:hover {
+            transform: translateX(5px);
         }
         .news-title {
-            font-weight: bold;
+            font-weight: 500;
+            color: #333;
             margin-bottom: 5px;
         }
         .news-source {
-            font-size: 12px;
+            font-size: 0.8rem;
             color: #6c757d;
         }
-        .back-button {
-            display: inline-block;
-            margin-top: 20px;
-            padding: 10px 20px;
-            background-color: #6c757d;
-            color: white;
-            text-decoration: none;
-            border-radius: 4px;
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
         }
-        .back-button:hover {
-            background-color: #5a6268;
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #5a6fd6 0%, #654a91 100%);
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="nav">
-            <a href="/">首页</a>
-            <a href="/backtest">回测</a>
-            <a href="/strategies">策略列表</a>
-            <a href="/sentiment">舆情分析</a>
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+            <a class="navbar-brand" href="/"><i class="fas fa-chart-line"></i> EmoQunt 量化系统</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/"><i class="fas fa-home"></i> 首页</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/backtest"><i class="fas fa-chart-line"></i> 策略回测</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/strategies"><i class="fas fa-list"></i> 策略列表</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/sentiment"><i class="fas fa-newspaper"></i> 舆情分析</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/daily_recommend"><i class="fas fa-star"></i> 每日推荐</a>
+                    </li>
+                </ul>
+            </div>
         </div>
-        
-        <h1>{{ title }}</h1>
-        
-        <div class="result-box">
-            <h2>分析结果</h2>
-            <div class="result-item">
-                <span class="result-label">分析时间:</span>
-                {{ sentiment_result.timestamp }}
+    </nav>
+
+    <div class="container mt-4">
+        <div class="page-header">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h2 class="mb-1"><i class="fas fa-chart-pie"></i> {{ title }}</h2>
+                    <p class="text-muted mb-0">分析时间: {{ sentiment_result.timestamp }}</p>
+                </div>
+                <a href="/sentiment" class="btn btn-primary">
+                    <i class="fas fa-plus"></i> 重新分析
+                </a>
             </div>
-            <div class="result-item">
-                <span class="result-label">选择策略:</span>
-                {{ sentiment_result.strategy or '默认策略' }}
+        </div>
+
+        <div class="row">
+            <div class="col-lg-8">
+                <div class="card result-card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="fas fa-chart-bar"></i> 分析结果</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row mb-4">
+                            <div class="col-md-6">
+                                <div class="metric-item">
+                                    <div class="metric-label">股票代码</div>
+                                    <div class="metric-value">{{ sentiment_result.stock_code or '000001' }}</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="metric-item">
+                                    <div class="metric-label">所属行业</div>
+                                    <div class="metric-value">{{ sentiment_result.stock_sector or '未知' }}</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row mb-4">
+                            <div class="col-md-4">
+                                <div class="metric-item">
+                                    <div class="metric-label">情绪权重</div>
+                                    <div class="metric-value">{{ "%.2f"|format(sentiment_result.sentiment_weight or 0.3) }}</div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="metric-item">
+                                    <div class="metric-label">原始情绪得分</div>
+                                    <div class="metric-value">{{ "%.2f"|format(sentiment_result.average_score) }}</div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="metric-item">
+                                    <div class="metric-label">调整后得分</div>
+                                    <div class="metric-value">{{ "%.2f"|format((sentiment_result.average_score * (sentiment_result.sentiment_weight or 0.3))) }}</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="text-center">
+                            <div class="metric-label mb-2">交易信号</div>
+                            {% if sentiment_result.signal == 'buy' %}
+                            <span class="signal-badge signal-buy"><i class="fas fa-arrow-up"></i> 买入</span>
+                            {% elif sentiment_result.signal == 'sell' %}
+                            <span class="signal-badge signal-sell"><i class="fas fa-arrow-down"></i> 卖出</span>
+                            {% else %}
+                            <span class="signal-badge signal-hold"><i class="fas fa-minus"></i> 持有</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="fas fa-chart-pie"></i> 情绪分布</h5>
+                    </div>
+                    <div class="card-body text-center">
+                        {% if sentiment_chart_url %}
+                        <img src="{{ sentiment_chart_url }}" class="img-fluid" alt="情绪分布图表">
+                        {% else %}
+                        <p class="text-muted">图表生成失败</p>
+                        {% endif %}
+                    </div>
+                </div>
             </div>
-            <div class="result-item">
-                <span class="result-label">股票代码:</span>
-                {{ sentiment_result.stock_code or '000001' }}
+
+            <div class="col-lg-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="fas fa-newspaper"></i> 新闻统计</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="metric-item mb-3">
+                            <div class="metric-label">分析新闻数</div>
+                            <div class="metric-value">{{ sentiment_result.analysis_result.total_news }}</div>
+                        </div>
+                        <div class="row text-center">
+                            <div class="col-4">
+                                <div class="metric-item">
+                                    <div class="metric-label">正面</div>
+                                    <div class="metric-value text-success">{{ sentiment_result.analysis_result.positive_count }}</div>
+                                </div>
+                            </div>
+                            <div class="col-4">
+                                <div class="metric-item">
+                                    <div class="metric-label">中性</div>
+                                    <div class="metric-value text-secondary">{{ sentiment_result.analysis_result.neutral_count }}</div>
+                                </div>
+                            </div>
+                            <div class="col-4">
+                                <div class="metric-item">
+                                    <div class="metric-label">负面</div>
+                                    <div class="metric-value text-danger">{{ sentiment_result.analysis_result.negative_count }}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="result-item">
-                <span class="result-label">所属行业:</span>
-                {{ sentiment_result.stock_sector or '未知' }}
+        </div>
+
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-list-alt"></i> 最新舆情</h5>
             </div>
-            <div class="result-item">
-                <span class="result-label">情绪权重:</span>
-                {{ "%.2f"|format(sentiment_result.sentiment_weight or 0.3) }}
-            </div>
-            <div class="result-item">
-                <span class="result-label">原始情绪得分:</span>
-                {{ "%.2f"|format(sentiment_result.average_score) }}
-            </div>
-            <div class="result-item">
-                <span class="result-label">调整后得分:</span>
-                {{ "%.2f"|format((sentiment_result.average_score * (sentiment_result.sentiment_weight or 0.3))) }}
-            </div>
-            <div class="result-item">
-                <span class="result-label">交易信号:</span>
-                {% if sentiment_result.signal == 'buy' %}
-                <span class="signal signal-buy">买入</span>
-                {% elif sentiment_result.signal == 'sell' %}
-                <span class="signal signal-sell">卖出</span>
+            <div class="card-body">
+                {% if news_data %}
+                <div class="row">
+                    {% for news in news_data %}
+                    <div class="col-md-6 mb-3">
+                        <div class="news-card">
+                            <div class="news-title">{{ news.title }}</div>
+                            <div class="news-source">
+                                <i class="fas fa-source"></i> {{ news.source }} | {{ news.date }}
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
                 {% else %}
-                <span class="signal signal-hold">持有</span>
+                <p class="text-muted text-center">暂无舆情数据</p>
                 {% endif %}
             </div>
-            <div class="result-item">
-                <span class="result-label">分析新闻数:</span>
-                {{ sentiment_result.analysis_result.total_news }}
-            </div>
-            <div class="result-item">
-                <span class="result-label">正面新闻:</span>
-                {{ sentiment_result.analysis_result.positive_count }}
-            </div>
-            <div class="result-item">
-                <span class="result-label">负面新闻:</span>
-                {{ sentiment_result.analysis_result.negative_count }}
-            </div>
-            <div class="result-item">
-                <span class="result-label">中性新闻:</span>
-                {{ sentiment_result.analysis_result.neutral_count }}
-            </div>
         </div>
-        
-        <div class="chart-container">
-            <h3>情绪分布</h3>
-            {% if sentiment_chart_url %}
-            <img src="{{ sentiment_chart_url }}" alt="情绪分布图表">
-            {% else %}
-            <p>图表生成失败</p>
-            {% endif %}
+
+        <div class="text-center mt-4 mb-4">
+            <a href="/sentiment" class="btn btn-primary btn-lg">
+                <i class="fas fa-redo"></i> 返回分析页面
+            </a>
         </div>
-        
-        <div class="news-section">
-            <h3>最新舆情</h3>
-            {% if news_data %}
-            {% for news in news_data %}
-            <div class="news-item">
-                <div class="news-title">{{ news.title }}</div>
-                <div class="news-source">来源: {{ news.source }} | 日期: {{ news.date }}</div>
-            </div>
-            {% endfor %}
-            {% else %}
-            <p>暂无舆情数据</p>
-            {% endif %}
-        </div>
-        
-        <a href="/sentiment" class="back-button">返回分析页面</a>
     </div>
+
+    <footer class="bg-dark text-light py-4 mt-5">
+        <div class="container text-center">
+            <p class="mb-0"><i class="fas fa-chart-line"></i> EmoQunt 量化系统</p>
+            <p class="mb-0 text-muted">让量化投资更简单</p>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

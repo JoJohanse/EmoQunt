@@ -3,13 +3,15 @@ from .sentiment import (
     SentimentAnalyzer,
     calculate_sentiment_factor,
     generate_trading_signal,
-    NATIONAL_ECONOMY_CATEGORIES,
     z_score_normalize,
-    analyze_industry_sentiment
+    analyze_industry_sentiment,
+    save_sentiment_result,
+    load_sentiment_result,
+    get_latest_sentiment_result
 )
 from .market import get_market_value
 from .technical import calculate_factor
-from .sector import (
+from .daily_recommend import (
     StockSectorMapper,
     stock_sector_mapper,
     get_stock_sector,
@@ -28,15 +30,17 @@ from .trendradar import (
     process_news
 )
 
-# 导出所有功能，保持向后兼容性
+# 导出所有功能
 __all__ = [
     # 情绪分析模块
     'SentimentAnalyzer',
     'calculate_sentiment_factor',
     'generate_trading_signal',
-    'NATIONAL_ECONOMY_CATEGORIES',
     'z_score_normalize',
     'analyze_industry_sentiment',
+    'save_sentiment_result',
+    'load_sentiment_result',
+    'get_latest_sentiment_result',
     # 市场数据模块
     'get_market_value',
     # 技术因子模块
@@ -58,7 +62,3 @@ __all__ = [
     'process_single_news',
     'process_news'
 ]
-
-# 确保旧的导入路径仍然可用
-# 这样现有的代码仍然可以直接从factor模块导入这些函数
-# 例如：from src.factor import get_market_value

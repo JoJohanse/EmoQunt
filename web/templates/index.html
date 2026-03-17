@@ -8,34 +8,52 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
-            background-color: #f8f9fa;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f5f7fa;
+        }
+        .navbar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .navbar-brand, .nav-link {
+            color: white !important;
         }
         .card {
-            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
-            border: 1px solid rgba(0, 0, 0, 0.125);
-        }
-        .navbar-brand {
-            font-weight: bold;
-        }
-        .feature-card {
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            border: none;
+            border-radius: 10px;
             transition: transform 0.2s;
         }
-        .feature-card:hover {
+        .card:hover {
             transform: translateY(-5px);
         }
+        .feature-icon {
+            width: 60px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            margin: 0 auto 15px;
+            font-size: 24px;
+        }
+        .feature-icon-primary { background: linear-gradient(135deg, #667eea, #764ba2); color: white; }
+        .feature-icon-success { background: linear-gradient(135deg, #28a745, #48c764); color: white; }
+        .feature-icon-warning { background: linear-gradient(135deg, #ffc107, #ffcd39); color: white; }
+        .feature-icon-info { background: linear-gradient(135deg, #17a2b8, #3dd5f3); color: white; }
     </style>
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+    <nav class="navbar navbar-expand-lg">
         <div class="container">
-            <a class="navbar-brand" href="/">📊 量化策略回测系统</a>
+            <a class="navbar-brand" href="/"><i class="fas fa-chart-line"></i> EmoQunt 量化系统</a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav ms-auto">
                     <li class="nav-item">
-                        <a class="nav-link" href="/"><i class="fas fa-home"></i> 首页</a>
+                        <a class="nav-link active" href="/"><i class="fas fa-home"></i> 首页</a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="/backtest"><i class="fas fa-chart-line"></i> 策略回测</a>
@@ -46,66 +64,65 @@
                     <li class="nav-item">
                         <a class="nav-link" href="/sentiment"><i class="fas fa-newspaper"></i> 舆情分析</a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/daily_recommend"><i class="fas fa-star"></i> 每日推荐</a>
+                    </li>
                 </ul>
             </div>
         </div>
     </nav>
 
     <div class="container mt-4">
-        <div class="row">
-            <div class="col-md-12">
-                <div class="card">
-                    <div class="card-header bg-primary text-white">
-                        <h3 class="mb-0">📈 欢迎使用量化策略回测系统</h3>
-                    </div>
-                    <div class="card-body">
-                        <p class="lead">这是一个功能强大的量化策略回测平台，支持多种技术指标和情绪因子策略。</p>
+        <div class="page-header" style="background: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);">
+            <h2 class="mb-2"><i class="fas fa-chart-line"></i> 欢迎使用 EmoQunt 量化系统</h2>
+            <p class="text-muted mb-0">这是一个功能强大的量化策略回测平台，支持多种技术指标和情绪因子策略。</p>
+        </div>
                         <div class="row g-4">
                             <div class="col-md-3">
-                                <div class="card text-center h-100 feature-card">
+                                <div class="card text-center h-100">
                                     <div class="card-body d-flex flex-column">
-                                        <div class="mb-3">
-                                            <i class="fas fa-play-circle fa-3x text-primary"></i>
+                                        <div class="feature-icon feature-icon-primary">
+                                            <i class="fas fa-play-circle"></i>
                                         </div>
                                         <h5 class="card-title">策略回测</h5>
-                                        <p class="card-text flex-grow-1">选择策略并运行回测，查看详细绩效报告</p>
+                                        <p class="card-text flex-grow-1 text-muted">选择策略并运行回测，查看详细绩效报告</p>
                                         <a href="/backtest" class="btn btn-primary mt-auto">开始回测</a>
                                     </div>
                                 </div>
                             </div>
                             <div class="col-md-3">
-                                <div class="card text-center h-100 feature-card">
+                                <div class="card text-center h-100">
                                     <div class="card-body d-flex flex-column">
-                                        <div class="mb-3">
-                                            <i class="fas fa-cogs fa-3x text-success"></i>
+                                        <div class="feature-icon feature-icon-success">
+                                            <i class="fas fa-cogs"></i>
                                         </div>
                                         <h5 class="card-title">策略管理</h5>
-                                        <p class="card-text flex-grow-1">查看所有可用策略及其参数配置</p>
+                                        <p class="card-text flex-grow-1 text-muted">查看所有可用策略及其参数配置</p>
                                         <a href="/strategies" class="btn btn-success mt-auto">查看策略</a>
                                     </div>
                                 </div>
                             </div>
                             <div class="col-md-3">
-                                <div class="card text-center h-100 feature-card">
+                                <div class="card text-center h-100">
                                     <div class="card-body d-flex flex-column">
-                                        <div class="mb-3">
-                                            <i class="fas fa-chart-bar fa-3x text-info"></i>
+                                        <div class="feature-icon feature-icon-warning">
+                                            <i class="fas fa-newspaper"></i>
                                         </div>
-                                        <h5 class="card-title">绩效分析</h5>
-                                        <p class="card-text flex-grow-1">深入分析策略表现和风险指标</p>
-                                        <a href="/backtest" class="btn btn-info mt-auto">分析绩效</a>
+                                        <h5 class="card-title">舆情分析</h5>
+                                        <p class="card-text flex-grow-1 text-muted">基于实时热点舆论数据生成交易信号</p>
+                                        <a href="/sentiment" class="btn btn-warning mt-auto text-white">分析舆情</a>
                                     </div>
                                 </div>
                             </div>
                             <div class="col-md-3">
-                                <div class="card text-center h-100 feature-card">
+                                <div class="card text-center h-100">
                                     <div class="card-body d-flex flex-column">
-                                        <div class="mb-3">
-                                            <i class="fas fa-newspaper fa-3x text-warning"></i>
+                                        <div class="feature-icon feature-icon-info">
+                                            <i class="fas fa-star"></i>
                                         </div>
-                                        <h5 class="card-title">舆情分析</h5>
-                                        <p class="card-text flex-grow-1">基于实时热点舆论数据生成交易信号</p>
-                                        <a href="/sentiment" class="btn btn-warning mt-auto">分析舆情</a>
+                                        <h5 class="card-title">每日推荐</h5>
+                                        <p class="card-text flex-grow-1 text-muted">基于舆情分析智能推荐潜力股票</p>
+                                        <a href="/daily_recommend" class="btn btn-info mt-auto text-white">查看推荐</a>
                                     </div>
                                 </div>
                             </div>
@@ -127,10 +144,6 @@
                                         <span>🛡️ 风险管理</span>
                                         <span class="badge bg-warning rounded-pill">高级</span>
                                     </li>
-                                    <li class="list-group-item d-flex justify-content-between align-items-center">
-                                        <span>📈 绩效分析</span>
-                                        <span class="badge bg-info rounded-pill">全面</span>
-                                    </li>
                                 </ul>
                             </div>
                         </div>
@@ -141,17 +154,9 @@
     </div>
 
     <footer class="bg-dark text-light py-4 mt-5">
-        <div class="container">
-            <div class="row">
-                <div class="col-md-6">
-                    <h5>📊 量化策略回测系统</h5>
-                    <p class="text-muted">专业量化分析平台</p>
-                </div>
-                <div class="col-md-6 text-md-end">
-                    <p class="mb-0">&copy; 2026 Qdt_test 量化策略回测系统</p>
-                    <p class="mb-0 text-muted">让量化投资更简单</p>
-                </div>
-            </div>
+        <div class="container text-center">
+            <p class="mb-0"><i class="fas fa-chart-line"></i> EmoQunt 量化系统</p>
+            <p class="mb-0 text-muted">让量化投资更简单</p>
         </div>
     </footer>
 

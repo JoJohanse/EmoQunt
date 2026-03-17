@@ -4,109 +4,313 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
     <style>
         body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background-color: #f0f2f5;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f5f7fa;
+            padding-bottom: 50px;
         }
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-            background-color: white;
+        .navbar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .navbar-brand, .nav-link {
+            color: white !important;
+        }
+        .page-header {
+            background: white;
             padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
         }
-        h1 {
+        .page-header h1 {
+            margin: 0;
             color: #333;
+            font-size: 28px;
+        }
+        .page-header .subtitle {
+            color: #666;
+            margin-top: 10px;
+        }
+        .section-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+        }
+        .news-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            transition: transform 0.2s, box-shadow 0.2s;
+            border-left: 4px solid #667eea;
+        }
+        .news-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        .news-card .source {
+            font-size: 12px;
+            color: #999;
+            margin-bottom: 8px;
+        }
+        .news-card .title {
+            font-size: 16px;
+            color: #333;
+            font-weight: 500;
+            line-height: 1.5;
+            margin: 0;
+        }
+        .news-card .title a {
+            color: inherit;
+            text-decoration: none;
+        }
+        .news-card .title a:hover {
+            color: #667eea;
+        }
+        .sector-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            transition: transform 0.2s;
+        }
+        .sector-card:hover {
+            transform: translateY(-2px);
+        }
+        .sector-card.positive {
+            border-left: 4px solid #28a745;
+        }
+        .sector-card.negative {
+            border-left: 4px solid #dc3545;
+        }
+        .sector-card.neutral {
+            border-left: 4px solid #6c757d;
+        }
+        .sector-name {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .sentiment-score {
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+        .sentiment-score.positive {
+            color: #28a745;
+        }
+        .sentiment-score.negative {
+            color: #dc3545;
+        }
+        .sentiment-score.neutral {
+            color: #6c757d;
+        }
+        .sentiment-bar {
+            height: 8px;
+            background: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+        .sentiment-bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.3s;
+        }
+        .sentiment-bar-fill.positive {
+            background: linear-gradient(90deg, #28a745, #48c764);
+        }
+        .sentiment-bar-fill.negative {
+            background: linear-gradient(90deg, #dc3545, #e4606d);
+        }
+        .sentiment-bar-fill.neutral {
+            background: linear-gradient(90deg, #6c757d, #868e96);
+        }
+        .stock-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .stock-tag {
+            background: #f0f2f5;
+            padding: 4px 10px;
+            border-radius: 15px;
+            font-size: 12px;
+            color: #666;
+        }
+        .stock-tag .code {
+            color: #667eea;
+            font-weight: 500;
+        }
+        .stats-box {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 10px;
+            padding: 20px;
             text-align: center;
         }
-        .nav {
-            background-color: #f8f9fa;
-            padding: 10px;
-            border-radius: 4px;
-            margin-bottom: 20px;
+        .stats-box .number {
+            font-size: 36px;
+            font-weight: 700;
         }
-        .nav a {
-            margin-right: 15px;
-            text-decoration: none;
-            color: #007bff;
-        }
-        .nav a:hover {
-            text-decoration: underline;
-        }
-        .form-group {
-            margin-bottom: 20px;
-        }
-        label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
-        }
-        button {
-            background-color: #007bff;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
-        }
-        button:hover {
-            background-color: #0069d9;
+        .stats-box .label {
+            font-size: 14px;
+            opacity: 0.9;
         }
         .info-box {
-            background-color: #e7f3ff;
+            background: #e7f3ff;
             border-left: 4px solid #2196F3;
             padding: 15px;
-            margin-bottom: 20px;
             border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+        .empty-state i {
+            font-size: 48px;
+            margin-bottom: 20px;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="nav">
-            <a href="/">首页</a>
-            <a href="/backtest">回测</a>
-            <a href="/strategies">策略列表</a>
-            <a href="/sentiment">舆情分析</a>
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+            <a class="navbar-brand" href="/"><i class="fas fa-chart-line"></i> EmoQunt 量化系统</a>
+            <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ml-auto">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/"><i class="fas fa-home"></i> 首页</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/backtest"><i class="fas fa-chart-bar"></i> 回测</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/strategies"><i class="fas fa-list"></i> 策略列表</a>
+                    </li>
+                    <li class="nav-item active">
+                        <a class="nav-link" href="/sentiment"><i class="fas fa-newspaper"></i> 舆情分析</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/daily_recommend"><i class="fas fa-star"></i> 每日推荐</a>
+                    </li>
+                </ul>
+            </div>
         </div>
-        
-        <h1>{{ title }}</h1>
-        
+    </nav>
+
+    <div class="container mt-4">
+        <div class="page-header">
+            <h1><i class="fas fa-newspaper"></i> {{ title }}</h1>
+            <div class="subtitle">
+                {% if update_time %}数据更新时间: {{ update_time }}{% endif %}
+                <span class="ml-3">热门新闻: {{ news_count }} 条</span>
+            </div>
+        </div>
+
+        {% if sectors or news_list %}
+        <div class="row">
+            <div class="col-lg-6">
+                <div class="section-title">
+                    <i class="fas fa-fire"></i> 热门新闻
+                </div>
+                {% if news_list %}
+                    {% for news in news_list %}
+                    <div class="news-card">
+                        <div class="source">
+                            <i class="fas fa-source"></i> {{ news.source or '未知来源' }}
+                        </div>
+                        <h5 class="title">
+                            {% if news.url %}
+                            <a href="{{ news.url }}" target="_blank">{{ news.title }}</a>
+                            {% else %}
+                            {{ news.title }}
+                            {% endif %}
+                        </h5>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                <div class="empty-state">
+                    <i class="fas fa-newspaper"></i>
+                    <p>暂无热门新闻</p>
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="col-lg-6">
+                <div class="section-title">
+                    <i class="fas fa-chart-pie"></i> 板块得分排行
+                </div>
+                
+                {% if sectors %}
+                    {% for sector in sectors %}
+                    <div class="sector-card {% if sector.sentiment >= 70 %}positive{% elif sector.sentiment <= 40 %}negative{% else %}neutral{% endif %}">
+                        <div class="row align-items-center">
+                            <div class="col-8">
+                                <div class="sector-name">
+                                    <i class="fas fa-industry"></i> {{ sector.name }}
+                                </div>
+                            </div>
+                            <div class="col-4 text-right">
+                                <div class="sentiment-score {% if sector.sentiment >= 70 %}positive{% elif sector.sentiment <= 40 %}negative{% else %}neutral{% endif %}">
+                                    {{ sector.sentiment }}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="sentiment-bar">
+                            <div class="sentiment-bar-fill {% if sector.sentiment >= 70 %}positive{% elif sector.sentiment <= 40 %}negative{% else %}neutral{% endif %}" 
+                                 style="width: {{ sector.sentiment }}%"></div>
+                        </div>
+                        {% if sector.stocks %}
+                        <div class="stock-tags">
+                            {% for stock in sector.stocks[:5] %}
+                            <span class="stock-tag">
+                                <span class="code">{{ stock.code }}</span> {{ stock.name }}
+                            </span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                {% else %}
+                <div class="empty-state">
+                    <i class="fas fa-chart-pie"></i>
+                    <p>暂无板块得分数据</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% else %}
         <div class="info-box">
-            <h3>功能说明</h3>
-            <p>本功能基于 TrendRadar 工具获取实时热点舆论数据，分析当日舆情情绪，并生成相应的交易信号。</p>
-            <p>情绪因子范围：-1（极度负面）到 1（极度正面）</p>
-            <p>交易信号：</p>
+            <h4><i class="fas fa-info-circle"></i> 说明</h4>
+            <p>该页面展示当天热门新闻和各板块的舆情得分情况。</p>
+            <p>数据来源：TrendRadar 实时热点舆论数据</p>
+            <p>板块评分说明：</p>
             <ul>
-                <li>情绪得分 > 0.3: 买入信号</li>
-                <li>情绪得分 < -0.3: 卖出信号</li>
-                <li>其他: 持有信号</li>
+                <li>得分 ≥ 70: 积极情绪</li>
+                <li>得分 41-69: 中性情绪</li>
+                <li>得分 ≤ 40: 消极情绪</li>
             </ul>
         </div>
-        
-        <form action="/analyze_sentiment" method="post">
-            <div class="form-group">
-                <label for="strategy">选择策略：</label>
-                <select id="strategy" name="strategy" class="form-control">
-                    {% for strategy in strategies %}
-                    <option value="{{ strategy }}">{{ strategy }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="stock_code">股票代码：</label>
-                <input type="text" id="stock_code" name="stock_code" value="000001" class="form-control">
-            </div>
-            <div class="form-group">
-                <p>点击下方按钮开始分析当日舆情：</p>
-                <button type="submit" class="btn btn-primary">开始分析</button>
-            </div>
-        </form>
+        {% endif %}
     </div>
+
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
