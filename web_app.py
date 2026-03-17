@@ -1,7 +1,7 @@
 """
 Web界面 - 量化策略回测系统
 
-提供Web界面让用户可以进行策略回测操作
+提供Web界面让用户可以进行策略回测、舆情分析、每日个股推荐
 """
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse
@@ -22,7 +22,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # 导入可视化模块
 from src.visualization import StrategyVisualizer
-from src.factor import get_trendradar_sentiment, get_latest_trendradar_data, get_stock_sector, is_hs300_stock
+from src.factor import get_trendradar_sentiment, get_latest_trendradar_data, get_stock_sector, is_hs300_stock, check_recent_txt_exists, parse_trendradar_txt
 import matplotlib.pyplot as plt
 
 # 延迟导入，避免启动时加载
@@ -36,12 +36,14 @@ def get_backtest_components():
 # 设置日志
 def setup_logger():
     """设置日志记录器"""
+    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    
     logger = logging.getLogger("web_app")
     logger.setLevel(logging.INFO)
     
-    # 创建处理器 - 文件处理器
     file_handler = RotatingFileHandler(
-        "logs/web_app.log", 
+        os.path.join(log_dir, "web_app.log"), 
         maxBytes=10*1024*1024,  # 10MB
         backupCount=5,
         encoding='utf-8'
@@ -84,7 +86,7 @@ def preload_strategies():
         strategies = list(global_strategy_manager.get_all_strategies().keys())
         _strategy_cache = strategies
         _cache_timestamp = time.time()
-        logger.info(f"预加载策略完成，共 {len(strategies)} 个策略: {strategies}")
+        logger.info(f"预加载策略完成，共 {len(strategies)} 个策略")
     except Exception as e:
         logger.error(f"预加载策略失败: {e}")
         _strategy_cache = []
@@ -96,31 +98,36 @@ from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Web应用启动，开始预加载策略...")
     preload_strategies()
     yield
-async def startup_event():
-    logger.info("Web应用启动，开始预加载策略...")
-    preload_strategies()
 
 # 挂载静态文件和模板
-templates = Jinja2Templates(directory="web/templates")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "web/templates"))
 
 # 创建web目录
-os.makedirs("web/static", exist_ok=True)
-os.makedirs("web/templates", exist_ok=True)
+web_dir = os.path.join(BASE_DIR, "web")
+os.makedirs(os.path.join(web_dir, "static"), exist_ok=True)
+os.makedirs(os.path.join(web_dir, "templates"), exist_ok=True)
 # 创建logs目录
-os.makedirs("logs", exist_ok=True)
+logs_dir = os.path.join(BASE_DIR, "logs")
+os.makedirs(logs_dir, exist_ok=True)
 # 创建output目录用于存储图表
-os.makedirs("output", exist_ok=True)
+output_dir = os.path.join(BASE_DIR, "output")
+os.makedirs(output_dir, exist_ok=True)
 
 # 挂载output目录作为静态文件服务
-app.mount("/output", StaticFiles(directory="output"), name="output")
+app.mount("/output", StaticFiles(directory=output_dir), name="output")
 
 # 缓存策略列表
 _strategy_cache = None
 _cache_timestamp = None
 CACHE_TIMEOUT = 300  # 5分钟缓存
+
+# 舆情分析缓存
+_sentiment_cache = None
+_sentiment_cache_time = None
+SENTIMENT_CACHE_TIMEOUT = 3600  # 1小时缓存
 
 
 def get_cached_strategies():
@@ -155,7 +162,6 @@ async def home(request: Request):
     """主页 - 显示策略回测界面"""
     logger.info(f"用户访问主页 - 客户端IP: {request.client.host}")
     strategies = get_cached_strategies()
-    logger.info(f"获取到 {len(strategies)} 个策略")
     return templates.TemplateResponse("index.html", {
         "request": request,
         "strategies": strategies,
@@ -167,7 +173,6 @@ async def backtest_form(request: Request):
     """回测表单页面"""
     logger.info(f"用户访问回测表单页面 - 客户端IP: {request.client.host}")
     strategies = get_cached_strategies()
-    logger.info(f"回测表单页面加载成功，可用策略数: {len(strategies)}")
     return templates.TemplateResponse("backtest_form.html", {
         "request": request,
         "strategies": strategies,
@@ -187,24 +192,22 @@ async def run_backtest(
     """运行策略回测"""
     client_ip = request.client.host
     logger.info(f"收到回测请求 - 客户端IP: {client_ip}, 策略: {strategy_name}, 股票: {stock_code}")
-    logger.info(f"回测参数 - 初始资金: {initial_capital}, 开始日期: {start_date}, 结束日期: {end_date}, 佣金率: {commission_rate}")
     
     try:
         # 延迟导入组件
         BacktestRunner, global_strategy_manager, Stock, PerformanceAnalyzer, bt = get_backtest_components()
         
         # 创建回测运行器
-        logger.info("初始化回测运行器")
+        logger.info(f"开始回测 - 策略: {strategy_name}, 股票: {stock_code}")
         runner = BacktestRunner()
         
-        # 设置参数
+        # 设置回测参数
         runner.set_initial_capital(initial_capital)
         runner.set_commission(commission_rate)
         runner.add_analyzers()
-        logger.info("回测参数设置完成")
         
         # 获取股票数据
-        logger.info(f"开始获取股票 {stock_code} 的数据")
+        logger.info(f"获取股票 {stock_code} 的数据")
         stock = Stock(stock_code)
         stock_data, filename = stock.get_stock_data(
             start_date=start_date.replace('-', ''),
@@ -221,8 +224,6 @@ async def run_backtest(
                 "title": "错误"
             })
         
-        logger.info(f"成功获取股票数据，数据条数: {len(stock_data)}")
-        
         # 添加数据到回测
         # 转换日期列
         if '时间' in stock_data.columns:
@@ -230,7 +231,6 @@ async def run_backtest(
             stock_data.set_index('时间', inplace=True)
         
         # 创建Backtrader数据源
-        logger.info("创建Backtrader数据源")
         data_feed = bt.feeds.PandasData(
             dataname=stock_data,
             name=stock_code,
@@ -365,6 +365,37 @@ async def run_backtest(
     except Exception as e:
         error_msg = f"{str(e)}\n{traceback.format_exc()}"
         logger.error(f"回测执行出错 - 策略: {strategy_name}, 股票: {stock_code}, 错误: {error_msg}")
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "error": error_msg,
+            "title": "错误"
+        })
+
+@app.get("/refresh_sentiment", response_class=HTMLResponse)
+async def refresh_sentiment_page(request: Request):
+    """强制刷新舆情分析缓存"""
+    global _sentiment_cache, _sentiment_cache_time
+    
+    client_ip = request.client.host
+    logger.info(f"用户刷新舆情分析 - 客户端IP: {client_ip}")
+    
+    try:
+        sentiment_result = get_trendradar_sentiment()
+        _sentiment_cache = sentiment_result
+        _sentiment_cache_time = datetime.now()
+        logger.info(f"舆情分析刷新成功")
+        
+        return templates.TemplateResponse("sentiment_analysis.html", {
+            "request": request,
+            "title": "舆情分析",
+            "news_list": [],
+            "sectors": [],
+            "news_count": 0,
+            "update_time": _sentiment_cache_time.strftime('%Y-%m-%d %H:%M:%S')
+        })
+    except Exception as e:
+        error_msg = f"{str(e)}\n{traceback.format_exc()}"
+        logger.error(f"舆情分析刷新出错: {error_msg}")
         return templates.TemplateResponse("error.html", {
             "request": request,
             "error": error_msg,
@@ -599,8 +630,6 @@ async def sentiment_analysis(request: Request):
         if sentiment_data and 'top_sectors' in sentiment_data:
             sectors = sentiment_data['top_sectors']
         
-        logger.info(f"获取到 {len(news_data)} 条热门新闻, {len(sectors)} 个板块得分")
-        
         return templates.TemplateResponse("sentiment_analysis.html", {
             "request": request,
             "title": "舆情分析",
@@ -620,10 +649,26 @@ async def sentiment_analysis(request: Request):
 
 @app.get("/api/sentiment")
 async def get_sentiment_api():
-    """API接口：获取舆情分析结果"""
+    """API接口：获取舆情分析结果（检查1小时内是否有txt文件）"""
+    global _sentiment_cache, _sentiment_cache_time
+    
     logger.info("API接口被调用：获取舆情分析结果")
+    
+    has_recent, txt_file = check_recent_txt_exists(max_age_seconds=3600)
+    if has_recent:
+        logger.info(f"存在1小时内的txt文件: {txt_file}，从文件读取数据")
+        news_data = parse_trendradar_txt(txt_file)
+        if news_data:
+            from src.factor.sentiment import calculate_sentiment_factor
+            sentiment_result = calculate_sentiment_factor(news_data)
+            _sentiment_cache = sentiment_result
+            _sentiment_cache_time = datetime.now()
+            return sentiment_result
+    
     try:
         sentiment_result = get_trendradar_sentiment()
+        _sentiment_cache = sentiment_result
+        _sentiment_cache_time = datetime.now()
         logger.info(f"舆情分析结果: {sentiment_result}")
         return sentiment_result
     except Exception as e:
@@ -708,8 +753,26 @@ async def analyze_sentiment(
         stock_sector = get_stock_sector(stock_code)
         logger.info(f"股票 {stock_code} 所属行业: {stock_sector}")
         
-        # 获取舆情分析结果
-        sentiment_result = get_trendradar_sentiment()
+        # 获取舆情分析结果（检查1小时内是否有txt文件）
+        global _sentiment_cache, _sentiment_cache_time
+        
+        has_recent, txt_file = check_recent_txt_exists(max_age_seconds=3600)
+        if has_recent:
+            logger.info(f"存在1小时内的txt文件: {txt_file}，从文件读取数据")
+            news_data = parse_trendradar_txt(txt_file)
+            if news_data:
+                from src.factor.sentiment import calculate_sentiment_factor
+                sentiment_result = calculate_sentiment_factor(news_data)
+                _sentiment_cache = sentiment_result
+                _sentiment_cache_time = datetime.now()
+            else:
+                sentiment_result = get_trendradar_sentiment()
+                _sentiment_cache = sentiment_result
+                _sentiment_cache_time = datetime.now()
+        else:
+            sentiment_result = get_trendradar_sentiment()
+            _sentiment_cache = sentiment_result
+            _sentiment_cache_time = datetime.now()
         
         # 根据选择的策略生成交易信号
         _, global_strategy_manager, _, _, _ = get_backtest_components()

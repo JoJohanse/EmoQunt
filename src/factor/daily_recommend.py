@@ -6,20 +6,27 @@ import os
 import csv
 import json
 import logging
-
-try:
-    import baostock as bs
-    BAOSTOCK_AVAILABLE = True
-except ImportError:
-    BAOSTOCK_AVAILABLE = False
-    logging.warning("baostock 未安装，请运行: pip install baostock")
+import sys
+import io
+import contextlib
 
 logger = logging.getLogger(__name__)
+
+bs_logger = logging.getLogger('baostock')
+bs_logger.setLevel(logging.WARNING)
+
+with contextlib.redirect_stdout(io.StringIO()):
+    try:
+        import baostock as bs
+        BAOSTOCK_AVAILABLE = True
+    except ImportError:
+        BAOSTOCK_AVAILABLE = False
+        logger.warning("baostock 未安装，请运行: pip install baostock")
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CSV_PATH = os.path.join(BASE_DIR, "stock_data", "沪深300", "沪深300成分股列表.csv")
 INDUSTRY_PATH = os.path.join(BASE_DIR, "stock_data", "沪深300", "行业种类.txt")
-CACHE_DIR = os.path.join(BASE_DIR, "nes_data", "stock_cache")
+CACHE_DIR = os.path.join(BASE_DIR, "stock_data", "stock_cache")
 
 STOCK_DATA_CACHE = {}
 
@@ -36,7 +43,8 @@ def get_cached_stock_data(stock_code: str) -> Optional[pd.DataFrame]:
             df = pd.read_csv(cache_file, index_col=0)
             df.index = pd.to_datetime(df.index)
             return df
-        except:
+        except Exception as e:
+            logger.warning(f"读取缓存文件失败 {cache_file}: {e}")
             return None
     return None
 
@@ -227,9 +235,20 @@ def get_stock_data(stock_code: str, days: int = 20) -> Optional[pd.DataFrame]:
     
     cached_df = get_cached_stock_data(stock_code)
     if cached_df is not None:
-        logger.info(f"从缓存加载股票 {stock_code} 数据")
-        STOCK_DATA_CACHE[stock_code] = cached_df
-        return cached_df.tail(days) if len(cached_df) >= days else cached_df
+        if len(cached_df) > 0:
+            latest_date = cached_df.index[-1]
+            if isinstance(latest_date, str):
+                latest_date = pd.to_datetime(latest_date).date()
+            else:
+                latest_date = latest_date.date()
+            today = datetime.now().date()
+            date_diff = (today - latest_date).days
+            logger.info(f"股票 {stock_code} 缓存数据最新日期: {latest_date}, 今天: {today}")
+            if date_diff <= 1:
+                STOCK_DATA_CACHE[stock_code] = cached_df
+                return cached_df.tail(days) if len(cached_df) >= days else cached_df
+            else:
+                logger.info(f"股票 {stock_code} 缓存数据过期，需要重新获取")
     
     if not BAOSTOCK_AVAILABLE:
         logger.warning("baostock 未安装")
@@ -244,25 +263,26 @@ def get_stock_data(stock_code: str, days: int = 20) -> Optional[pd.DataFrame]:
         else:
             bs_code = f"sh.{code}"
         
-        lg = bs.login()
-        if lg.error_code != '0':
-            logger.warning(f"baostock 登录失败: {lg.error_msg}")
-            return None
+        with contextlib.redirect_stdout(io.StringIO()):
+            lg = bs.login()
+            if lg.error_code != '0':
+                logger.warning(f"baostock 登录失败: {lg.error_msg}")
+                return None
+                
+            rs = bs.query_history_k_data_plus(
+                bs_code,
+                "date,code,open,high,low,close,volume,amount",
+                start_date=(datetime.now() - timedelta(days=days+20)).strftime("%Y-%m-%d"),
+                end_date=datetime.now().strftime("%Y-%m-%d"),
+                frequency="d",
+                adjustflag="2"
+            )
             
-        rs = bs.query_history_k_data_plus(
-            bs_code,
-            "date,code,open,high,low,close,volume,amount",
-            start_date=(datetime.now() - timedelta(days=days+20)).strftime("%Y-%m-%d"),
-            end_date=datetime.now().strftime("%Y-%m-%d"),
-            frequency="d",
-            adjustflag="2"
-        )
-        
-        data_list = []
-        while (rs.error_code == '0') and rs.next():
-            data_list.append(rs.get_row_data())
-        
-        bs.logout()
+            data_list = []
+            while (rs.error_code == '0') and rs.next():
+                data_list.append(rs.get_row_data())
+            
+            bs.logout()
         
         if not data_list:
             logger.warning(f"未获取到股票 {stock_code} 的数据")

@@ -23,11 +23,9 @@ from .trendradar import (
     convert_to_finance_news_format,
     save_to_finance_news_jsonl,
     get_trendradar_sentiment,
-    load_news_list,
-    load_processed_ids,
-    save_news,
-    process_single_news,
-    process_news
+    crawl_and_get_news,
+    save_news_to_txt,
+    check_recent_txt_exists
 )
 
 # 导出所有功能
@@ -56,9 +54,7 @@ __all__ = [
     'convert_to_finance_news_format',
     'save_to_finance_news_jsonl',
     'get_trendradar_sentiment',
-    'load_news_list',
-    'load_processed_ids',
-    'save_news',
-    'process_single_news',
-    'process_news'
+    'crawl_and_get_news',
+    'save_news_to_txt',
+    'check_recent_txt_exists'
 ]
