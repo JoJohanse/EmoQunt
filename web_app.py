@@ -20,12 +20,8 @@ from logging.handlers import RotatingFileHandler
 # 添加项目路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# 导入可视化模块
-from src.visualization import StrategyVisualizer
-from src.factor import get_trendradar_sentiment, get_latest_trendradar_data, get_stock_sector, is_hs300_stock, check_recent_txt_exists, parse_trendradar_txt
-from src.factor.sentiment import save_sentiment_result, calculate_sentiment_factor
-from src.factor.daily_recommend import get_sector_stocks
-import matplotlib.pyplot as plt
+
+from src.factor import get_trendradar_sentiment, get_latest_trendradar_data, get_stock_sector, is_hs300_stock
 
 # 延迟导入，避免启动时加载
 def get_backtest_components():
@@ -133,25 +129,26 @@ SENTIMENT_CACHE_TIMEOUT = 3600  # 1小时缓存
 
 
 def get_cached_strategies():
-    """获取缓存的策略列表"""
+    """获取缓存的策略列表 - 只返回用户策略"""
     global _strategy_cache, _cache_timestamp
     import time
     
     current_time = time.time()
     
-    # 检查缓存是否有效
+    # 检查缓存是否有效（缩短为10秒，方便测试）
     if (_strategy_cache is not None and 
         _cache_timestamp is not None and 
-        current_time - _cache_timestamp < CACHE_TIMEOUT):
+        current_time - _cache_timestamp < 10):
         return _strategy_cache
     
-    # 重新加载策略
-    # 优化：只导入必要的模块，避免加载整个backtest组件
+    # 只从用户策略JSON文件读取策略列表
     try:
-        from src.Strategy import global_strategy_manager
-        strategies = list(global_strategy_manager.get_all_strategies().keys())
-    except ImportError:
-        # 如果导入失败，返回空列表
+        from src.Strategy.strategy_manager import load_user_strategies
+        user_strategies = load_user_strategies()
+        strategies = list(user_strategies.keys())
+        logger.info(f"加载用户策略列表: {strategies}")
+    except Exception as e:
+        logger.error(f"加载用户策略失败: {e}")
         strategies = []
     
     _strategy_cache = strategies
@@ -189,178 +186,32 @@ async def run_backtest(
     start_date: str = Form(...),
     end_date: str = Form(...),
     commission_rate: float = Form(0.001),
-    stock_code: str = Form("000001")  # 默认使用平安银行
+    stock_code: str = Form("000001")
 ):
     """运行策略回测"""
     client_ip = request.client.host
     logger.info(f"收到回测请求 - 客户端IP: {client_ip}, 策略: {strategy_name}, 股票: {stock_code}")
     
     try:
-        # 延迟导入组件
-        BacktestRunner, global_strategy_manager, Stock, PerformanceAnalyzer, bt = get_backtest_components()
+        from src.backtest.backtest_manager import run_backtest_with_charts
         
-        # 创建回测运行器
-        logger.info(f"开始回测 - 策略: {strategy_name}, 股票: {stock_code}")
-        runner = BacktestRunner()
-        
-        # 设置回测参数
-        runner.set_initial_capital(initial_capital)
-        runner.set_commission(commission_rate)
-        runner.add_analyzers()
-        
-        # 获取股票数据
-        logger.info(f"获取股票 {stock_code} 的数据")
-        stock = Stock(stock_code)
-        stock_data, filename = stock.get_stock_data(
-            start_date=start_date.replace('-', ''),
-            end_date=end_date.replace('-', ''),
-            adjust='hfq',
-            type='daily'
+        result = run_backtest_with_charts(
+            strategy_name=strategy_name,
+            stock_code=stock_code,
+            start_date=start_date,
+            end_date=end_date,
+            initial_capital=initial_capital,
+            commission_rate=commission_rate,
+            output_dir=output_dir
         )
-        
-        if stock_data.empty:
-            logger.warning(f"无法获取股票 {stock_code} 的数据")
-            return templates.TemplateResponse("error.html", {
-                "request": request,
-                "error": f"无法获取股票 {stock_code} 的数据",
-                "title": "错误"
-            })
-        
-        # 添加数据到回测
-        # 转换日期列
-        if '时间' in stock_data.columns:
-            stock_data['时间'] = pd.to_datetime(stock_data['时间'])
-            stock_data.set_index('时间', inplace=True)
-        
-        # 创建Backtrader数据源
-        data_feed = bt.feeds.PandasData(
-            dataname=stock_data,
-            name=stock_code,
-            open='开盘',
-            high='最高',
-            low='最低',
-            close='收盘',
-            volume='成交量',
-            openinterest=-1
-        )
-        
-        # 添加数据到Cerebro
-        runner.cerebro.adddata(data_feed)
-        
-        # 添加策略
-        strategy_class = global_strategy_manager.get_strategy(strategy_name)
-        if strategy_class:
-            # 获取策略的默认参数
-            params = {}
-            if hasattr(strategy_class, 'params'):
-                try:
-                    # _getpairs() 返回的是 OrderedDict，直接遍历键值对
-                    for param_name, default_value in strategy_class.params._getpairs().items():
-                        params[param_name] = default_value
-                except Exception as e:
-                    logger.error(f"获取策略 {strategy_name} 参数时出错: {e}")
-                    # 如果参数获取失败，继续执行，使用空参数字典
-                    params = {}
-            logger.info(f"添加策略 {strategy_name} 到回测引擎，参数: {params}")
-            
-            runner.cerebro.addstrategy(strategy_class, **params)
-        
-        # 运行回测
-        logger.info("开始运行回测...")
-        results = runner.cerebro.run()
-        logger.info("回测执行完成")
-        
-        # 获取策略实例
-        strat = results[0]
-        
-        # 获取账户价值历史
-        if hasattr(runner.cerebro.broker, 'value_history'):
-            # 如果有历史价值数据
-            value_history = runner.cerebro.broker.getvalue_history() if hasattr(runner.cerebro.broker, 'getvalue_history') else [initial_capital]
-        else:
-            # 模拟价值历史
-            logger.warning("未找到实际价值历史，使用模拟数据")
-            value_history = [initial_capital]
-            for i in range(1, min(len(stock_data), 100)):
-                # 模拟一些随机收益
-                daily_return = np.random.normal(0.001, 0.02)
-                value_history.append(value_history[-1] * (1 + daily_return))
-        
-        # 计算收益率
-        returns = [0.0]
-        for i in range(1, len(value_history)):
-            returns.append((value_history[i] - value_history[i-1]) / value_history[i-1])
-        
-        # 生成绩效报告
-        logger.info("生成绩效报告")
-        returns_series = pd.Series(returns)
-        analyzer = PerformanceAnalyzer(returns_series)
-        performance_data = analyzer.generate_report()
-        
-        # 格式化绩效数据
-        formatted_performance = {
-            "总收益率": f"{performance_data.get('总收益率', 0):.2%}",
-            "年化收益率": f"{performance_data.get('年化收益率', 0):.2%}",
-            "夏普比率": round(performance_data.get('夏普比率', 0), 2),
-            "最大回撤": f"{performance_data.get('最大回撤', 0):.2%}",
-            "胜率": f"{performance_data.get('胜率', 0):.2%}",
-            "盈亏比": round(performance_data.get('盈亏比', 0), 2)
-        }
-        
-        logger.info(f"绩效数据计算完成 - 总收益率: {formatted_performance['总收益率']}, 夏普比率: {formatted_performance['夏普比率']}")
-        
-        # 生成收益曲线数据
-        dates = stock_data.index[:len(value_history)].tolist()
-        normalized_values = [val/initial_capital for val in value_history]
-        
-        # 创建收益率序列
-        returns_series = pd.Series(returns, index=dates)
-        
-        # 使用可视化模块生成图表
-        visualizer = StrategyVisualizer()
-        
-        # 生成固定的时间戳
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        
-        # 创建策略特定的目录
-        strategy_dir = f"output/{strategy_name}_{stock_code}/{timestamp}"
-        os.makedirs(strategy_dir, exist_ok=True)
-        
-        # 生成收益曲线图表
-        equity_chart_path = f"{strategy_dir}/equity_curve_{strategy_name}_{stock_code}_{timestamp}.png"
-        equity_fig = visualizer.plot_cumulative_returns(returns_series, title=f"{strategy_name} 收益曲线")
-        equity_fig.savefig(equity_chart_path)
-        plt.close(equity_fig)
-        
-        # 生成回撤曲线图表
-        drawdown_chart_path = f"{strategy_dir}/drawdown_curve_{strategy_name}_{stock_code}_{timestamp}.png"
-        drawdown_fig = visualizer.plot_drawdown(returns_series, title=f"{strategy_name} 回撤曲线")
-        drawdown_fig.savefig(drawdown_chart_path)
-        plt.close(drawdown_fig)
-        
-        # 生成综合绩效仪表板
-        dashboard_path = f"{strategy_dir}/performance_dashboard_{strategy_name}_{stock_code}_{timestamp}.png"
-        dashboard_fig = visualizer.plot_performance_dashboard(returns_series)
-        dashboard_fig.savefig(dashboard_path)
-        plt.close(dashboard_fig)
-        
-        logger.info(f"图表生成完成，保存路径:")
-        logger.info(f"- 收益曲线: {equity_chart_path}")
-        logger.info(f"- 回撤曲线: {drawdown_chart_path}")
-        logger.info(f"- 绩效仪表板: {dashboard_path}")
-        
-        # 构建相对路径（用于Web访问）
-        equity_chart_url = f"/output/{strategy_name}_{stock_code}/{timestamp}/{os.path.basename(equity_chart_path)}"
-        drawdown_chart_url = f"/output/{strategy_name}_{stock_code}/{timestamp}/{os.path.basename(drawdown_chart_path)}"
-        dashboard_url = f"/output/{strategy_name}_{stock_code}/{timestamp}/{os.path.basename(dashboard_path)}"
         
         return templates.TemplateResponse("backtest_result.html", {
             "request": request,
             "strategy_name": strategy_name,
-            "performance_data": formatted_performance,
-            "equity_chart_url": equity_chart_url,
-            "drawdown_chart_url": drawdown_chart_url,
-            "dashboard_url": dashboard_url,
+            "performance_data": result["performance_data"],
+            "equity_chart_url": result["equity_chart_url"],
+            "drawdown_chart_url": result["drawdown_chart_url"],
+            "dashboard_url": result["dashboard_url"],
             "title": "回测结果"
         })
         
@@ -409,9 +260,10 @@ async def strategies_list(request: Request):
     """策略列表页面"""
     logger.info(f"用户访问策略列表页面 - 客户端IP: {request.client.host}")
     
-    from src.Strategy.strategy_manager import load_user_strategies
+    from src.Strategy.strategy_manager import load_user_strategies, get_strategy_templates
     
     user_strategies = load_user_strategies()
+    strategy_templates = get_strategy_templates()
     
     _, global_strategy_manager, _, _, _ = get_backtest_components()
     strategies = global_strategy_manager.get_all_strategies()
@@ -440,10 +292,14 @@ async def strategies_list(request: Request):
         strategy_details.append(details)
     
     for name, config in user_strategies.items():
+        template_name = config.get("template", "sentiment_ma")
+        template = strategy_templates.get(template_name, {})
         details = {
             "name": name,
             "description": config.get("description", ""),
             "parameters": config.get("parameters", []),
+            "template": template_name,
+            "template_name": template.get("name", ""),
             "is_user_strategy": True
         }
         strategy_details.append(details)
@@ -453,6 +309,7 @@ async def strategies_list(request: Request):
     return templates.TemplateResponse("strategies.html", {
         "request": request,
         "strategy_details": strategy_details,
+        "templates": strategy_templates,
         "title": "策略列表"
     })
 
@@ -537,11 +394,12 @@ async def create_strategy(request: Request):
     """API接口：创建新策略"""
     logger.info("API接口被调用：创建新策略")
     try:
-        from src.Strategy.strategy_manager import save_user_strategy, is_user_strategy
+        from src.Strategy.strategy_manager import save_user_strategy, is_user_strategy, get_strategy_template
         
         body = await request.json()
         name = body.get("name", "").strip()
         description = body.get("description", "")
+        template_name = body.get("template", "sentiment_ma")
         parameters = body.get("parameters", [])
         
         if not name:
@@ -550,12 +408,13 @@ async def create_strategy(request: Request):
         if is_user_strategy(name):
             return {"error": "策略名称已存在"}, 400
         
-        _, global_strategy_manager, _, _, _ = get_backtest_components()
-        if global_strategy_manager.get_strategy(name):
-            return {"error": "策略名称与现有策略冲突"}, 400
+        template = get_strategy_template(template_name)
+        if not template:
+            return {"error": "无效的策略模板"}, 400
         
         config = {
             "description": description,
+            "template": template_name,
             "parameters": parameters,
             "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
@@ -567,6 +426,25 @@ async def create_strategy(request: Request):
             return {"error": "保存策略失败"}, 500
     except Exception as e:
         logger.error(f"创建策略失败: {e}")
+        return {"error": str(e)}, 500
+
+@app.get("/api/strategies/templates")
+async def get_strategy_templates_api():
+    """API接口：获取策略模板列表"""
+    logger.info("API接口被调用：获取策略模板列表")
+    try:
+        from src.Strategy.strategy_manager import get_strategy_templates
+        templates = get_strategy_templates()
+        result = {}
+        for name, template in templates.items():
+            result[name] = {
+                "name": template.get("name", ""),
+                "description": template.get("description", ""),
+                "parameters": template.get("parameters", [])
+            }
+        return result
+    except Exception as e:
+        logger.error(f"获取策略模板失败: {e}")
         return {"error": str(e)}, 500
 
 @app.put("/api/strategies/{strategy_name}")
@@ -582,9 +460,11 @@ async def update_strategy(strategy_name: str, request: Request):
         body = await request.json()
         description = body.get("description", "")
         parameters = body.get("parameters", [])
+        template = body.get("template", "sentiment_ma")
         
         config = {
             "description": description,
+            "template": template,
             "parameters": parameters
         }
         
@@ -622,42 +502,9 @@ async def sentiment_analysis(request: Request):
     logger.info(f"用户访问舆情分析页面 - 客户端IP: {request.client.host}")
     
     try:
-        from src.factor.sentiment import get_latest_sentiment_result
+        from src.factor.sentiment import get_or_generate_sentiment_data
         
-        has_recent, txt_file = check_recent_txt_exists(max_age_seconds=3600)
-        if has_recent:
-            logger.info(f"存在1小时内的txt文件: {txt_file}，从文件读取数据")
-            news_data = parse_trendradar_txt(txt_file)
-        else:
-            news_data = get_latest_trendradar_data()
-        
-        sentiment_data = get_latest_sentiment_result()
-        
-        if sentiment_data is None:
-            logger.info("没有今天的舆情结果，正在生成新的分析...")
-            sentiment_result = get_trendradar_sentiment()
-            if sentiment_result:
-                industry_details = sentiment_result.get('analysis_result', {}).get('industry_details', [])
-                sorted_industries = sorted(industry_details, key=lambda x: x.get('score', 0), reverse=True)[:10]
-                
-                top_sectors_list = []
-                for item in sorted_industries:
-                    sector_name = item.get('industry', '')
-                    sentiment = int(item.get('score', 0) * 100)
-                    stocks = get_sector_stocks(sector_name)[:5]
-                    top_sectors_list.append({
-                        "name": sector_name,
-                        "sentiment": sentiment,
-                        "stocks": [{"code": s['code'], "name": s['name']} for s in stocks]
-                    })
-                
-                sentiment_data = {
-                    "date": datetime.now().strftime("%Y-%m-%d"),
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "top_sectors": top_sectors_list,
-                    "news_count": len(news_data) if news_data else 0
-                }
-                save_sentiment_result(sentiment_data)
+        sentiment_data, news_data = get_or_generate_sentiment_data()
         
         sectors = []
         if sentiment_data and 'top_sectors' in sentiment_data:
@@ -666,9 +513,9 @@ async def sentiment_analysis(request: Request):
         return templates.TemplateResponse("sentiment_analysis.html", {
             "request": request,
             "title": "舆情分析",
-            "news_list": news_data[:20],
+            "news_list": news_data[:20] if news_data else [],
             "sectors": sectors,
-            "news_count": len(news_data),
+            "news_count": len(news_data) if news_data else 0,
             "update_time": sentiment_data.get('timestamp', '') if sentiment_data else ''
         })
     except Exception as e:
@@ -682,28 +529,42 @@ async def sentiment_analysis(request: Request):
 
 @app.get("/api/sentiment")
 async def get_sentiment_api():
-    """API接口：获取舆情分析结果（检查1小时内是否有txt文件）"""
+    """API接口：获取舆情分析结果"""
     global _sentiment_cache, _sentiment_cache_time
     
     logger.info("API接口被调用：获取舆情分析结果")
     
-    has_recent, txt_file = check_recent_txt_exists(max_age_seconds=3600)
-    if has_recent:
-        logger.info(f"存在1小时内的txt文件: {txt_file}，从文件读取数据")
-        news_data = parse_trendradar_txt(txt_file)
-        if news_data:
-            from src.factor.sentiment import calculate_sentiment_factor
-            sentiment_result = calculate_sentiment_factor(news_data)
+    try:
+        from src.factor.sentiment import get_or_generate_sentiment_data, calculate_sentiment_factor
+        from nes_data.trendradar.trendradar import check_recent_txt_exists, parse_trendradar_txt
+        
+        has_recent, txt_file = check_recent_txt_exists(max_age_seconds=3600)
+        if has_recent:
+            logger.info(f"存在1小时内的txt文件: {txt_file}，从文件读取数据")
+            news_data = parse_trendradar_txt(txt_file)
+            if news_data:
+                sentiment_result = calculate_sentiment_factor(news_data)
+                _sentiment_cache = sentiment_result
+                _sentiment_cache_time = datetime.now()
+                return sentiment_result
+        
+        sentiment_data, news_data = get_or_generate_sentiment_data(force_refresh=True)
+        
+        if sentiment_data:
+            sentiment_result = {
+                'analysis_result': {
+                    'industry_details': [
+                        {'industry': s['name'], 'score': s['sentiment'] / 100} 
+                        for s in sentiment_data.get('all_sectors', [])
+                    ]
+                },
+                'average_score': sum(s['sentiment'] for s in sentiment_data.get('all_sectors', [])) / max(len(sentiment_data.get('all_sectors', [])), 1) / 100
+            }
             _sentiment_cache = sentiment_result
             _sentiment_cache_time = datetime.now()
             return sentiment_result
-    
-    try:
-        sentiment_result = get_trendradar_sentiment()
-        _sentiment_cache = sentiment_result
-        _sentiment_cache_time = datetime.now()
-        logger.info(f"舆情分析结果: {sentiment_result}")
-        return sentiment_result
+        else:
+            return {'error': '无法获取舆情数据', 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
     except Exception as e:
         logger.error(f"获取舆情分析结果时出错: {e}")
         return {
@@ -773,162 +634,67 @@ async def analyze_sentiment(
     logger.info(f"收到舆情分析请求 - 客户端IP: {client_ip}, 策略: {strategy}, 股票: {stock_code}")
     
     try:
-        # 检查股票是否为沪深300成分股
+        from src.factor.sentiment import get_or_generate_sentiment_data
+        from nes_data.trendradar.trendradar import check_recent_txt_exists, parse_trendradar_txt
+        
         if not is_hs300_stock(stock_code):
-            logger.warning(f"股票 {stock_code} 不是沪深300成分股，不支持舆情分析")
             return templates.TemplateResponse("error.html", {
                 "request": request,
                 "error": f"股票 {stock_code} 不是沪深300成分股，暂时只支持沪深300成分股的舆情分析",
                 "title": "错误"
             })
         
-        # 获取股票所属行业
         stock_sector = get_stock_sector(stock_code)
         logger.info(f"股票 {stock_code} 所属行业: {stock_sector}")
         
-        # 获取舆情分析结果（检查1小时内是否有txt文件）
-        global _sentiment_cache, _sentiment_cache_time
-        
         has_recent, txt_file = check_recent_txt_exists(max_age_seconds=3600)
         if has_recent:
-            logger.info(f"存在1小时内的txt文件: {txt_file}，从文件读取数据")
             news_data = parse_trendradar_txt(txt_file)
             if news_data:
+                from src.factor.sentiment import calculate_sentiment_factor
                 sentiment_result = calculate_sentiment_factor(news_data)
-                _sentiment_cache = sentiment_result
-                _sentiment_cache_time = datetime.now()
             else:
+                from src.factor import get_trendradar_sentiment
                 sentiment_result = get_trendradar_sentiment()
-                _sentiment_cache = sentiment_result
-                _sentiment_cache_time = datetime.now()
         else:
+            from src.factor import get_trendradar_sentiment
             sentiment_result = get_trendradar_sentiment()
-            _sentiment_cache = sentiment_result
-            _sentiment_cache_time = datetime.now()
         
-        # 根据选择的策略生成交易信号
-        _, global_strategy_manager, _, _, _ = get_backtest_components()
-        strategy_class = global_strategy_manager.get_strategy(strategy)
+        from src.Strategy.strategy_manager import get_user_strategy
+        user_config = get_user_strategy(strategy)
         
-        if strategy_class:
-            # 获取策略的情绪权重参数
-            sentiment_weight = 0.3  # 默认权重
-            if hasattr(strategy_class, 'params'):
-                try:
-                    for param_name, default_value in strategy_class.params._getpairs().items():
-                        if param_name == 'sentiment_weight':
-                            sentiment_weight = default_value
-                        elif param_name == 'sentiment_threshold':
-                            sentiment_threshold = default_value
-                except Exception as e:
-                    logger.error(f"获取策略 {strategy} 参数时出错: {e}")
-            
-            # 基于策略的情绪权重调整信号
-            adjusted_score = sentiment_result['average_score'] * sentiment_weight
-            
-            # 生成调整后的交易信号
-            if adjusted_score > 0.3:
-                adjusted_signal = 'buy'
-            elif adjusted_score < -0.3:
-                adjusted_signal = 'sell'
-            else:
-                adjusted_signal = 'hold'
-            
-            sentiment_result['signal'] = adjusted_signal
-            sentiment_result['strategy'] = strategy
-            sentiment_result['stock_code'] = stock_code
-            sentiment_result['stock_sector'] = stock_sector
-            sentiment_result['sentiment_weight'] = sentiment_weight
+        sentiment_weight = 0.3
+        if user_config and 'parameters' in user_config:
+            for param in user_config['parameters']:
+                if param.get('name') == 'sentiment_weight':
+                    sentiment_weight = float(param.get('default', 0.3))
         
-        logger.info(f"舆情分析完成 - 情绪得分: {sentiment_result['average_score']}, 调整后得分: {adjusted_score}, 信号: {sentiment_result['signal']}, 行业: {stock_sector}")
+        adjusted_score = sentiment_result.get('average_score', 0) * sentiment_weight
+        adjusted_signal = 'buy' if adjusted_score > 0.3 else ('sell' if adjusted_score < -0.3 else 'hold')
         
-        # 生成固定的时间戳
+        sentiment_result['signal'] = adjusted_signal
+        sentiment_result['strategy'] = strategy
+        sentiment_result['stock_code'] = stock_code
+        sentiment_result['stock_sector'] = stock_sector
+        sentiment_result['sentiment_weight'] = sentiment_weight
+        
+        logger.info(f"舆情分析完成 - 得分: {sentiment_result['average_score']}, 调整后: {adjusted_score}, 信号: {adjusted_signal}")
+        
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        
-        # 创建舆情分析结果目录
         sentiment_dir = f"output/sentiment_analysis/{strategy}_{stock_code}/{timestamp}"
         os.makedirs(sentiment_dir, exist_ok=True)
         
-        # 生成情绪分布图表
-        import matplotlib.pyplot as plt
-        import numpy as np
+        sentiment_chart_url = generate_sentiment_chart(sentiment_result, sentiment_dir, timestamp)
         
-        # 准备数据
-        analysis_result = sentiment_result['analysis_result']
-        labels = ['正面', '负面', '中性']
-        sizes = [
-            analysis_result['score_distribution']['positive'],
-            analysis_result['score_distribution']['negative'],
-            analysis_result['score_distribution']['neutral']
-        ]
-        colors = ['#4CAF50', '#F44336', '#FFC107']
-        
-        # 处理可能的 NaN 值
-        sizes = [0 if np.isnan(s) else s for s in sizes]
-        
-        # 确保总和不为零
-        total = sum(sizes)
-        if total == 0:
-            sizes = [1/3, 1/3, 1/3]
-        else:
-            sizes = [s/total for s in sizes]
-        
-        # 生成饼图
-        fig, ax = plt.subplots(figsize=(8, 6))
-        ax.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
-        ax.axis('equal')  # 确保饼图是圆形
-        plt.title('舆情情绪分布')
-        
-        # 保存图表
-        sentiment_chart_path = f"{sentiment_dir}/sentiment_distribution_{timestamp}.png"
-        plt.savefig(sentiment_chart_path)
-        plt.close(fig)
-        
-        # 构建相对路径（用于Web访问）
-        sentiment_chart_url = f"/output/sentiment_analysis/{strategy}_{stock_code}/{timestamp}/{os.path.basename(sentiment_chart_path)}"
-        
-        # 获取最新的新闻数据
         news_data = get_latest_trendradar_data()
         
-        # 保存舆情分析结果
-        try:
-            
-            # 从当前分析结果中获取行业得分
-            industry_details = sentiment_result.get('analysis_result', {}).get('industry_details', [])
-            sorted_industries = sorted(industry_details, key=lambda x: x.get('score', 0), reverse=True)[:10]
-            
-            top_sectors_list = []
-            for item in sorted_industries:
-                sector_name = item.get('industry', '')
-                sentiment = int(item.get('score', 0) * 100)
-                stocks = get_sector_stocks(sector_name)[:5]
-                top_sectors_list.append({
-                    "name": sector_name,
-                    "sentiment": sentiment,
-                    "stocks": [{"code": s['code'], "name": s['name']} for s in stocks]
-                })
-            
-            sentiment_save_data = {
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "strategy": strategy,
-                "stock_code": stock_code,
-                "stock_sector": stock_sector,
-                "average_score": sentiment_result.get('average_score', 0),
-                "signal": sentiment_result.get('signal', 'hold'),
-                "top_sectors": top_sectors_list,
-                "news_count": len(news_data)
-            }
-            save_sentiment_result(sentiment_save_data)
-            logger.info("舆情分析结果已保存")
-        except Exception as save_err:
-            logger.warning(f"保存舆情结果失败: {save_err}")
+        save_sentiment_analysis_result(sentiment_result, strategy, stock_code, stock_sector, news_data)
         
         return templates.TemplateResponse("sentiment_result.html", {
             "request": request,
             "sentiment_result": sentiment_result,
             "sentiment_chart_url": sentiment_chart_url,
-            "news_data": news_data[:10],  # 只显示前10条新闻
+            "news_data": news_data[:10] if news_data else [],
             "title": "舆情分析结果"
         })
         
@@ -940,6 +706,66 @@ async def analyze_sentiment(
             "error": error_msg,
             "title": "错误"
         })
+
+
+def generate_sentiment_chart(sentiment_result: dict, sentiment_dir: str, timestamp: str) -> str:
+    """生成舆情分析图表"""
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    analysis_result = sentiment_result.get('analysis_result', {})
+    score_dist = analysis_result.get('score_distribution', {})
+    labels = ['正面', '负面', '中性']
+    sizes = [
+        score_dist.get('positive', 0) or 0,
+        score_dist.get('negative', 0) or 0,
+        score_dist.get('neutral', 0) or 0
+    ]
+    colors = ['#4CAF50', '#F44336', '#FFC107']
+    sizes = [0 if np.isnan(s) else s for s in sizes]
+    
+    total = sum(sizes)
+    if total == 0:
+        sizes = [1/3, 1/3, 1/3]
+    else:
+        sizes = [s/total for s in sizes]
+    
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
+    ax.axis('equal')
+    plt.title('舆情情绪分布')
+    
+    chart_path = f"{sentiment_dir}/sentiment_distribution_{timestamp}.png"
+    plt.savefig(chart_path)
+    plt.close(fig)
+    
+    return f"/output/sentiment_analysis/{os.path.basename(sentiment_dir)}/{os.path.basename(chart_path)}"
+
+
+def save_sentiment_analysis_result(sentiment_result: dict, strategy: str, stock_code: str, stock_sector: str, news_data: list):
+    """保存舆情分析结果"""
+    try:
+        from src.factor.sentiment import process_industry_details, save_sentiment_result
+        
+        industry_details = sentiment_result.get('analysis_result', {}).get('industry_details', [])
+        all_sectors_list, top_sectors_list = process_industry_details(industry_details)
+        
+        save_data = {
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "strategy": strategy,
+            "stock_code": stock_code,
+            "stock_sector": stock_sector,
+            "average_score": sentiment_result.get('average_score', 0),
+            "signal": sentiment_result.get('signal', 'hold'),
+            "all_sectors": all_sectors_list,
+            "top_sectors": top_sectors_list,
+            "news_count": len(news_data) if news_data else 0
+        }
+        save_sentiment_result(save_data)
+        logger.info("舆情分析结果已保存")
+    except Exception as e:
+        logger.warning(f"保存舆情结果失败: {e}")
 
 if __name__ == "__main__":
     # 运行Web服务器

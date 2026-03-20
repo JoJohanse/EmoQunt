@@ -690,17 +690,216 @@ def calculate_metrics_from_cerebro(cerebro) -> Dict:
 
 def calculate_strategy_metrics(portfolio_values: pd.Series, risk_free_rate: float = 0.03) -> Dict:
     """
-    根据投资组合价值序列计算策略指标
-    :param portfolio_values: 投资组合价值时间序列
+    计算策略绩效指标
+    :param portfolio_values: 投资组合价值序列
     :param risk_free_rate: 无风险利率
-    :return: 指标字典
+    :return: 绩效指标字典
     """
-    if len(portfolio_values) < 2:
-        return {}
+    import logging
+    logger = logging.getLogger(__name__)
     
-    # 计算日收益率
-    returns = portfolio_values.pct_change().dropna()
+    try:
+        returns = portfolio_values.pct_change().dropna()
+        
+        total_return = (portfolio_values.iloc[-1] / portfolio_values.iloc[0]) - 1
+        annual_return = (1 + total_return) ** (252 / len(portfolio_values)) - 1
+        
+        sharpe_ratio = (returns.mean() - risk_free_rate / 252) / returns.std() * np.sqrt(252) if returns.std() > 0 else 0
+        
+        cumulative = (1 + returns).cumprod()
+        running_max = cumulative.expanding().max()
+        drawdown = (cumulative - running_max) / running_max
+        max_drawdown = drawdown.min()
+        
+        trade_count = len(returns[returns > 0])
+        win_rate = trade_count / len(returns) if len(returns) > 0 else 0
+        
+        avg_gain = returns[returns > 0].mean() if len(returns[returns > 0]) > 0 else 0
+        avg_loss = abs(returns[returns < 0].mean()) if len(returns[returns < 0]) > 0 else 0
+        profit_loss_ratio = avg_gain / avg_loss if avg_loss > 0 else 0
+        
+        return {
+            "总收益率": total_return,
+            "年化收益率": annual_return,
+            "夏普比率": sharpe_ratio,
+            "最大回撤": max_drawdown,
+            "胜率": win_rate,
+            "盈亏比": profit_loss_ratio
+        }
+    except Exception as e:
+        logger.error(f"计算绩效指标失败: {e}")
+        return {
+            "总收益率": 0,
+            "年化收益率": 0,
+            "夏普比率": 0,
+            "最大回撤": 0,
+            "胜率": 0,
+            "盈亏比": 0
+        }
+
+
+def run_backtest_with_charts(
+    strategy_name: str,
+    stock_code: str,
+    start_date: str,
+    end_date: str,
+    initial_capital: float = 100000.0,
+    commission_rate: float = 0.001,
+    output_dir: str = "output"
+) -> Dict:
+    """
+    运行回测并生成图表
     
-    # 创建分析器并计算指标
-    analyzer = PerformanceAnalyzer(returns)
-    return analyzer.generate_report()
+    Args:
+        strategy_name: 策略名称
+        stock_code: 股票代码
+        start_date: 开始日期 (YYYY-MM-DD)
+        end_date: 结束日期 (YYYY-MM-DD)
+        initial_capital: 初始资金
+        commission_rate: 佣金费率
+        output_dir: 输出目录
+        
+    Returns:
+        包含绩效数据和图表URL的字典
+    """
+    import logging
+    from src.Strategy.Strategy import create_user_strategy_class
+    from src.Strategy.strategy_manager import get_user_strategy
+    from src.visualization import StrategyVisualizer
+    
+    logger = logging.getLogger(__name__)
+    
+    runner = BacktestRunner()
+    runner.set_initial_capital(initial_capital)
+    runner.set_commission(commission_rate)
+    runner.add_analyzers()
+    
+    stock = Stock(stock_code)
+    stock_data, _ = stock.get_stock_data(
+        start_date=start_date.replace('-', ''),
+        end_date=end_date.replace('-', ''),
+        adjust='hfq',
+        type='daily'
+    )
+    
+    if stock_data.empty:
+        raise ValueError(f"无法获取股票 {stock_code} 的数据")
+    
+    if '时间' in stock_data.columns:
+        stock_data['时间'] = pd.to_datetime(stock_data['时间'])
+        stock_data.set_index('时间', inplace=True)
+    
+    data_feed = bt.feeds.PandasData(
+        dataname=stock_data,
+        name=stock_code,
+        open='开盘',
+        high='最高',
+        low='最低',
+        close='收盘',
+        volume='成交量',
+        openinterest=-1
+    )
+    runner.cerebro.adddata(data_feed)
+    
+    user_config = get_user_strategy(strategy_name)
+    if not user_config:
+        raise ValueError(f"未找到用户策略: {strategy_name}")
+    
+    strategy_class = create_user_strategy_class(user_config)
+    
+    params = {}
+    if 'parameters' in user_config:
+        for param in user_config['parameters']:
+            param_name = param.get('name')
+            param_default = param.get('default')
+            if param_name:
+                param_type = param.get('type', 'int')
+                if param_type == 'int':
+                    params[param_name] = int(param_default)
+                elif param_type == 'float':
+                    params[param_name] = float(param_default)
+                elif param_type == 'bool':
+                    params[param_name] = bool(param_default)
+                else:
+                    params[param_name] = param_default
+    
+    runner.cerebro.addstrategy(strategy_class, **params)
+    
+    results = runner.cerebro.run()
+    
+    strat = results[0]
+    
+    value_history = [initial_capital]
+    try:
+        timereturn_analyzer = strat.analyzers.getbyname('timereturn')
+        if timereturn_analyzer:
+            returns_dict = timereturn_analyzer.get_analysis()
+            if returns_dict:
+                daily_returns = list(returns_dict.values())
+                cumulative_value = initial_capital
+                for ret in daily_returns:
+                    if ret is not None:
+                        cumulative_value = cumulative_value * (1 + ret)
+                        value_history.append(cumulative_value)
+    except Exception as e:
+        logger.warning(f"获取收益分析器失败: {e}")
+    
+    if len(value_history) == 1:
+        final_value = runner.cerebro.broker.getvalue()
+        if final_value != initial_capital:
+            value_history = [initial_capital, final_value]
+    
+    if len(value_history) < len(stock_data):
+        value_history = value_history + [value_history[-1]] * (len(stock_data) - len(value_history))
+    
+    if len(value_history) > len(stock_data):
+        value_history = value_history[:len(stock_data)]
+    
+    returns = [0.0]
+    for i in range(1, len(value_history)):
+        ret = (value_history[i] - value_history[i-1]) / value_history[i-1] if value_history[i-1] != 0 else 0
+        returns.append(ret)
+    
+    dates = stock_data.index[:len(value_history)].tolist()
+    if len(returns) != len(dates):
+        returns = returns[:len(dates)]
+    returns_series = pd.Series(returns, index=dates)
+    
+    performance_data = calculate_strategy_metrics(pd.Series(value_history, index=dates))
+    
+    formatted_performance = {
+        "总收益率": f"{performance_data.get('总收益率', 0):.2%}",
+        "年化收益率": f"{performance_data.get('年化收益率', 0):.2%}",
+        "夏普比率": round(performance_data.get('夏普比率', 0), 2),
+        "最大回撤": f"{performance_data.get('最大回撤', 0):.2%}",
+        "胜率": f"{performance_data.get('胜率', 0):.2%}",
+        "盈亏比": round(performance_data.get('盈亏比', 0), 2)
+    }
+    
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    strategy_dir = os.path.join(output_dir, f"{strategy_name}_{stock_code}", timestamp)
+    os.makedirs(strategy_dir, exist_ok=True)
+    
+    visualizer = StrategyVisualizer()
+    
+    equity_path = os.path.join(strategy_dir, f"equity_curve_{strategy_name}_{stock_code}_{timestamp}.png")
+    equity_fig = visualizer.plot_cumulative_returns(returns_series, title=f"{strategy_name} 收益曲线")
+    equity_fig.savefig(equity_path)
+    plt.close(equity_fig)
+    
+    drawdown_path = os.path.join(strategy_dir, f"drawdown_curve_{strategy_name}_{stock_code}_{timestamp}.png")
+    drawdown_fig = visualizer.plot_drawdown(returns_series, title=f"{strategy_name} 回撤曲线")
+    drawdown_fig.savefig(drawdown_path)
+    plt.close(drawdown_fig)
+    
+    dashboard_path = os.path.join(strategy_dir, f"performance_dashboard_{strategy_name}_{stock_code}_{timestamp}.png")
+    dashboard_fig = visualizer.plot_performance_dashboard(returns_series)
+    dashboard_fig.savefig(dashboard_path)
+    plt.close(dashboard_fig)
+    
+    return {
+        "performance_data": formatted_performance,
+        "equity_chart_url": f"/output/{strategy_name}_{stock_code}/{timestamp}/{os.path.basename(equity_path)}",
+        "drawdown_chart_url": f"/output/{strategy_name}_{stock_code}/{timestamp}/{os.path.basename(drawdown_path)}",
+        "dashboard_url": f"/output/{strategy_name}_{stock_code}/{timestamp}/{os.path.basename(dashboard_path)}"
+    }

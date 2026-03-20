@@ -400,3 +400,92 @@ def get_latest_sentiment_result() -> Optional[Dict]:
     except Exception as e:
         logger.error(f"加载最新舆情结果失败: {e}")
         return None
+
+
+def process_industry_details(industry_details: List[Dict], top_n: int = 10) -> Tuple[List[Dict], List[Dict]]:
+    """
+    处理行业详情，返回所有板块和前N名板块
+    
+    Args:
+        industry_details: 行业详情列表
+        top_n: 返回前N名板块
+        
+    Returns:
+        (all_sectors_list, top_sectors_list)
+    """
+    from src.factor.daily_recommend import get_sector_stocks
+    
+    sorted_industries = sorted(industry_details, key=lambda x: x.get('score', 0), reverse=True)
+    
+    all_sectors_list = []
+    for item in sorted_industries:
+        sector_name = item.get('industry', '')
+        sentiment = int(item.get('score', 0) * 100)
+        stocks = get_sector_stocks(sector_name)[:5]
+        all_sectors_list.append({
+            "name": sector_name,
+            "sentiment": sentiment,
+            "stocks": [{"code": s['code'], "name": s['name']} for s in stocks]
+        })
+    
+    top_sectors_list = all_sectors_list[:top_n]
+    
+    return all_sectors_list, top_sectors_list
+
+
+def get_or_generate_sentiment_data(force_refresh: bool = False) -> Tuple[Optional[Dict], Optional[List[Dict]]]:
+    """
+    一站式获取舆情数据，自动处理缓存、检查和更新
+    
+    Args:
+        force_refresh: 是否强制刷新
+        
+    Returns:
+        (sentiment_data, news_data)
+    """
+    from src.factor import get_trendradar_sentiment
+    from nes_data.trendradar.trendradar import (
+        get_latest_trendradar_data, 
+        save_news_to_txt,
+        check_recent_txt_exists,
+        parse_trendradar_txt
+    )
+    
+    news_data = None
+    sentiment_data = None
+    
+    has_recent, txt_file = check_recent_txt_exists(max_age_seconds=3600)
+    if has_recent:
+        news_data = parse_trendradar_txt(txt_file)
+    
+    if force_refresh:
+        if news_data is None:
+            news_data = get_latest_trendradar_data()
+            if news_data:
+                save_news_to_txt(news_data)
+    else:
+        sentiment_data = get_latest_sentiment_result()
+    
+    if sentiment_data is None:
+        logger.info("没有今天的舆情结果，正在生成新的分析...")
+        sentiment_result = get_trendradar_sentiment()
+        
+        if news_data is None:
+            news_data = get_latest_trendradar_data()
+            if news_data:
+                save_news_to_txt(news_data)
+        
+        if sentiment_result:
+            industry_details = sentiment_result.get('analysis_result', {}).get('industry_details', [])
+            all_sectors_list, top_sectors_list = process_industry_details(industry_details)
+            
+            sentiment_data = {
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "all_sectors": all_sectors_list,
+                "top_sectors": top_sectors_list,
+                "news_count": len(news_data) if news_data else 0
+            }
+            save_sentiment_result(sentiment_data)
+    
+    return sentiment_data, news_data

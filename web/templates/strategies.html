@@ -176,24 +176,24 @@
                             <input type="text" class="form-control" id="strategyName" name="name" required>
                         </div>
                         <div class="mb-3">
+                            <label for="strategyTemplate" class="form-label">策略模板 <span class="text-danger">*</span></label>
+                            <select class="form-select" id="strategyTemplate" name="template" onchange="loadTemplateParams()">
+                                <option value="">请选择策略模板</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
                             <label for="strategyDescription" class="form-label">策略描述</label>
                             <textarea class="form-control" id="strategyDescription" name="description" rows="3"></textarea>
                         </div>
                         <div class="mb-3">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <label class="form-label mb-0">参数配置</label>
-                                <button type="button" class="btn btn-sm btn-outline-primary" onclick="addParamRow()">
-                                    <i class="fas fa-plus"></i> 添加参数
-                                </button>
-                            </div>
+                            <label class="form-label mb-0">参数配置</label>
                             <div class="table-responsive mt-2">
                                 <table class="table table-sm table-bordered" id="paramTable">
                                     <thead class="table-light">
                                         <tr>
                                             <th>参数名</th>
                                             <th>默认值</th>
-                                            <th>类型</th>
-                                            <th>操作</th>
+                                            <th>范围</th>
                                         </tr>
                                     </thead>
                                     <tbody id="paramTableBody">
@@ -230,18 +230,80 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         let strategyModal;
+        let templates = {};
 
         document.addEventListener('DOMContentLoaded', function() {
             strategyModal = new bootstrap.Modal(document.getElementById('strategyModal'));
+            loadTemplates();
         });
+
+        async function loadTemplates() {
+            try {
+                const res = await fetch('/api/strategies/templates');
+                templates = await res.json();
+                
+                const select = document.getElementById('strategyTemplate');
+                for (const [key, template] of Object.entries(templates)) {
+                    const option = document.createElement('option');
+                    option.value = key;
+                    option.textContent = template.name;
+                    select.appendChild(option);
+                }
+            } catch (err) {
+                console.error('加载策略模板失败:', err);
+            }
+        }
 
         function showCreateModal() {
             document.getElementById('modalTitle').textContent = '新建策略';
             document.getElementById('strategyForm').reset();
             document.getElementById('strategyNameOriginal').value = '';
             document.getElementById('paramTableBody').innerHTML = '';
-            addParamRow();
+            document.getElementById('strategyName').readOnly = false;
             strategyModal.show();
+        }
+
+        function loadTemplateParams() {
+            const templateSelect = document.getElementById('strategyTemplate');
+            const templateName = templateSelect.value;
+            const tbody = document.getElementById('paramTableBody');
+            tbody.innerHTML = '';
+            
+            if (!templateName || !templates[templateName]) return;
+            
+            const template = templates[templateName];
+            template.parameters.forEach(param => {
+                const row = document.createElement('tr');
+                row.className = 'param-row';
+                
+                let inputHtml = '';
+                if (param.type === 'bool') {
+                    inputHtml = `<select class="form-select form-select-sm" name="paramDefault">
+                        <option value="true" ${param.default === true ? 'selected' : ''}>是</option>
+                        <option value="false" ${param.default === false ? 'selected' : ''}>否</option>
+                    </select>`;
+                } else if (param.type === 'int' || param.type === 'float') {
+                    const min = param.min !== undefined ? `min="${param.min}"` : '';
+                    const max = param.max !== undefined ? `max="${param.max}"` : '';
+                    inputHtml = `<input type="number" class="form-control form-control-sm" name="paramDefault" value="${param.default}" ${min} ${max} step="${param.type === 'float' ? '0.01' : '1'}">`;
+                } else {
+                    inputHtml = `<input type="text" class="form-control form-control-sm" name="paramDefault" value="${param.default}">`;
+                }
+                
+                const rangeText = param.min !== undefined && param.max !== undefined 
+                    ? `${param.min} ~ ${param.max}` 
+                    : (param.label || '');
+                
+                row.innerHTML = `
+                    <td>
+                        <input type="hidden" name="paramName" value="${param.name}">
+                        ${param.label || param.name}
+                    </td>
+                    <td>${inputHtml}</td>
+                    <td><small class="text-muted">${rangeText}</small></td>
+                `;
+                tbody.appendChild(row);
+            });
         }
 
         function editStrategy(name) {
@@ -257,15 +319,27 @@
                     document.getElementById('strategyName').value = data.name;
                     document.getElementById('strategyDescription').value = data.description || '';
                     
-                    const tbody = document.getElementById('paramTableBody');
-                    tbody.innerHTML = '';
+                    const templateSelect = document.getElementById('strategyTemplate');
+                    const templateName = data.template || 'sentiment_ma';
+                    templateSelect.value = templateName;
+                    loadTemplateParams();
+                    
                     if (data.parameters && data.parameters.length > 0) {
+                        const tbody = document.getElementById('paramTableBody');
                         data.parameters.forEach(param => {
-                            addParamRow(param.name, param.default, param.type);
+                            const row = tbody.querySelector(`input[name="paramName"][value="${param.name}"]`);
+                            if (row) {
+                                const input = row.closest('tr').querySelector('[name="paramDefault"]');
+                                if (input.tagName === 'SELECT') {
+                                    input.value = String(param.default).toLowerCase();
+                                } else {
+                                    input.value = param.default;
+                                }
+                            }
                         });
-                    } else {
-                        addParamRow();
                     }
+                    
+                    document.getElementById('strategyName').readOnly = true;
                     strategyModal.show();
                 })
                 .catch(err => {
@@ -276,88 +350,67 @@
 
         function viewStrategy(name) {
             editStrategy(name);
-            document.getElementById('strategyName').readOnly = true;
             document.getElementById('modalTitle').textContent = '查看策略';
-        }
-
-        function addParamRow(name = '', defaultVal = '', type = 'int') {
-            const tbody = document.getElementById('paramTableBody');
-            const row = document.createElement('tr');
-            row.className = 'param-row';
-            row.innerHTML = `
-                <td><input type="text" class="form-control form-control-sm" name="paramName" value="${name}" placeholder="参数名"></td>
-                <td><input type="text" class="form-control form-control-sm" name="paramDefault" value="${defaultVal}" placeholder="默认值"></td>
-                <td>
-                    <select class="form-select form-select-sm" name="paramType">
-                        <option value="int" ${type === 'int' ? 'selected' : ''}>整数 (int)</option>
-                        <option value="float" ${type === 'float' ? 'selected' : ''}>浮点数 (float)</option>
-                        <option value="str" ${type === 'str' ? 'selected' : ''}>字符串 (str)</option>
-                        <option value="bool" ${type === 'bool' ? 'selected' : ''}>布尔值 (bool)</option>
-                    </select>
-                </td>
-                <td>
-                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest('tr').remove()">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </td>
-            `;
-            tbody.appendChild(row);
         }
 
         function saveStrategy() {
             const originalName = document.getElementById('strategyNameOriginal').value;
             const name = document.getElementById('strategyName').value.trim();
             const description = document.getElementById('strategyDescription').value.trim();
+            const template = document.getElementById('strategyTemplate').value;
             
             if (!name) {
                 alert('策略名称不能为空');
+                return;
+            }
+            
+            if (!template) {
+                alert('请选择策略模板');
                 return;
             }
 
             const paramRows = document.querySelectorAll('#paramTableBody tr');
             const parameters = [];
             paramRows.forEach(row => {
-                const paramName = row.querySelector('[name="paramName"]').value.trim();
-                const paramDefault = row.querySelector('[name="paramDefault"]').value;
-                const paramType = row.querySelector('[name="paramType"]').value;
+                const paramName = row.querySelector('[name="paramName"]').value;
+                const input = row.querySelector('[name="paramDefault"]');
+                let paramDefault;
                 
-                if (paramName) {
-                    let defaultValue = paramDefault;
-                    if (paramType === 'int') defaultValue = parseInt(paramDefault) || 0;
-                    else if (paramType === 'float') defaultValue = parseFloat(paramDefault) || 0.0;
-                    else if (paramType === 'bool') defaultValue = paramDefault.toLowerCase() === 'true';
-                    
-                    parameters.push({
-                        name: paramName,
-                        default: defaultValue,
-                        type: paramType
-                    });
+                if (input.tagName === 'SELECT') {
+                    paramDefault = input.value === 'true';
+                } else {
+                    paramDefault = input.value;
                 }
+                
+                const paramType = input.tagName === 'SELECT' ? 'bool' : (input.type === 'number' ? (input.step.includes('.') ? 'float' : 'int') : 'str');
+                
+                parameters.push({
+                    name: paramName,
+                    default: paramDefault,
+                    type: paramType
+                });
             });
 
-            const data = {
-                name: name,
-                description: description,
-                parameters: parameters
-            };
-
-            const isEdit = originalName !== '';
-            const url = isEdit ? `/api/strategies/${originalName}` : '/api/strategies';
-            const method = isEdit ? 'PUT' : 'POST';
-
+            const url = originalName ? `/api/strategies/${originalName}` : '/api/strategies';
+            const method = originalName ? 'PUT' : 'POST';
+            
             fetch(url, {
                 method: method,
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    name: name,
+                    description: description,
+                    template: template,
+                    parameters: parameters
+                })
             })
             .then(res => res.json())
-            .then(result => {
-                if (result.error) {
-                    alert(result.error);
-                } else {
-                    alert(isEdit ? '策略更新成功' : '策略创建成功');
+            .then(data => {
+                if (data.success) {
                     strategyModal.hide();
                     location.reload();
+                } else {
+                    alert(data.error || '保存失败');
                 }
             })
             .catch(err => {

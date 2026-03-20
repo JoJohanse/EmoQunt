@@ -6,8 +6,8 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SAVE_DIR = os.path.join(BASE_DIR, "nes_data", "user_strategies")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SAVE_DIR = os.path.join(BASE_DIR, "user_strategies")
 
 USER_STRATEGY_MARKER = "__user_strategy__"
 
@@ -72,3 +72,17 @@ def is_user_strategy(name: str) -> bool:
     """检查是否为用户策略"""
     strategies = load_user_strategies()
     return name in strategies
+
+def get_strategy_templates() -> Dict:
+    """获取所有可用的策略模板"""
+    try:
+        from .Strategy import STRATEGY_TEMPLATES
+        return STRATEGY_TEMPLATES
+    except ImportError:
+        logger.warning("无法加载策略模板")
+        return {}
+
+def get_strategy_template(template_name: str) -> Optional[Dict]:
+    """获取指定策略模板"""
+    templates = get_strategy_templates()
+    return templates.get(template_name)

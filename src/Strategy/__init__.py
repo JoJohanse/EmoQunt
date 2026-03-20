@@ -6,7 +6,6 @@
 
 from .Strategy import (
     StrategyBase,
-    SimpleMAStrategy,
     StrategyManager,
     global_strategy_manager,
     Strategy,
@@ -14,12 +13,8 @@ from .Strategy import (
     TradeRecord
 )
 
-from .SentimentMAStrategy import SentimentMAStrategy
-
 __all__ = [
     'StrategyBase',
-    'SimpleMAStrategy',
-    'SentimentMAStrategy',
     'StrategyManager',
     'global_strategy_manager',
     'Strategy',

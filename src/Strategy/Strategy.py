@@ -220,110 +220,6 @@ class StrategyBase(bt.Strategy):
         }
 
 
-class SimpleMAStrategy(StrategyBase):
-    """
-    简单移动平均线策略示例
-    当短期均线上穿长期均线时买入，当短期均线下穿长期均线时卖出
-    """
-    params = (
-        ('short_period', 5),   # 短期均线周期
-        ('long_period', 20),    # 长期均线周期
-    )
-
-    def __init__(self):
-        """
-        初始化策略
-        """
-        super().__init__()
-        # 计算移动平均线
-        self.short_ma = bt.indicators.SimpleMovingAverage(self.data.close, period=self.p.short_period)
-        self.long_ma = bt.indicators.SimpleMovingAverage(self.data.close, period=self.p.long_period)
-        # 计算均线交叉信号
-        self.crossover = bt.indicators.CrossOver(self.short_ma, self.long_ma)
-
-    def next(self):
-        """
-        每个时间步执行的逻辑
-        """
-        # 检查是否有未完成的订单
-        if self.order:
-            return
-
-        # 检查买入信号（短期均线上穿长期均线）
-        if self.crossover > 0:
-            logger.info(f'买入信号: 价格={self.data.close[0]}, 短期均线={self.short_ma[0]}, 长期均线={self.long_ma[0]}')
-            self.trading_strategy_buy()
-            self.buy_signals_count += 1
-        # 检查卖出信号（短期均线下穿长期均线）
-        elif self.crossover < 0:
-            logger.info(f'卖出信号: 价格={self.data.close[0]}, 短期均线={self.short_ma[0]}, 长期均线={self.long_ma[0]}')
-            self.trading_strategy_sell()
-            self.sell_signals_count += 1
-
-    def trading_strategy_buy(self):
-        """
-        具体的买入策略实现
-        """
-        # 计算可用于购买的资金
-        total_asset_value = self.broker.getvalue()
-        available_cash = self.broker.getcash()
-        max_single_trade_cash = total_asset_value * self.max_single_buy_percent
-        max_portfolio_value = total_asset_value * self.max_portfolio_percent
-        
-        # 计算实际可用购买金额
-        usable_cash = min(available_cash, max_single_trade_cash, max_portfolio_value)
-
-        # 计算可购买的股数
-        price = self.data.close[0]
-        if price > 0 and usable_cash >= price * self.min_order_size:
-            # 计算基于可用资金的股数
-            shares_based_on_cash = usable_cash // price
-            # 确保股数为最小交易单位的整数倍
-            buy_size = max(shares_based_on_cash, self.min_order_size)
-            buy_size = buy_size // self.min_order_size * self.min_order_size
-            
-            if buy_size >= self.min_order_size:
-                logger.info(
-                    f"【买入挂单】: 可用资金={available_cash:.2f}, 总资产={total_asset_value:.2f}, 买入股数={buy_size}, "
-                    f"价格={price:.2f}, 预计花费={buy_size * price:.2f}"
-                )
-                # 计算手续费
-                trade_commission = self.calculate_commission(buy_size, price)
-                if trade_commission:
-                    logger.info(f"【预计手续费】: {trade_commission['total_commission']:.2f}")
-                self.order = self.buy(size=buy_size)
-            else:
-                logger.info(f"资金不足，无法购买至少{self.min_order_size}股")
-        else:
-            logger.info(f"资金不足，可用资金={usable_cash:.2f}，至少需要{price * self.min_order_size:.2f}")
-
-    def trading_strategy_sell(self):
-        """
-        具体的卖出策略实现
-        """
-        # 有持仓时才卖出
-        if self.position:
-            current_position_size = self.position.size
-            # 确保卖出股数为最小交易单位的整数倍
-            sell_size = current_position_size // self.min_order_size * self.min_order_size
-            
-            if sell_size >= self.min_order_size:
-                price = self.data.close[0]
-                logger.info(
-                    f"【卖出挂单】: 当前持仓={current_position_size}, 卖出股数={sell_size}, "
-                    f"价格={price:.2f}, 预计收入={sell_size * price:.2f}"
-                )
-                # 计算手续费
-                trade_commission = self.calculate_commission(sell_size, price)
-                if trade_commission:
-                    logger.info(f"【预计手续费】: {trade_commission['total_commission']:.2f}")
-                self.order = self.sell(size=sell_size)
-            else:
-                logger.info(f"持仓不足，无法卖出至少{self.min_order_size}股")
-        else:
-            logger.info("当前无持仓，无法卖出")
-
-
 class StrategyManager:
     """
     策略管理器，用于管理所有可用的交易策略
@@ -358,17 +254,6 @@ class StrategyManager:
 # 创建全局策略管理器实例
 global_strategy_manager = StrategyManager()
 
-# 注册默认策略
-global_strategy_manager.register_strategy('simple_ma', SimpleMAStrategy)
-
-# 尝试注册情感分析策略
-try:
-    from .SentimentMAStrategy import SentimentMAStrategy
-    global_strategy_manager.register_strategy('sentiment_ma', SentimentMAStrategy)
-except ImportError as e:
-    print(f"导入情感分析策略失败: {e}")
-
-
 class Strategy:
     """
     策略类，作为策略系统的入口点
@@ -398,3 +283,85 @@ class Strategy:
         :param strategy_class: 策略类
         """
         self.strategy_manager.register_strategy(strategy_name, strategy_class)
+
+
+STRATEGY_TEMPLATES = {
+    "sentiment_ma": {
+        "name": "情绪均线策略",
+        "description": "结合行业情绪的移动平均线策略",
+        "class": "UserStrategy",
+        "base_params": [
+            {"name": "short_period", "type": "int", "default": 5, "min": 1, "max": 50, "label": "短期均线周期"},
+            {"name": "long_period", "type": "int", "default": 20, "min": 5, "max": 200, "label": "长期均线周期"},
+            {"name": "sentiment_threshold", "type": "float", "default": 0.1, "min": 0, "max": 1.0, "label": "情绪阈值"},
+            {"name": "sentiment_weight", "type": "float", "default": 0.3, "min": 0, "max": 1.0, "label": "情绪权重"},
+            {"name": "use_sentiment_filter", "type": "bool", "default": True, "label": "启用情绪过滤"},
+            {"name": "min_order_size", "type": "int", "default": 100, "min": 100, "label": "最小交易单位"},
+            {"name": "max_portfolio_percent", "type": "float", "default": 0.8, "min": 0.1, "max": 1.0, "label": "最大持仓比例"},
+            {"name": "max_single_buy_percent", "type": "float", "default": 0.2, "min": 0.01, "max": 1.0, "label": "单笔买入比例"},
+            {"name": "max_single_sell_percent", "type": "float", "default": 0.3, "min": 0.01, "max": 1.0, "label": "单笔卖出比例"},
+        ]
+    }
+}
+
+
+def create_user_strategy_class(user_config):
+    """根据用户配置动态创建策略类"""
+    import backtrader as bt
+    
+    template_name = user_config.get("template", "sentiment_ma")
+    template = STRATEGY_TEMPLATES.get(template_name, {})
+    base_params = template.get("base_params", [])
+    
+    user_params = user_config.get("parameters", [])
+    param_dict = {}
+    for p in user_params:
+        name = p.get("name")
+        default = p.get("default")
+        if name and default is not None:
+            param_type = p.get("type", "int")
+            if param_type == "int":
+                param_dict[name] = int(default)
+            elif param_type == "float":
+                param_dict[name] = float(default)
+            elif param_type == "bool":
+                param_dict[name] = bool(default) if isinstance(default, bool) else (default == "true" or default == "True")
+            else:
+                param_dict[name] = default
+    
+    param_tuples = tuple((name, value) for name, value in param_dict.items())
+    
+    class DynamicUserStrategy(StrategyBase):
+        params = param_tuples
+        
+        def __init__(self):
+            super().__init__()
+            import backtrader as bt
+            self.short_ma = bt.indicators.SimpleMovingAverage(
+                self.data.close, period=self.p.short_period
+            )
+            self.long_ma = bt.indicators.SimpleMovingAverage(
+                self.data.close, period=self.p.long_period
+            )
+            self.crossover = bt.indicators.CrossOver(self.short_ma, self.long_ma)
+            
+        def next(self):
+            if self.order:
+                return
+            if self.crossover > 0:
+                self.order = self.buy()
+            elif self.crossover < 0:
+                if self.position:
+                    self.order = self.sell()
+    
+    return DynamicUserStrategy
+
+
+def get_strategy_template(template_name):
+    """获取策略模板"""
+    return STRATEGY_TEMPLATES.get(template_name)
+
+
+def get_all_strategy_templates():
+    """获取所有策略模板"""
+    return STRATEGY_TEMPLATES

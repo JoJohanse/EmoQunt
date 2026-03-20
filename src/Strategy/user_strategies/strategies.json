@@ -1,0 +1,55 @@
+{
+  "test": {
+    "description": "sss",
+    "template": "sentiment_ma",
+    "parameters": [
+      {
+        "name": "short_period",
+        "default": "5",
+        "type": "int"
+      },
+      {
+        "name": "long_period",
+        "default": "20",
+        "type": "int"
+      },
+      {
+        "name": "sentiment_threshold",
+        "default": "0.2",
+        "type": "float"
+      },
+      {
+        "name": "sentiment_weight",
+        "default": "0.45",
+        "type": "float"
+      },
+      {
+        "name": "use_sentiment_filter",
+        "default": true,
+        "type": "bool"
+      },
+      {
+        "name": "min_order_size",
+        "default": "100",
+        "type": "int"
+      },
+      {
+        "name": "max_portfolio_percent",
+        "default": "0.8",
+        "type": "float"
+      },
+      {
+        "name": "max_single_buy_percent",
+        "default": "0.1",
+        "type": "float"
+      },
+      {
+        "name": "max_single_sell_percent",
+        "default": "0.1",
+        "type": "float"
+      }
+    ],
+    "__user_strategy__": true,
+    "updated_at": "2026-03-20 11:13:30"
+  }
+}
