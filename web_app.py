@@ -23,6 +23,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # 导入可视化模块
 from src.visualization import StrategyVisualizer
 from src.factor import get_trendradar_sentiment, get_latest_trendradar_data, get_stock_sector, is_hs300_stock, check_recent_txt_exists, parse_trendradar_txt
+from src.factor.sentiment import save_sentiment_result, calculate_sentiment_factor
+from src.factor.daily_recommend import get_sector_stocks
 import matplotlib.pyplot as plt
 
 # 延迟导入，避免启动时加载
@@ -620,11 +622,42 @@ async def sentiment_analysis(request: Request):
     logger.info(f"用户访问舆情分析页面 - 客户端IP: {request.client.host}")
     
     try:
-        from src.factor.trendradar import get_latest_trendradar_data
         from src.factor.sentiment import get_latest_sentiment_result
         
-        news_data = get_latest_trendradar_data()
+        has_recent, txt_file = check_recent_txt_exists(max_age_seconds=3600)
+        if has_recent:
+            logger.info(f"存在1小时内的txt文件: {txt_file}，从文件读取数据")
+            news_data = parse_trendradar_txt(txt_file)
+        else:
+            news_data = get_latest_trendradar_data()
+        
         sentiment_data = get_latest_sentiment_result()
+        
+        if sentiment_data is None:
+            logger.info("没有今天的舆情结果，正在生成新的分析...")
+            sentiment_result = get_trendradar_sentiment()
+            if sentiment_result:
+                industry_details = sentiment_result.get('analysis_result', {}).get('industry_details', [])
+                sorted_industries = sorted(industry_details, key=lambda x: x.get('score', 0), reverse=True)[:10]
+                
+                top_sectors_list = []
+                for item in sorted_industries:
+                    sector_name = item.get('industry', '')
+                    sentiment = int(item.get('score', 0) * 100)
+                    stocks = get_sector_stocks(sector_name)[:5]
+                    top_sectors_list.append({
+                        "name": sector_name,
+                        "sentiment": sentiment,
+                        "stocks": [{"code": s['code'], "name": s['name']} for s in stocks]
+                    })
+                
+                sentiment_data = {
+                    "date": datetime.now().strftime("%Y-%m-%d"),
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "top_sectors": top_sectors_list,
+                    "news_count": len(news_data) if news_data else 0
+                }
+                save_sentiment_result(sentiment_data)
         
         sectors = []
         if sentiment_data and 'top_sectors' in sentiment_data:
@@ -761,7 +794,6 @@ async def analyze_sentiment(
             logger.info(f"存在1小时内的txt文件: {txt_file}，从文件读取数据")
             news_data = parse_trendradar_txt(txt_file)
             if news_data:
-                from src.factor.sentiment import calculate_sentiment_factor
                 sentiment_result = calculate_sentiment_factor(news_data)
                 _sentiment_cache = sentiment_result
                 _sentiment_cache_time = datetime.now()
@@ -860,8 +892,21 @@ async def analyze_sentiment(
         
         # 保存舆情分析结果
         try:
-            from src.factor.sentiment import save_sentiment_result
-            from src.factor.daily_recommend import get_sentiment_data
+            
+            # 从当前分析结果中获取行业得分
+            industry_details = sentiment_result.get('analysis_result', {}).get('industry_details', [])
+            sorted_industries = sorted(industry_details, key=lambda x: x.get('score', 0), reverse=True)[:10]
+            
+            top_sectors_list = []
+            for item in sorted_industries:
+                sector_name = item.get('industry', '')
+                sentiment = int(item.get('score', 0) * 100)
+                stocks = get_sector_stocks(sector_name)[:5]
+                top_sectors_list.append({
+                    "name": sector_name,
+                    "sentiment": sentiment,
+                    "stocks": [{"code": s['code'], "name": s['name']} for s in stocks]
+                })
             
             sentiment_save_data = {
                 "date": datetime.now().strftime("%Y-%m-%d"),
@@ -871,7 +916,7 @@ async def analyze_sentiment(
                 "stock_sector": stock_sector,
                 "average_score": sentiment_result.get('average_score', 0),
                 "signal": sentiment_result.get('signal', 'hold'),
-                "top_sectors": get_sentiment_data().get('sectors', [])[:10],
+                "top_sectors": top_sectors_list,
                 "news_count": len(news_data)
             }
             save_sentiment_result(sentiment_save_data)

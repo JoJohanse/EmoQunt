@@ -69,12 +69,9 @@ def _load_config():
         return None
 
 
-def crawl_and_get_news(limit: int = 100) -> List[Dict]:
+def crawl_and_get_news() -> List[Dict]:
     """
     爬取最新新闻并返回
-    
-    Args:
-        limit: 返回的新闻数量限制
         
     Returns:
         新闻列表
@@ -129,12 +126,11 @@ def crawl_and_get_news(limit: int = 100) -> List[Dict]:
         return []
 
 
-def get_latest_trendradar_data(trendradar_path=None, force_crawl=True):
+def get_latest_trendradar_data(force_crawl=True):
     """
     获取 trendradar 最新的新闻数据
     
     Args:
-        trendradar_path: trendradar 项目路径（已废弃，使用默认路径）
         force_crawl: 是否强制爬取新数据，True 则实时爬取，False 则读取已保存的数据
         
     Returns:
@@ -142,7 +138,7 @@ def get_latest_trendradar_data(trendradar_path=None, force_crawl=True):
     """
     # 优先尝试爬取新数据
     if force_crawl:
-        news_list = crawl_and_get_news(limit=100)
+        news_list = crawl_and_get_news()
         if news_list:
             logger.info(f"实时爬取获取到 {len(news_list)} 条新闻")
             return news_list
@@ -381,21 +377,23 @@ def save_news_to_txt(news_list, output_dir=None):
 
 
 def get_trendradar_sentiment():
-    """获取趋势雷达的情绪分析结果"""
-    import sys
-    import os
-    
+    """获取情绪分析结果"""
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
     
     from src.factor.sentiment import calculate_sentiment_factor
     
-    news_data = get_latest_trendradar_data(force_crawl=True)
+    has_recent, txt_file = check_recent_txt_exists(max_age_seconds=3600)
+    if has_recent and txt_file:
+        news_data = parse_trendradar_txt(txt_file)
+    else:
+        logger.info("没有1小时内的txt文件，需要重新爬取")
+        news_data = get_latest_trendradar_data(force_crawl=True)
+        if news_data:
+            save_news_to_txt(news_data)
     
     if news_data:
-        save_news_to_txt(news_data)
-        
         sentiment_result = calculate_sentiment_factor(news_data)
         logger.info(f"情绪分析结果: {sentiment_result}")
         return sentiment_result

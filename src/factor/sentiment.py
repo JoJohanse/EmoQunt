@@ -2,11 +2,13 @@ import os
 import json
 from dotenv import load_dotenv
 import re
+import logging
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 import numpy as np
 
-# llm #
+logger = logging.getLogger(__name__)
+
 from openai import OpenAI
 
 # 加载环境变量
@@ -383,6 +385,12 @@ def get_latest_sentiment_result() -> Optional[Dict]:
     
     files.sort(reverse=True)
     latest_file = files[0]
+    
+    file_date_str = latest_file.replace('.json', '')
+    today_str = datetime.now().strftime("%Y%m%d")
+    
+    if file_date_str != today_str:
+        return None
     
     file_path = os.path.join(SENTIMENT_SAVE_DIR, latest_file)
     try:
