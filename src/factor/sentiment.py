@@ -443,7 +443,6 @@ def get_or_generate_sentiment_data(force_refresh: bool = False) -> Tuple[Optiona
     Returns:
         (sentiment_data, news_data)
     """
-    from src.factor import get_trendradar_sentiment
     from nes_data.trendradar.trendradar import (
         get_latest_trendradar_data, 
         save_news_to_txt,
@@ -455,25 +454,18 @@ def get_or_generate_sentiment_data(force_refresh: bool = False) -> Tuple[Optiona
     sentiment_data = None
     
     has_recent, txt_file = check_recent_txt_exists(max_age_seconds=3600)
-    if has_recent:
-        news_data = parse_trendradar_txt(txt_file)
     
     if force_refresh:
-        if news_data is None:
-            news_data = get_latest_trendradar_data()
-            if news_data:
-                save_news_to_txt(news_data)
-    else:
-        sentiment_data = get_latest_sentiment_result()
-    
-    if sentiment_data is None:
-        logger.info("没有今天的舆情结果，正在生成新的分析...")
-        sentiment_result = get_trendradar_sentiment()
+        if has_recent and txt_file:
+            news_data = parse_trendradar_txt(txt_file)
         
         if news_data is None:
-            news_data = get_latest_trendradar_data()
+            news_data = get_latest_trendradar_data(force_crawl=True)
             if news_data:
                 save_news_to_txt(news_data)
+        
+        logger.info("强制刷新舆情数据，生成新的分析结果...")
+        sentiment_result = calculate_sentiment_factor(news_data)
         
         if sentiment_result:
             industry_details = sentiment_result.get('analysis_result', {}).get('industry_details', [])
@@ -487,5 +479,40 @@ def get_or_generate_sentiment_data(force_refresh: bool = False) -> Tuple[Optiona
                 "news_count": len(news_data) if news_data else 0
             }
             save_sentiment_result(sentiment_data)
+    else:
+        sentiment_data = get_latest_sentiment_result()
+        
+        if sentiment_data is not None:
+            if has_recent and txt_file:
+                news_data = parse_trendradar_txt(txt_file)
+            else:
+                news_data = get_latest_trendradar_data(force_crawl=True)
+                if news_data:
+                    save_news_to_txt(news_data)
+        else:
+            logger.info("没有今天的舆情结果，正在生成新的分析...")
+            
+            if has_recent and txt_file:
+                news_data = parse_trendradar_txt(txt_file)
+            
+            if news_data is None:
+                news_data = get_latest_trendradar_data(force_crawl=True)
+                if news_data:
+                    save_news_to_txt(news_data)
+            
+            sentiment_result = calculate_sentiment_factor(news_data)
+            
+            if sentiment_result:
+                industry_details = sentiment_result.get('analysis_result', {}).get('industry_details', [])
+                all_sectors_list, top_sectors_list = process_industry_details(industry_details)
+                
+                sentiment_data = {
+                    "date": datetime.now().strftime("%Y-%m-%d"),
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "all_sectors": all_sectors_list,
+                    "top_sectors": top_sectors_list,
+                    "news_count": len(news_data) if news_data else 0
+                }
+                save_sentiment_result(sentiment_data)
     
     return sentiment_data, news_data

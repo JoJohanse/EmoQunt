@@ -119,7 +119,7 @@ def crawl_and_get_news() -> List[Dict]:
                 news_list.append(news_item)
         
         logger.info(f"爬取完成，共获取 {len(news_list)} 条新闻")
-        return news_list[:limit]
+        return news_list
         
     except Exception as e:
         logger.error(f"爬取新闻时出错: {e}")

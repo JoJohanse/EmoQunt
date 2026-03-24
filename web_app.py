@@ -357,6 +357,7 @@ async def get_strategy_detail(strategy_name: str):
             return {
                 "name": strategy_name,
                 "description": user_strategy.get("description", ""),
+                "template": user_strategy.get("template", "sentiment_ma"),
                 "parameters": user_strategy.get("parameters", []),
                 "is_user_strategy": True
             }
@@ -389,12 +390,12 @@ async def get_strategy_detail(strategy_name: str):
         logger.error(f"获取策略详情失败: {e}")
         return {"error": str(e)}, 500
 
-@app.post("/api/strategies")
+@app.post("/api/strategies/create_new")
 async def create_strategy(request: Request):
-    """API接口：创建新策略"""
-    logger.info("API接口被调用：创建新策略")
+    """API接口：用户自定义参数创建新策略"""
+    logger.info("API接口被调用：用户自定义参数创建新策略")
     try:
-        from src.Strategy.strategy_manager import save_user_strategy, is_user_strategy, get_strategy_template
+        from src.Strategy.strategy_manager import save_user_strategy, is_user_strategy
         
         body = await request.json()
         name = body.get("name", "").strip()
@@ -408,9 +409,8 @@ async def create_strategy(request: Request):
         if is_user_strategy(name):
             return {"error": "策略名称已存在"}, 400
         
-        template = get_strategy_template(template_name)
-        if not template:
-            return {"error": "无效的策略模板"}, 400
+        if not parameters or len(parameters) == 0:
+            return {"error": "自定义参数不能为空"}, 400
         
         config = {
             "description": description,
@@ -420,8 +420,57 @@ async def create_strategy(request: Request):
         }
         
         if save_user_strategy(name, config):
-            logger.info(f"用户策略 {name} 创建成功")
+            logger.info(f"用户策略 {name} 创建成功（自定义参数）")
             return {"success": True, "name": name}
+        else:
+            return {"error": "保存策略失败"}, 500
+    except Exception as e:
+        logger.error(f"创建策略失败: {e}")
+        return {"error": str(e)}, 500
+
+@app.post("/api/strategies/create_from_template")
+async def create_strategy_from_template(request: Request):
+    """API接口：根据模板创建新策略（使用模板默认参数）"""
+    logger.info("API接口被调用：根据模板创建新策略")
+    try:
+        from src.Strategy.strategy_manager import save_user_strategy, is_user_strategy, get_strategy_template
+        
+        body = await request.json()
+        name = body.get("name", "").strip()
+        description = body.get("description", "")
+        template_name = body.get("template", "sentiment_ma")
+        
+        if not name:
+            return {"error": "策略名称不能为空"}, 400
+        
+        if is_user_strategy(name):
+            return {"error": "策略名称已存在"}, 400
+        
+        template = get_strategy_template(template_name)
+        if not template:
+            return {"error": "无效的策略模板"}, 400
+        
+        base_params = template.get("base_params", [])
+        parameters = []
+        for param in base_params:
+            parameters.append({
+                "name": param.get("name"),
+                "value": param.get("default"),
+                "label": param.get("label", param.get("name")),
+                "type": param.get("type")
+            })
+        logger.info(f"使用模板 {template_name} 的默认参数: {parameters}")
+        
+        config = {
+            "description": description,
+            "template": template_name,
+            "parameters": parameters,
+            "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        if save_user_strategy(name, config):
+            logger.info(f"用户策略 {name} 创建成功（基于模板 {template_name}）")
+            return {"success": True, "name": name, "parameters": parameters}
         else:
             return {"error": "保存策略失败"}, 500
     except Exception as e:
@@ -440,7 +489,7 @@ async def get_strategy_templates_api():
             result[name] = {
                 "name": template.get("name", ""),
                 "description": template.get("description", ""),
-                "parameters": template.get("parameters", [])
+                "parameters": template.get("base_params", [])
             }
         return result
     except Exception as e:

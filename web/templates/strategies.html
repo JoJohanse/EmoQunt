@@ -133,7 +133,7 @@
                                     {% for param in strategy.parameters %}
                                     <tr>
                                         <td><code>{{ param.name }}</code></td>
-                                        <td>{{ param.default }}</td>
+                                        <td>{{ param.value if param.value is defined else param.default }}</td>
                                         <td><span class="badge bg-secondary param-badge">{{ param.type }}</span></td>
                                     </tr>
                                     {% endfor %}
@@ -205,8 +205,11 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-outline-primary" onclick="saveStrategyFromTemplate()">
+                        <i class="fas fa-magic"></i> 使用模板创建
+                    </button>
                     <button type="button" class="btn btn-primary" onclick="saveStrategy()">
-                        <i class="fas fa-save"></i> 保存
+                        <i class="fas fa-save"></i> 自定义创建
                     </button>
                 </div>
             </div>
@@ -260,7 +263,34 @@
             document.getElementById('strategyNameOriginal').value = '';
             document.getElementById('paramTableBody').innerHTML = '';
             document.getElementById('strategyName').readOnly = false;
+            updateModalButtons('create');
             strategyModal.show();
+        }
+
+        function updateModalButtons(mode) {
+            const footer = document.querySelector('#strategyModal .modal-footer');
+            if (mode === 'create') {
+                footer.innerHTML = `
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-outline-primary" onclick="saveStrategyFromTemplate()">
+                        <i class="fas fa-magic"></i> 使用模板创建
+                    </button>
+                    <button type="button" class="btn btn-primary" onclick="saveStrategy()">
+                        <i class="fas fa-save"></i> 自定义创建
+                    </button>
+                `;
+            } else if (mode === 'edit') {
+                footer.innerHTML = `
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="saveStrategy()">
+                        <i class="fas fa-save"></i> 保存修改
+                    </button>
+                `;
+            } else if (mode === 'view') {
+                footer.innerHTML = `
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                `;
+            }
         }
 
         function loadTemplateParams() {
@@ -322,24 +352,30 @@
                     const templateSelect = document.getElementById('strategyTemplate');
                     const templateName = data.template || 'sentiment_ma';
                     templateSelect.value = templateName;
+                    
                     loadTemplateParams();
                     
-                    if (data.parameters && data.parameters.length > 0) {
-                        const tbody = document.getElementById('paramTableBody');
-                        data.parameters.forEach(param => {
-                            const row = tbody.querySelector(`input[name="paramName"][value="${param.name}"]`);
-                            if (row) {
-                                const input = row.closest('tr').querySelector('[name="paramDefault"]');
-                                if (input.tagName === 'SELECT') {
-                                    input.value = String(param.default).toLowerCase();
-                                } else {
-                                    input.value = param.default;
+                    setTimeout(() => {
+                        if (data.parameters && data.parameters.length > 0) {
+                            const tbody = document.getElementById('paramTableBody');
+                            data.parameters.forEach(param => {
+                                const row = tbody.querySelector(`input[name="paramName"][value="${param.name}"]`);
+                                if (row) {
+                                    const input = row.closest('tr').querySelector('[name="paramDefault"]');
+                                    if (input) {
+                                        if (input.tagName === 'SELECT') {
+                                            input.value = String(param.default || param.value).toLowerCase();
+                                        } else {
+                                            input.value = param.default !== undefined ? param.default : param.value;
+                                        }
+                                    }
                                 }
-                            }
-                        });
-                    }
+                            });
+                        }
+                    }, 100);
                     
                     document.getElementById('strategyName').readOnly = true;
+                    updateModalButtons('edit');
                     strategyModal.show();
                 })
                 .catch(err => {
@@ -351,6 +387,46 @@
         function viewStrategy(name) {
             editStrategy(name);
             document.getElementById('modalTitle').textContent = '查看策略';
+            updateModalButtons('view');
+        }
+
+        function saveStrategyFromTemplate() {
+            const name = document.getElementById('strategyName').value.trim();
+            const description = document.getElementById('strategyDescription').value.trim();
+            const template = document.getElementById('strategyTemplate').value;
+            
+            if (!name) {
+                alert('策略名称不能为空');
+                return;
+            }
+            
+            if (!template) {
+                alert('请选择策略模板');
+                return;
+            }
+
+            fetch('/api/strategies/create_from_template', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    name: name,
+                    description: description,
+                    template: template
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    strategyModal.hide();
+                    location.reload();
+                } else {
+                    alert(data.error || '创建失败');
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                alert('创建失败');
+            });
         }
 
         function saveStrategy() {
@@ -391,8 +467,19 @@
                 });
             });
 
-            const url = originalName ? `/api/strategies/${originalName}` : '/api/strategies';
-            const method = originalName ? 'PUT' : 'POST';
+            if (parameters.length === 0) {
+                alert('请配置参数');
+                return;
+            }
+
+            let url, method;
+            if (originalName) {
+                url = `/api/strategies/${originalName}`;
+                method = 'PUT';
+            } else {
+                url = '/api/strategies/create_new';
+                method = 'POST';
+            }
             
             fetch(url, {
                 method: method,
