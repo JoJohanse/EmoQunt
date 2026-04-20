@@ -2,7 +2,7 @@ import backtrader as bt
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Tuple
 import os
 import sys
 import matplotlib.pyplot as plt
