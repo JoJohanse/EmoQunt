@@ -4,7 +4,6 @@ from .sentiment import (
     calculate_sentiment_factor,
     generate_trading_signal,
     z_score_normalize,
-    analyze_industry_sentiment,
     save_sentiment_result,
     load_sentiment_result,
     get_latest_sentiment_result
@@ -35,7 +34,6 @@ __all__ = [
     'calculate_sentiment_factor',
     'generate_trading_signal',
     'z_score_normalize',
-    'analyze_industry_sentiment',
     'save_sentiment_result',
     'load_sentiment_result',
     'get_latest_sentiment_result',

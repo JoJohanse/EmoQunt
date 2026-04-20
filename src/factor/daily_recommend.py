@@ -28,6 +28,44 @@ CSV_PATH = os.path.join(BASE_DIR, "stock_data", "沪深300", "沪深300成分股
 INDUSTRY_PATH = os.path.join(BASE_DIR, "stock_data", "沪深300", "行业种类.txt")
 CACHE_DIR = os.path.join(BASE_DIR, "stock_data", "stock_cache")
 
+# 导入配置
+sys.path.append(BASE_DIR)
+from config.config_loader import get_config
+
+_config = get_config()
+SCORING_CONFIG = _config.load_scoring_config()
+
+# 从配置中提取评分权重
+COMPOSITE_WEIGHTS = SCORING_CONFIG.get('composite_weights', {})
+PRICE_WEIGHT = COMPOSITE_WEIGHTS.get('price_score', 0.25)
+VOLUME_WEIGHT = COMPOSITE_WEIGHTS.get('volume_score', 0.20)
+SENTIMENT_WEIGHT = COMPOSITE_WEIGHTS.get('sentiment_score', 0.30)
+TECHNICAL_WEIGHT = COMPOSITE_WEIGHTS.get('technical_score', 0.25)
+
+# 从配置中提取评分阈值
+RECOMMENDATION_THRESHOLDS = SCORING_CONFIG.get('recommendation_thresholds', {})
+PRICE_HIGH_THRESHOLD = RECOMMENDATION_THRESHOLDS.get('price_score_high', 65)
+PRICE_MEDIUM_THRESHOLD = RECOMMENDATION_THRESHOLDS.get('price_score_medium', 55)
+VOLUME_HIGH_THRESHOLD = RECOMMENDATION_THRESHOLDS.get('volume_score_high', 65)
+VOLUME_MEDIUM_THRESHOLD = RECOMMENDATION_THRESHOLDS.get('volume_score_medium', 55)
+SENTIMENT_HIGH_THRESHOLD = RECOMMENDATION_THRESHOLDS.get('sentiment_score_high', 75)
+SENTIMENT_MEDIUM_THRESHOLD = RECOMMENDATION_THRESHOLDS.get('sentiment_score_medium', 60)
+TECHNICAL_HIGH_THRESHOLD = RECOMMENDATION_THRESHOLDS.get('technical_score_high', 65)
+TECHNICAL_MEDIUM_THRESHOLD = RECOMMENDATION_THRESHOLDS.get('technical_score_medium', 55)
+
+# 从配置中提取数据配置
+DATA_CONFIG = SCORING_CONFIG.get('data_config', {})
+MIN_DATA_DAYS = DATA_CONFIG.get('min_data_days', 30)
+PRICE_CHANGE_DAYS = DATA_CONFIG.get('price_change_days', [5, 10, 20])
+VOLUME_AVG_PERIODS = DATA_CONFIG.get('volume_avg_periods', [5, 10, 20])
+MA_PERIODS = DATA_CONFIG.get('ma_periods', [5, 10, 20, 60])
+RSI_PERIOD = DATA_CONFIG.get('rsi_period', 14)
+MACD_PARAMS = DATA_CONFIG.get('macd_params', {'fast': 12, 'slow': 26, 'signal': 9})
+BOLLINGER_PERIOD = DATA_CONFIG.get('bollinger_period', 20)
+BOLLINGER_STD = DATA_CONFIG.get('bollinger_std', 2)
+KDJ_PERIOD = DATA_CONFIG.get('kdj_period', 9)
+ATR_PERIOD = DATA_CONFIG.get('atr_period', 14)
+
 STOCK_DATA_CACHE = {}
 
 def ensure_cache_dir():
@@ -54,7 +92,7 @@ def save_stock_data_to_cache(stock_code: str, df: pd.DataFrame):
     cache_file = os.path.join(CACHE_DIR, f"{stock_code.replace('.', '_')}.csv")
     try:
         df.to_csv(cache_file)
-    except:
+    except Exception:
         pass
 
 HS300_STOCKS = {}
@@ -138,7 +176,7 @@ def init_sentiment():
             logger.info(f"从舆情结果加载了 {len(SECTOR_SENTIMENT)} 个板块的舆情评分")
         
     except Exception as e:
-        logger.warning(f"加载舆情结果失败")
+        logger.warning(f"加载舆情结果失败: {e}")
 
 def reload_sentiment():
     global SECTOR_SENTIMENT
@@ -201,7 +239,6 @@ def get_stock_data(stock_code: str, days: int = 30) -> Optional[pd.DataFrame]:
             rs = bs.query_history_k_data_plus(
                 bs_code,
                 "date,code,open,high,low,close,volume,amount",
-                # 获取最近30天数据,起始日期为30天前，days=30
                 start_date=(datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d"),
                 end_date=datetime.now().strftime("%Y-%m-%d"),
                 frequency="d",
@@ -258,86 +295,86 @@ def get_stock_data(stock_code: str, days: int = 30) -> Optional[pd.DataFrame]:
         logger.warning(f"获取股票 {stock_code} 数据失败: {e}")
         return None
 
+
+def _get_score_from_thresholds(value: float, thresholds: List[Dict]) -> int:
+    """
+    根据阈值列表获取评分
+    
+    :param value: 要评分的值
+    :param thresholds: 阈值列表，每个元素包含 limit 和 score
+    :return: 对应的评分
+    """
+    for threshold in thresholds:
+        if value >= threshold['limit']:
+            return threshold['score']
+    return thresholds[-1]['score'] if thresholds else 50
+
+
 def calculate_price_change_score(df: pd.DataFrame) -> float:
+    """
+    计算价格变化评分
+    
+    :param df: 股票数据DataFrame
+    :return: 价格变化评分 (0-100)
+    """
     if df is None or len(df) < 20:
         return 50.0
     
     try:
         scores = []
+        price_config = SCORING_CONFIG.get('price_change_scoring', {})
         
+        # 获取不同周期的数据
         recent_5 = df.tail(5)
         recent_10 = df.tail(10)
         recent_20 = df.tail(20) if len(df) >= 20 else df
         
-        price_5 = recent_5['收盘'].iloc[-1]
-        price_10 = recent_10['收盘'].iloc[-1]
-        price_20 = recent_20['收盘'].iloc[-1]
+        # 获取价格数据
+        price_5_start = recent_5['收盘'].iloc[0]
+        price_10_start = recent_10['收盘'].iloc[0]
+        price_20_start = recent_20['收盘'].iloc[0]
         current_price = df['收盘'].iloc[-1]
         
+        # 计算均线
         ma5 = recent_5['收盘'].mean()
         ma10 = recent_10['收盘'].mean()
         ma20 = recent_20['收盘'].mean()
         
-        change_5d = (price_5 - recent_5['收盘'].iloc[0]) / recent_5['收盘'].iloc[0] * 100
-        change_10d = (price_10 - recent_10['收盘'].iloc[0]) / recent_10['收盘'].iloc[0] * 100
-        change_20d = (price_20 - recent_20['收盘'].iloc[0]) / recent_20['收盘'].iloc[0] * 100
+        # 5日价格变化评分
+        change_5d = (current_price - price_5_start) / price_5_start * 100 if price_5_start > 0 else 0
+        change_5d_config = price_config.get('change_5d', {})
+        change_5d_thresholds = change_5d_config.get('thresholds', [
+            {'limit': 10, 'score': 100}, {'limit': 7, 'score': 90}, {'limit': 5, 'score': 80},
+            {'limit': 3, 'score': 70}, {'limit': 1, 'score': 60}, {'limit': -1, 'score': 50},
+            {'limit': -3, 'score': 40}, {'limit': -5, 'score': 30}, {'limit': -7, 'score': 20},
+            {'limit': -999, 'score': 10}
+        ])
+        score_5d = _get_score_from_thresholds(change_5d, change_5d_thresholds)
+        scores.append(score_5d * change_5d_config.get('weight', 0.35))
         
-        if change_5d > 10:
-            score_5d = 100
-        elif change_5d > 7:
-            score_5d = 90
-        elif change_5d > 5:
-            score_5d = 80
-        elif change_5d > 3:
-            score_5d = 70
-        elif change_5d > 1:
-            score_5d = 60
-        elif change_5d > -1:
-            score_5d = 50
-        elif change_5d > -3:
-            score_5d = 40
-        elif change_5d > -5:
-            score_5d = 30
-        elif change_5d > -7:
-            score_5d = 20
-        else:
-            score_5d = 10
-        scores.append(score_5d * 0.35)
+        # 10日价格变化评分
+        change_10d = (current_price - price_10_start) / price_10_start * 100 if price_10_start > 0 else 0
+        change_10d_config = price_config.get('change_10d', {})
+        change_10d_thresholds = change_10d_config.get('thresholds', [
+            {'limit': 15, 'score': 100}, {'limit': 10, 'score': 85}, {'limit': 5, 'score': 70},
+            {'limit': 0, 'score': 55}, {'limit': -5, 'score': 40}, {'limit': -10, 'score': 25},
+            {'limit': -999, 'score': 10}
+        ])
+        score_10d = _get_score_from_thresholds(change_10d, change_10d_thresholds)
+        scores.append(score_10d * change_10d_config.get('weight', 0.25))
         
-        if change_10d > 15:
-            score_10d = 100
-        elif change_10d > 10:
-            score_10d = 85
-        elif change_10d > 5:
-            score_10d = 70
-        elif change_10d > 0:
-            score_10d = 55
-        elif change_10d > -5:
-            score_10d = 40
-        elif change_10d > -10:
-            score_10d = 25
-        else:
-            score_10d = 10
-        scores.append(score_10d * 0.25)
+        # 20日价格变化评分
+        change_20d = (current_price - price_20_start) / price_20_start * 100 if price_20_start > 0 else 0
+        change_20d_config = price_config.get('change_20d', {})
+        change_20d_thresholds = change_20d_config.get('thresholds', [
+            {'limit': 20, 'score': 100}, {'limit': 15, 'score': 85}, {'limit': 10, 'score': 70},
+            {'limit': 5, 'score': 55}, {'limit': 0, 'score': 45}, {'limit': -5, 'score': 35},
+            {'limit': -10, 'score': 25}, {'limit': -999, 'score': 10}
+        ])
+        score_20d = _get_score_from_thresholds(change_20d, change_20d_thresholds)
+        scores.append(score_20d * change_20d_config.get('weight', 0.20))
         
-        if change_20d > 20:
-            score_20d = 100
-        elif change_20d > 15:
-            score_20d = 85
-        elif change_20d > 10:
-            score_20d = 70
-        elif change_20d > 5:
-            score_20d = 55
-        elif change_20d > 0:
-            score_20d = 45
-        elif change_20d > -5:
-            score_20d = 35
-        elif change_20d > -10:
-            score_20d = 25
-        else:
-            score_20d = 10
-        scores.append(score_20d * 0.20)
-        
+        # 均线趋势评分
         if ma5 > ma10 > ma20:
             trend_score = 100
         elif ma5 > ma10:
@@ -348,7 +385,9 @@ def calculate_price_change_score(df: pd.DataFrame) -> float:
             trend_score = 45
         else:
             trend_score = 25
-        scores.append(trend_score * 0.20)
+        
+        ma_trend_config = price_config.get('ma_trend', {})
+        scores.append(trend_score * ma_trend_config.get('weight', 0.20))
         
         return sum(scores)
         
@@ -356,13 +395,22 @@ def calculate_price_change_score(df: pd.DataFrame) -> float:
         logger.warning(f"计算价格变化得分失败: {e}")
         return 50.0
 
+
 def calculate_volume_score(df: pd.DataFrame) -> float:
+    """
+    计算成交量评分
+    
+    :param df: 股票数据DataFrame
+    :return: 成交量评分 (0-100)
+    """
     if df is None or len(df) < 20:
         return 50.0
     
     try:
         scores = []
+        volume_config = SCORING_CONFIG.get('volume_scoring', {})
         
+        # 获取不同周期的成交量数据
         recent_5 = df.tail(5)
         recent_10 = df.tail(10)
         recent_20 = df.tail(20) if len(df) >= 20 else df
@@ -377,82 +425,51 @@ def calculate_volume_score(df: pd.DataFrame) -> float:
         if avg_vol == 0:
             return 50.0
         
+        # 5日均量/20日均量比率评分
         vol_ratio_5 = vol_5_mean / vol_20_mean if vol_20_mean > 0 else 1.0
+        vol_ratio_5_config = volume_config.get('vol_ratio_5', {})
+        vol_ratio_5_thresholds = vol_ratio_5_config.get('thresholds', [
+            {'limit': 2.0, 'score': 100}, {'limit': 1.8, 'score': 90}, {'limit': 1.5, 'score': 80},
+            {'limit': 1.3, 'score': 70}, {'limit': 1.1, 'score': 60}, {'limit': 0.9, 'score': 50},
+            {'limit': 0.7, 'score': 40}, {'limit': 0.5, 'score': 30}, {'limit': -999, 'score': 20}
+        ])
+        score_vol_5 = _get_score_from_thresholds(vol_ratio_5, vol_ratio_5_thresholds)
+        scores.append(score_vol_5 * vol_ratio_5_config.get('weight', 0.30))
+        
+        # 10日均量/20日均量比率评分
         vol_ratio_10 = vol_10_mean / vol_20_mean if vol_20_mean > 0 else 1.0
+        vol_ratio_10_config = volume_config.get('vol_ratio_10', {})
+        vol_ratio_10_thresholds = vol_ratio_10_config.get('thresholds', [
+            {'limit': 1.5, 'score': 100}, {'limit': 1.3, 'score': 85}, {'limit': 1.1, 'score': 70},
+            {'limit': 0.9, 'score': 55}, {'limit': 0.7, 'score': 40}, {'limit': -999, 'score': 25}
+        ])
+        score_vol_10 = _get_score_from_thresholds(vol_ratio_10, vol_ratio_10_thresholds)
+        scores.append(score_vol_10 * vol_ratio_10_config.get('weight', 0.20))
         
-        if vol_ratio_5 > 2.0:
-            score_vol_5 = 100
-        elif vol_ratio_5 > 1.8:
-            score_vol_5 = 90
-        elif vol_ratio_5 > 1.5:
-            score_vol_5 = 80
-        elif vol_ratio_5 > 1.3:
-            score_vol_5 = 70
-        elif vol_ratio_5 > 1.1:
-            score_vol_5 = 60
-        elif vol_ratio_5 > 0.9:
-            score_vol_5 = 50
-        elif vol_ratio_5 > 0.7:
-            score_vol_5 = 40
-        elif vol_ratio_5 > 0.5:
-            score_vol_5 = 30
-        else:
-            score_vol_5 = 20
-        scores.append(score_vol_5 * 0.30)
-        
-        if vol_ratio_10 > 1.5:
-            score_vol_10 = 100
-        elif vol_ratio_10 > 1.3:
-            score_vol_10 = 85
-        elif vol_ratio_10 > 1.1:
-            score_vol_10 = 70
-        elif vol_ratio_10 > 0.9:
-            score_vol_10 = 55
-        elif vol_ratio_10 > 0.7:
-            score_vol_10 = 40
-        else:
-            score_vol_10 = 25
-        scores.append(score_vol_10 * 0.20)
-        
+        # 当前成交量/平均成交量比率评分
         current_vs_avg = current_vol / avg_vol
-        if current_vs_avg > 2.5:
-            score_current = 100
-        elif current_vs_avg > 2.0:
-            score_current = 90
-        elif current_vs_avg > 1.5:
-            score_current = 75
-        elif current_vs_avg > 1.2:
-            score_current = 60
-        elif current_vs_avg > 0.9:
-            score_current = 50
-        elif current_vs_avg > 0.7:
-            score_current = 40
-        elif current_vs_avg > 0.5:
-            score_current = 30
-        else:
-            score_current = 20
-        scores.append(score_current * 0.25)
+        current_vs_avg_config = volume_config.get('current_vs_avg', {})
+        current_vs_avg_thresholds = current_vs_avg_config.get('thresholds', [
+            {'limit': 2.5, 'score': 100}, {'limit': 2.0, 'score': 90}, {'limit': 1.5, 'score': 75},
+            {'limit': 1.2, 'score': 60}, {'limit': 0.9, 'score': 50}, {'limit': 0.7, 'score': 40},
+            {'limit': 0.5, 'score': 30}, {'limit': -999, 'score': 20}
+        ])
+        score_current = _get_score_from_thresholds(current_vs_avg, current_vs_avg_thresholds)
+        scores.append(score_current * current_vs_avg_config.get('weight', 0.25))
         
+        # 成交量趋势评分
         vol_5_recent = df.tail(5)['成交量']
-        vol_trend = (vol_5_recent.iloc[-1] - vol_5_recent.iloc[0]) / vol_5_recent.iloc[0] * 100 if vol_5_recent.iloc[0] > 0 else 0
+        vol_trend = ((vol_5_recent.iloc[-1] - vol_5_recent.iloc[0]) / vol_5_recent.iloc[0] * 100 
+                     if vol_5_recent.iloc[0] > 0 else 0)
         
-        if vol_trend > 50:
-            score_trend = 100
-        elif vol_trend > 30:
-            score_trend = 85
-        elif vol_trend > 15:
-            score_trend = 70
-        elif vol_trend > 5:
-            score_trend = 60
-        elif vol_trend > -5:
-            score_trend = 50
-        elif vol_trend > -15:
-            score_trend = 40
-        elif vol_trend > -30:
-            score_trend = 30
-        else:
-            score_trend = 20
-        scores.append(score_trend * 0.25)
+        vol_trend_config = volume_config.get('vol_trend', {})
+        vol_trend_thresholds = vol_trend_config.get('thresholds', [
+            {'limit': 50, 'score': 100}, {'limit': 30, 'score': 85}, {'limit': 15, 'score': 70},
+            {'limit': 5, 'score': 60}, {'limit': -5, 'score': 50}, {'limit': -15, 'score': 40},
+            {'limit': -30, 'score': 30}, {'limit': -999, 'score': 20}
+        ])
+        score_trend = _get_score_from_thresholds(vol_trend, vol_trend_thresholds)
+        scores.append(score_trend * vol_trend_config.get('weight', 0.25))
         
         return sum(scores)
         
@@ -460,27 +477,38 @@ def calculate_volume_score(df: pd.DataFrame) -> float:
         logger.warning(f"计算成交量得分失败: {e}")
         return 50.0
 
+
 def calculate_technical_score(df: pd.DataFrame) -> float:
-    if df is None or len(df) < 30:
+    """
+    计算技术指标评分
+    
+    :param df: 股票数据DataFrame
+    :return: 技术指标评分 (0-100)
+    """
+    if df is None or len(df) < MIN_DATA_DAYS:
         return 50.0
     
     try:
         scores = []
+        technical_config = SCORING_CONFIG.get('technical_scoring', {})
         
         close_prices = df['收盘']
         high_prices = df['最高']
         low_prices = df['最低']
         
-        ma5 = close_prices.rolling(window=5).mean()
-        ma10 = close_prices.rolling(window=10).mean()
-        ma20 = close_prices.rolling(window=20).mean()
-        ma60 = close_prices.rolling(window=60).mean() if len(df) >= 60 else ma20
+        # 计算均线
+        ma_periods = MA_PERIODS
+        ma5 = close_prices.rolling(window=ma_periods[0]).mean()
+        ma10 = close_prices.rolling(window=ma_periods[1]).mean()
+        ma20 = close_prices.rolling(window=ma_periods[2]).mean()
+        ma60 = close_prices.rolling(window=ma_periods[3]).mean() if len(df) >= ma_periods[3] else ma20
         
         current_price = close_prices.iloc[-1]
         
         if pd.isna(ma5.iloc[-1]) or pd.isna(ma10.iloc[-1]) or pd.isna(ma20.iloc[-1]):
             return 50.0
         
+        # 均线系统评分
         if current_price > ma5.iloc[-1] > ma10.iloc[-1] > ma20.iloc[-1]:
             score_ma = 100
         elif current_price > ma5.iloc[-1] > ma10.iloc[-1]:
@@ -495,20 +523,25 @@ def calculate_technical_score(df: pd.DataFrame) -> float:
             score_ma = 45
         else:
             score_ma = 30
-        scores.append(score_ma * 0.20)
         
-        ema12 = close_prices.ewm(span=12, adjust=False).mean()
-        ema26 = close_prices.ewm(span=26, adjust=False).mean()
+        ma_system_config = technical_config.get('ma_system', {})
+        scores.append(score_ma * ma_system_config.get('weight', 0.20))
+        
+        # MACD评分
+        macd_params = MACD_PARAMS
+        ema12 = close_prices.ewm(span=macd_params['fast'], adjust=False).mean()
+        ema26 = close_prices.ewm(span=macd_params['slow'], adjust=False).mean()
         dif = ema12 - ema26
-        dea = dif.ewm(span=9, adjust=False).mean()
+        dea = dif.ewm(span=macd_params['signal'], adjust=False).mean()
         macd_hist = dif - dea
         
         current_dif = dif.iloc[-1]
         current_dea = dea.iloc[-1]
         current_hist = macd_hist.iloc[-1]
+        prev_hist = macd_hist.iloc[-2] if len(macd_hist) >= 2 else current_hist
         
         if current_dif > current_dea and current_hist > 0:
-            if current_hist > current_hist.shift(1).iloc[-1]:
+            if current_hist > prev_hist:
                 score_macd = 100
             else:
                 score_macd = 80
@@ -516,119 +549,108 @@ def calculate_technical_score(df: pd.DataFrame) -> float:
             score_macd = 70
         elif current_hist > 0:
             score_macd = 55
-        elif current_hist > current_hist.shift(1).iloc[-1]:
+        elif current_hist > prev_hist:
             score_macd = 45
         else:
             score_macd = 30
-        scores.append(score_macd * 0.20)
         
+        macd_config = technical_config.get('macd', {})
+        scores.append(score_macd * macd_config.get('weight', 0.20))
+        
+        # RSI评分
+        rsi_period = RSI_PERIOD
         delta = close_prices.diff()
         gain = delta.where(delta > 0, 0)
         loss = (-delta).where(delta < 0, 0)
-        avg_gain = gain.rolling(window=14).mean()
-        avg_loss = loss.rolling(window=14).mean()
+        avg_gain = gain.rolling(window=rsi_period).mean()
+        avg_loss = loss.rolling(window=rsi_period).mean()
         rs = avg_gain / avg_loss
         rsi = 100 - (100 / (1 + rs))
         
         current_rsi = rsi.iloc[-1]
         
-        if current_rsi > 80:
-            score_rsi = 100
-        elif current_rsi > 70:
-            score_rsi = 85
-        elif current_rsi > 60:
-            score_rsi = 70
-        elif current_rsi > 50:
-            score_rsi = 60
-        elif current_rsi > 40:
-            score_rsi = 50
-        elif current_rsi > 30:
-            score_rsi = 40
-        elif current_rsi > 20:
-            score_rsi = 30
-        else:
-            score_rsi = 20
-        scores.append(score_rsi * 0.15)
+        rsi_config = technical_config.get('rsi', {})
+        rsi_thresholds = rsi_config.get('thresholds', [
+            {'limit': 80, 'score': 100}, {'limit': 70, 'score': 85}, {'limit': 60, 'score': 70},
+            {'limit': 50, 'score': 60}, {'limit': 40, 'score': 50}, {'limit': 30, 'score': 40},
+            {'limit': 20, 'score': 30}, {'limit': -999, 'score': 20}
+        ])
+        score_rsi = _get_score_from_thresholds(current_rsi, rsi_thresholds)
+        scores.append(score_rsi * rsi_config.get('weight', 0.15))
         
-        bb_middle = close_prices.rolling(window=20).mean()
-        bb_std = close_prices.rolling(window=20).std()
-        bb_upper = bb_middle + 2 * bb_std
-        bb_lower = bb_middle - 2 * bb_std
+        # 布林带评分
+        bb_period = BOLLINGER_PERIOD
+        bb_std = BOLLINGER_STD
+        bb_middle = close_prices.rolling(window=bb_period).mean()
+        bb_std_val = close_prices.rolling(window=bb_period).std()
+        bb_upper = bb_middle + bb_std * bb_std_val
+        bb_lower = bb_middle - bb_std * bb_std_val
         
         if pd.isna(bb_upper.iloc[-1]) or pd.isna(bb_lower.iloc[-1]):
             score_bb = 50
         else:
-            bb_position = (current_price - bb_lower.iloc[-1]) / (bb_upper.iloc[-1] - bb_lower.iloc[-1])
-            
-            if bb_position > 0.9:
-                score_bb = 100
-            elif bb_position > 0.8:
-                score_bb = 85
-            elif bb_position > 0.6:
-                score_bb = 70
-            elif bb_position > 0.4:
-                score_bb = 55
-            elif bb_position > 0.2:
-                score_bb = 45
+            bb_range = bb_upper.iloc[-1] - bb_lower.iloc[-1]
+            if bb_range > 0:
+                bb_position = (current_price - bb_lower.iloc[-1]) / bb_range
             else:
-                score_bb = 30
-        scores.append(score_bb * 0.15)
+                bb_position = 0.5
+            
+            bollinger_config = technical_config.get('bollinger', {})
+            bollinger_thresholds = bollinger_config.get('thresholds', [
+                {'limit': 0.9, 'score': 100}, {'limit': 0.8, 'score': 85}, {'limit': 0.6, 'score': 70},
+                {'limit': 0.4, 'score': 55}, {'limit': 0.2, 'score': 45}, {'limit': -999, 'score': 30}
+            ])
+            score_bb = _get_score_from_thresholds(bb_position, bollinger_thresholds)
         
-        low_n = low_prices.rolling(window=9).min()
-        high_n = high_prices.rolling(window=9).max()
+        scores.append(score_bb * technical_config.get('bollinger', {}).get('weight', 0.15))
+        
+        # KDJ评分
+        kdj_period = KDJ_PERIOD
+        low_n = low_prices.rolling(window=kdj_period).min()
+        high_n = high_prices.rolling(window=kdj_period).max()
         k_value = (close_prices - low_n) / (high_n - low_n) * 100
         
         current_k = k_value.iloc[-1]
         prev_k = k_value.iloc[-2] if len(k_value) >= 2 else current_k
         
-        if current_k > 80:
-            score_kdj = 100
-        elif current_k > 70:
-            score_kdj = 85
-        elif current_k > 60:
-            score_kdj = 70
-        elif current_k > 50:
-            score_kdj = 60
-        elif current_k > 40:
-            score_kdj = 50
-        elif current_k > 30:
-            score_kdj = 40
-        elif current_k > 20:
-            score_kdj = 30
-        else:
-            score_kdj = 20
+        kdj_config = technical_config.get('kdj', {})
+        kdj_thresholds = kdj_config.get('thresholds', [
+            {'limit': 80, 'score': 100}, {'limit': 70, 'score': 85}, {'limit': 60, 'score': 70},
+            {'limit': 50, 'score': 60}, {'limit': 40, 'score': 50}, {'limit': 30, 'score': 40},
+            {'limit': 20, 'score': 30}, {'limit': -999, 'score': 20}
+        ])
+        score_kdj = _get_score_from_thresholds(current_k, kdj_thresholds)
         
+        # K值上升且未超买时加分
         if current_k > prev_k and current_k < 80:
-            score_kdj = min(score_kdj + 10, 100)
+            bonus = kdj_config.get('bonus', {}).get('increasing_not_overbought', 10)
+            score_kdj = min(score_kdj + bonus, 100)
         
-        scores.append(score_kdj * 0.15)
+        scores.append(score_kdj * kdj_config.get('weight', 0.15))
         
+        # ATR评分
+        atr_period = ATR_PERIOD
         tr1 = high_prices - low_prices
         tr2 = abs(high_prices - close_prices.shift(1))
         tr3 = abs(low_prices - close_prices.shift(1))
         tr = tr1.where(tr1 > tr2, tr2).where(tr1 > tr3, tr3)
-        atr = tr.rolling(window=14).mean()
+        atr = tr.rolling(window=atr_period).mean()
         
         current_atr = atr.iloc[-1]
         avg_atr = atr.mean()
         
         if avg_atr > 0:
             atr_ratio = current_atr / avg_atr
-            if atr_ratio > 1.5:
-                score_atr = 100
-            elif atr_ratio > 1.3:
-                score_atr = 85
-            elif atr_ratio > 1.1:
-                score_atr = 70
-            elif atr_ratio > 0.9:
-                score_atr = 55
-            elif atr_ratio > 0.7:
-                score_atr = 45
-            else:
-                score_atr = 35
+            atr_config = technical_config.get('atr', {})
+            atr_thresholds = atr_config.get('thresholds', [
+                {'limit': 1.5, 'score': 100}, {'limit': 1.3, 'score': 85}, {'limit': 1.1, 'score': 70},
+                {'limit': 0.9, 'score': 55}, {'limit': 0.7, 'score': 45}, {'limit': -999, 'score': 35}
+            ])
+            score_atr = _get_score_from_thresholds(atr_ratio, atr_thresholds)
         else:
             score_atr = 50
-        scores.append(score_atr * 0.15)
+        
+        scores.append(score_atr * technical_config.get('atr', {}).get('weight', 0.15))
         
         return sum(scores)
         
@@ -636,7 +658,17 @@ def calculate_technical_score(df: pd.DataFrame) -> float:
         logger.warning(f"计算技术得分失败: {e}")
         return 50.0
 
+
 def calculate_stock_score(stock_code: str, stock_name: str, sector: str, sector_sentiment: float) -> Dict:
+    """
+    计算股票综合评分
+    
+    :param stock_code: 股票代码
+    :param stock_name: 股票名称
+    :param sector: 所属行业
+    :param sector_sentiment: 行业舆情得分
+    :return: 股票评分结果字典
+    """
     df = get_stock_data(stock_code)
     
     price_score = calculate_price_change_score(df)
@@ -644,32 +676,34 @@ def calculate_stock_score(stock_code: str, stock_name: str, sector: str, sector_
     technical_score = calculate_technical_score(df)
     sentiment_score = sector_sentiment
     
+    # 使用配置中的权重计算综合得分
     total_score = (
-        price_score * 0.25 +
-        volume_score * 0.20 +
-        sentiment_score * 0.30 +
-        technical_score * 0.25
+        price_score * PRICE_WEIGHT +
+        volume_score * VOLUME_WEIGHT +
+        sentiment_score * SENTIMENT_WEIGHT +
+        technical_score * TECHNICAL_WEIGHT
     )
     
+    # 生成推荐理由
     reason_parts = []
-    if price_score >= 65:
+    if price_score >= PRICE_HIGH_THRESHOLD:
         reason_parts.append("价格走势强劲")
-    elif price_score >= 55:
+    elif price_score >= PRICE_MEDIUM_THRESHOLD:
         reason_parts.append("价格趋势向好")
     
-    if volume_score >= 65:
+    if volume_score >= VOLUME_HIGH_THRESHOLD:
         reason_parts.append("成交量活跃")
-    elif volume_score >= 55:
+    elif volume_score >= VOLUME_MEDIUM_THRESHOLD:
         reason_parts.append("成交量较大")
     
-    if sentiment_score >= 75:
+    if sentiment_score >= SENTIMENT_HIGH_THRESHOLD:
         reason_parts.append("板块热度高")
-    elif sentiment_score >= 60:
+    elif sentiment_score >= SENTIMENT_MEDIUM_THRESHOLD:
         reason_parts.append("板块关注度较好")
     
-    if technical_score >= 65:
+    if technical_score >= TECHNICAL_HIGH_THRESHOLD:
         reason_parts.append("技术形态强势")
-    elif technical_score >= 55:
+    elif technical_score >= TECHNICAL_MEDIUM_THRESHOLD:
         reason_parts.append("技术面支撑良好")
     
     reason = "，".join(reason_parts) if reason_parts else "综合考量推荐"
@@ -686,7 +720,14 @@ def calculate_stock_score(stock_code: str, stock_name: str, sector: str, sector_
         "reason": reason
     }
 
+
 def generate_daily_recommend(n: int = 10) -> Dict:
+    """
+    生成每日股票推荐
+    
+    :param n: 推荐股票数量
+    :return: 推荐结果字典
+    """
     top_sectors = get_top_sectors(3)
     
     logger.info(f"前3热门板块: {top_sectors}")

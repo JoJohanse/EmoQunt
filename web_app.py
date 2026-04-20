@@ -22,6 +22,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 from src.factor import get_trendradar_sentiment, get_latest_trendradar_data, get_stock_sector, is_hs300_stock
+from src.utils.validators import (
+    validate_stock_code, validate_date_range, validate_initial_capital,
+    validate_commission_rate, validate_strategy_name, sanitize_string,
+    ValidationError
+)
 
 # 延迟导入，避免启动时加载
 def get_backtest_components():
@@ -52,7 +57,7 @@ def setup_logger():
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
     
-    # 创建格式器
+    # 创建格式器 - 不包含敏感信息
     formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
@@ -85,6 +90,10 @@ def preload_strategies():
         _strategy_cache = strategies
         _cache_timestamp = time.time()
         logger.info(f"预加载策略完成，共 {len(strategies)} 个策略")
+    except ImportError as e:
+        logger.error(f"导入策略模块失败: {e}")
+        _strategy_cache = []
+        _cache_timestamp = time.time()
     except Exception as e:
         logger.error(f"预加载策略失败: {e}")
         _strategy_cache = []
@@ -147,6 +156,9 @@ def get_cached_strategies():
         user_strategies = load_user_strategies()
         strategies = list(user_strategies.keys())
         logger.info(f"加载用户策略列表: {strategies}")
+    except ImportError as e:
+        logger.error(f"导入策略管理模块失败: {e}")
+        strategies = []
     except Exception as e:
         logger.error(f"加载用户策略失败: {e}")
         strategies = []
@@ -155,6 +167,36 @@ def get_cached_strategies():
     _cache_timestamp = current_time
     
     return strategies
+
+
+def handle_error(request: Request, error: Exception, operation: str = "操作") -> HTMLResponse:
+    """
+    统一错误处理函数
+    
+    :param request: 请求对象
+    :param error: 异常对象
+    :param operation: 操作名称
+    :return: 错误页面响应
+    """
+    if isinstance(error, ValidationError):
+        # 验证错误，不记录堆栈
+        logger.warning(f"{operation}验证失败: {str(error)}")
+        error_msg = str(error)
+    elif isinstance(error, ValueError):
+        # 值错误
+        logger.warning(f"{operation}参数错误: {str(error)}")
+        error_msg = str(error)
+    else:
+        # 其他错误，记录详细信息但不暴露给用户
+        logger.error(f"{operation}执行出错: {str(error)}", exc_info=True)
+        error_msg = f"{operation}执行失败，请稍后重试"
+    
+    return templates.TemplateResponse("error.html", {
+        "request": request,
+        "error": error_msg,
+        "title": "错误"
+    })
+
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -167,6 +209,7 @@ async def home(request: Request):
         "title": "量化策略回测系统"
     })
 
+
 @app.get("/backtest", response_class=HTMLResponse)
 async def backtest_form(request: Request):
     """回测表单页面"""
@@ -177,6 +220,7 @@ async def backtest_form(request: Request):
         "strategies": strategies,
         "title": "策略回测"
     })
+
 
 @app.post("/run_backtest", response_class=HTMLResponse)
 async def run_backtest(
@@ -190,9 +234,39 @@ async def run_backtest(
 ):
     """运行策略回测"""
     client_ip = request.client.host
+    
+    # 清理输入
+    strategy_name = sanitize_string(strategy_name, 50)
+    stock_code = sanitize_string(stock_code, 10)
+    
     logger.info(f"收到回测请求 - 客户端IP: {client_ip}, 策略: {strategy_name}, 股票: {stock_code}")
     
     try:
+        # 验证策略名称
+        valid, error = validate_strategy_name(strategy_name)
+        if not valid:
+            raise ValidationError(error)
+        
+        # 验证股票代码
+        valid, error = validate_stock_code(stock_code)
+        if not valid:
+            raise ValidationError(error)
+        
+        # 验证日期范围
+        valid, error = validate_date_range(start_date, end_date)
+        if not valid:
+            raise ValidationError(error)
+        
+        # 验证初始资金
+        valid, error = validate_initial_capital(initial_capital)
+        if not valid:
+            raise ValidationError(error)
+        
+        # 验证佣金费率
+        valid, error = validate_commission_rate(commission_rate)
+        if not valid:
+            raise ValidationError(error)
+        
         from src.backtest.backtest_manager import run_backtest_with_charts
         
         result = run_backtest_with_charts(
@@ -215,14 +289,14 @@ async def run_backtest(
             "title": "回测结果"
         })
         
+    except ValidationError as e:
+        return handle_error(request, e, "回测参数验证")
+    except ImportError as e:
+        logger.error(f"导入回测模块失败: {e}")
+        return handle_error(request, Exception("回测功能暂时不可用"), "回测")
     except Exception as e:
-        error_msg = f"{str(e)}\n{traceback.format_exc()}"
-        logger.error(f"回测执行出错 - 策略: {strategy_name}, 股票: {stock_code}, 错误: {error_msg}")
-        return templates.TemplateResponse("error.html", {
-            "request": request,
-            "error": error_msg,
-            "title": "错误"
-        })
+        return handle_error(request, e, "回测执行")
+
 
 @app.get("/refresh_sentiment", response_class=HTMLResponse)
 async def refresh_sentiment_page(request: Request):
@@ -236,7 +310,7 @@ async def refresh_sentiment_page(request: Request):
         sentiment_result = get_trendradar_sentiment()
         _sentiment_cache = sentiment_result
         _sentiment_cache_time = datetime.now()
-        logger.info(f"舆情分析刷新成功")
+        logger.info("舆情分析刷新成功")
         
         return templates.TemplateResponse("sentiment_analysis.html", {
             "request": request,
@@ -246,112 +320,130 @@ async def refresh_sentiment_page(request: Request):
             "news_count": 0,
             "update_time": _sentiment_cache_time.strftime('%Y-%m-%d %H:%M:%S')
         })
+    except ImportError as e:
+        logger.error(f"导入舆情模块失败: {e}")
+        return handle_error(request, Exception("舆情分析功能暂时不可用"), "舆情刷新")
     except Exception as e:
-        error_msg = f"{str(e)}\n{traceback.format_exc()}"
-        logger.error(f"舆情分析刷新出错: {error_msg}")
-        return templates.TemplateResponse("error.html", {
-            "request": request,
-            "error": error_msg,
-            "title": "错误"
-        })
+        return handle_error(request, e, "舆情分析刷新")
+
 
 @app.get("/strategies", response_class=HTMLResponse)
 async def strategies_list(request: Request):
     """策略列表页面"""
     logger.info(f"用户访问策略列表页面 - 客户端IP: {request.client.host}")
     
-    from src.Strategy.strategy_manager import load_user_strategies, get_strategy_templates
-    
-    user_strategies = load_user_strategies()
-    strategy_templates = get_strategy_templates()
-    
-    _, global_strategy_manager, _, _, _ = get_backtest_components()
-    strategies = global_strategy_manager.get_all_strategies()
-    strategy_details = []
-    
-    for name, strategy_class in strategies.items():
-        details = {
-            "name": name,
-            "description": getattr(strategy_class, '__doc__', 'No description available'),
-            "parameters": [],
-            "is_user_strategy": False
-        }
+    try:
+        from src.Strategy.strategy_manager import load_user_strategies, get_strategy_templates
         
-        if hasattr(strategy_class, 'params'):
-            try:
-                for param_name, default_value in strategy_class.params._getpairs().items():
-                    details["parameters"].append({
-                        "name": param_name,
-                        "default": default_value,
-                        "type": type(default_value).__name__
-                    })
-            except Exception as e:
-                logger.error(f"获取策略 {name} 参数时出错: {e}")
-                details["parameters"] = []
+        user_strategies = load_user_strategies()
+        strategy_templates = get_strategy_templates()
         
-        strategy_details.append(details)
-    
-    for name, config in user_strategies.items():
-        template_name = config.get("template", "sentiment_ma")
-        template = strategy_templates.get(template_name, {})
-        details = {
-            "name": name,
-            "description": config.get("description", ""),
-            "parameters": config.get("parameters", []),
-            "template": template_name,
-            "template_name": template.get("name", ""),
-            "is_user_strategy": True
-        }
-        strategy_details.append(details)
-    
-    logger.info(f"策略列表页面加载成功，共 {len(strategy_details)} 个策略")
-    
-    return templates.TemplateResponse("strategies.html", {
-        "request": request,
-        "strategy_details": strategy_details,
-        "templates": strategy_templates,
-        "title": "策略列表"
-    })
+        _, global_strategy_manager, _, _, _ = get_backtest_components()
+        strategies = global_strategy_manager.get_all_strategies()
+        strategy_details = []
+        
+        for name, strategy_class in strategies.items():
+            details = {
+                "name": name,
+                "description": getattr(strategy_class, '__doc__', 'No description available'),
+                "parameters": [],
+                "is_user_strategy": False
+            }
+            
+            if hasattr(strategy_class, 'params'):
+                try:
+                    for param_name, default_value in strategy_class.params._getpairs().items():
+                        details["parameters"].append({
+                            "name": param_name,
+                            "default": default_value,
+                            "type": type(default_value).__name__
+                        })
+                except (AttributeError, TypeError) as e:
+                    logger.warning(f"获取策略 {name} 参数时出错: {e}")
+                    details["parameters"] = []
+            
+            strategy_details.append(details)
+        
+        for name, config in user_strategies.items():
+            template_name = config.get("template", "sentiment_ma")
+            template = strategy_templates.get(template_name, {})
+            details = {
+                "name": name,
+                "description": config.get("description", ""),
+                "parameters": config.get("parameters", []),
+                "template": template_name,
+                "template_name": template.get("name", ""),
+                "is_user_strategy": True
+            }
+            strategy_details.append(details)
+        
+        logger.info(f"策略列表页面加载成功，共 {len(strategy_details)} 个策略")
+        
+        return templates.TemplateResponse("strategies.html", {
+            "request": request,
+            "strategy_details": strategy_details,
+            "templates": strategy_templates,
+            "title": "策略列表"
+        })
+    except ImportError as e:
+        logger.error(f"导入策略模块失败: {e}")
+        return handle_error(request, Exception("策略列表功能暂时不可用"), "策略列表")
+    except Exception as e:
+        return handle_error(request, e, "策略列表加载")
+
 
 @app.get("/api/strategies")
 async def get_strategies_api():
     """API接口：获取策略列表"""
     logger.info("API接口被调用：获取策略列表")
-    _, global_strategy_manager, _, _, _ = get_backtest_components()
-    strategies = global_strategy_manager.get_all_strategies()
-    result = {}
-    for name, strategy_class in strategies.items():
-        result[name] = {
-            "name": name,
-            "description": getattr(strategy_class, '__doc__', 'No description available'),
-            "parameters": {}
-        }
-        
-        if hasattr(strategy_class, 'params'):
-            try:
-                # _getpairs() 返回的是 OrderedDict，直接遍历键值对
-                for param_name, default_value in strategy_class.params._getpairs().items():
-                    result[name]["parameters"][param_name] = {
-                        "default": default_value,
-                        "type": type(default_value).__name__
-                    }
-            except Exception as e:
-                logger.error(f"获取策略 {name} API参数时出错: {e}")
-                # 如果参数获取失败，继续执行，添加空参数字典
-                result[name]["parameters"] = {}
     
-    logger.info(f"API接口返回 {len(result)} 个策略信息")
-    return result
+    try:
+        _, global_strategy_manager, _, _, _ = get_backtest_components()
+        strategies = global_strategy_manager.get_all_strategies()
+        result = {}
+        for name, strategy_class in strategies.items():
+            result[name] = {
+                "name": name,
+                "description": getattr(strategy_class, '__doc__', 'No description available'),
+                "parameters": {}
+            }
+            
+            if hasattr(strategy_class, 'params'):
+                try:
+                    for param_name, default_value in strategy_class.params._getpairs().items():
+                        result[name]["parameters"][param_name] = {
+                            "default": default_value,
+                            "type": type(default_value).__name__
+                        }
+                except (AttributeError, TypeError) as e:
+                    logger.warning(f"获取策略 {name} API参数时出错: {e}")
+                    result[name]["parameters"] = {}
+        
+        logger.info(f"API接口返回 {len(result)} 个策略信息")
+        return result
+    except ImportError as e:
+        logger.error(f"导入策略模块失败: {e}")
+        return {"error": "策略功能暂时不可用"}, 503
+    except Exception as e:
+        logger.error(f"获取策略列表失败: {e}")
+        return {"error": "获取策略列表失败"}, 500
+
 
 @app.get("/api/strategies/detail/{strategy_name}")
 async def get_strategy_detail(strategy_name: str):
     """API接口：获取单个策略详情"""
     logger.info(f"API接口被调用：获取策略详情 - {strategy_name}")
+    
+    # 清理和验证策略名称
+    strategy_name = sanitize_string(strategy_name, 50)
+    valid, error = validate_strategy_name(strategy_name)
+    if not valid:
+        return {"error": error}, 400
+    
     try:
         from src.Strategy.strategy_manager import get_user_strategy, is_user_strategy
         
         user_strategy = get_user_strategy(strategy_name)
-        is_user = is_user_strategy(strategy_name)
         
         if user_strategy:
             return {
@@ -377,8 +469,8 @@ async def get_strategy_detail(strategy_name: str):
                         "default": default_value,
                         "type": type(default_value).__name__
                     })
-            except Exception as e:
-                logger.error(f"获取策略参数失败: {e}")
+            except (AttributeError, TypeError) as e:
+                logger.warning(f"获取策略参数失败: {e}")
         
         return {
             "name": strategy_name,
@@ -386,25 +478,32 @@ async def get_strategy_detail(strategy_name: str):
             "parameters": parameters,
             "is_user_strategy": False
         }
+    except ImportError as e:
+        logger.error(f"导入策略模块失败: {e}")
+        return {"error": "策略功能暂时不可用"}, 503
     except Exception as e:
         logger.error(f"获取策略详情失败: {e}")
-        return {"error": str(e)}, 500
+        return {"error": "获取策略详情失败"}, 500
+
 
 @app.post("/api/strategies/create_new")
 async def create_strategy(request: Request):
     """API接口：用户自定义参数创建新策略"""
     logger.info("API接口被调用：用户自定义参数创建新策略")
+    
     try:
         from src.Strategy.strategy_manager import save_user_strategy, is_user_strategy
         
         body = await request.json()
-        name = body.get("name", "").strip()
-        description = body.get("description", "")
-        template_name = body.get("template", "sentiment_ma")
+        name = sanitize_string(body.get("name", ""), 50).strip()
+        description = sanitize_string(body.get("description", ""), 200)
+        template_name = sanitize_string(body.get("template", "sentiment_ma"), 20)
         parameters = body.get("parameters", [])
         
-        if not name:
-            return {"error": "策略名称不能为空"}, 400
+        # 验证策略名称
+        valid, error = validate_strategy_name(name)
+        if not valid:
+            return {"error": error}, 400
         
         if is_user_strategy(name):
             return {"error": "策略名称已存在"}, 400
@@ -424,24 +523,31 @@ async def create_strategy(request: Request):
             return {"success": True, "name": name}
         else:
             return {"error": "保存策略失败"}, 500
+    except ImportError as e:
+        logger.error(f"导入策略模块失败: {e}")
+        return {"error": "策略功能暂时不可用"}, 503
     except Exception as e:
         logger.error(f"创建策略失败: {e}")
-        return {"error": str(e)}, 500
+        return {"error": "创建策略失败"}, 500
+
 
 @app.post("/api/strategies/create_from_template")
 async def create_strategy_from_template(request: Request):
     """API接口：根据模板创建新策略（使用模板默认参数）"""
     logger.info("API接口被调用：根据模板创建新策略")
+    
     try:
         from src.Strategy.strategy_manager import save_user_strategy, is_user_strategy, get_strategy_template
         
         body = await request.json()
-        name = body.get("name", "").strip()
-        description = body.get("description", "")
-        template_name = body.get("template", "sentiment_ma")
+        name = sanitize_string(body.get("name", ""), 50).strip()
+        description = sanitize_string(body.get("description", ""), 200)
+        template_name = sanitize_string(body.get("template", "sentiment_ma"), 20)
         
-        if not name:
-            return {"error": "策略名称不能为空"}, 400
+        # 验证策略名称
+        valid, error = validate_strategy_name(name)
+        if not valid:
+            return {"error": error}, 400
         
         if is_user_strategy(name):
             return {"error": "策略名称已存在"}, 400
@@ -473,14 +579,19 @@ async def create_strategy_from_template(request: Request):
             return {"success": True, "name": name, "parameters": parameters}
         else:
             return {"error": "保存策略失败"}, 500
+    except ImportError as e:
+        logger.error(f"导入策略模块失败: {e}")
+        return {"error": "策略功能暂时不可用"}, 503
     except Exception as e:
         logger.error(f"创建策略失败: {e}")
-        return {"error": str(e)}, 500
+        return {"error": "创建策略失败"}, 500
+
 
 @app.get("/api/strategies/templates")
 async def get_strategy_templates_api():
     """API接口：获取策略模板列表"""
     logger.info("API接口被调用：获取策略模板列表")
+    
     try:
         from src.Strategy.strategy_manager import get_strategy_templates
         templates = get_strategy_templates()
@@ -492,14 +603,25 @@ async def get_strategy_templates_api():
                 "parameters": template.get("base_params", [])
             }
         return result
+    except ImportError as e:
+        logger.error(f"导入策略模块失败: {e}")
+        return {"error": "策略功能暂时不可用"}, 503
     except Exception as e:
         logger.error(f"获取策略模板失败: {e}")
-        return {"error": str(e)}, 500
+        return {"error": "获取策略模板失败"}, 500
+
 
 @app.put("/api/strategies/{strategy_name}")
 async def update_strategy(strategy_name: str, request: Request):
     """API接口：更新策略"""
     logger.info(f"API接口被调用：更新策略 - {strategy_name}")
+    
+    # 清理和验证策略名称
+    strategy_name = sanitize_string(strategy_name, 50)
+    valid, error = validate_strategy_name(strategy_name)
+    if not valid:
+        return {"error": error}, 400
+    
     try:
         from src.Strategy.strategy_manager import get_user_strategy, save_user_strategy
         
@@ -507,9 +629,9 @@ async def update_strategy(strategy_name: str, request: Request):
             return {"error": "只能修改用户创建的策略"}, 403
         
         body = await request.json()
-        description = body.get("description", "")
+        description = sanitize_string(body.get("description", ""), 200)
         parameters = body.get("parameters", [])
-        template = body.get("template", "sentiment_ma")
+        template = sanitize_string(body.get("template", "sentiment_ma"), 20)
         
         config = {
             "description": description,
@@ -522,14 +644,25 @@ async def update_strategy(strategy_name: str, request: Request):
             return {"success": True, "name": strategy_name}
         else:
             return {"error": "保存策略失败"}, 500
+    except ImportError as e:
+        logger.error(f"导入策略模块失败: {e}")
+        return {"error": "策略功能暂时不可用"}, 503
     except Exception as e:
         logger.error(f"更新策略失败: {e}")
-        return {"error": str(e)}, 500
+        return {"error": "更新策略失败"}, 500
+
 
 @app.delete("/api/strategies/{strategy_name}")
 async def delete_strategy(strategy_name: str):
     """API接口：删除策略"""
     logger.info(f"API接口被调用：删除策略 - {strategy_name}")
+    
+    # 清理和验证策略名称
+    strategy_name = sanitize_string(strategy_name, 50)
+    valid, error = validate_strategy_name(strategy_name)
+    if not valid:
+        return {"error": error}, 400
+    
     try:
         from src.Strategy.strategy_manager import delete_user_strategy, is_user_strategy
         
@@ -541,9 +674,13 @@ async def delete_strategy(strategy_name: str):
             return {"success": True}
         else:
             return {"error": "删除策略失败"}, 500
+    except ImportError as e:
+        logger.error(f"导入策略模块失败: {e}")
+        return {"error": "策略功能暂时不可用"}, 503
     except Exception as e:
         logger.error(f"删除策略失败: {e}")
-        return {"error": str(e)}, 500
+        return {"error": "删除策略失败"}, 500
+
 
 @app.get("/sentiment", response_class=HTMLResponse)
 async def sentiment_analysis(request: Request):
@@ -567,14 +704,12 @@ async def sentiment_analysis(request: Request):
             "news_count": len(news_data) if news_data else 0,
             "update_time": sentiment_data.get('timestamp', '') if sentiment_data else ''
         })
+    except ImportError as e:
+        logger.error(f"导入舆情模块失败: {e}")
+        return handle_error(request, Exception("舆情分析功能暂时不可用"), "舆情分析")
     except Exception as e:
-        error_msg = f"{str(e)}\n{traceback.format_exc()}"
-        logger.error(f"舆情分析页面加载出错: {error_msg}")
-        return templates.TemplateResponse("error.html", {
-            "request": request,
-            "error": error_msg,
-            "title": "错误"
-        })
+        return handle_error(request, e, "舆情分析页面加载")
+
 
 @app.get("/api/sentiment")
 async def get_sentiment_api():
@@ -587,7 +722,7 @@ async def get_sentiment_api():
         from src.factor.sentiment import get_or_generate_sentiment_data, calculate_sentiment_factor
         from nes_data.trendradar.trendradar import check_recent_txt_exists, parse_trendradar_txt
         
-        has_recent, txt_file = check_recent_txt_exists(max_age_seconds=3600)
+        has_recent, txt_file = check_recent_txt_exists(max_age_seconds=SENTIMENT_CACHE_TIMEOUT)
         if has_recent:
             logger.info(f"存在1小时内的txt文件: {txt_file}，从文件读取数据")
             news_data = parse_trendradar_txt(txt_file)
@@ -614,12 +749,16 @@ async def get_sentiment_api():
             return sentiment_result
         else:
             return {'error': '无法获取舆情数据', 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+    except ImportError as e:
+        logger.error(f"导入舆情模块失败: {e}")
+        return {'error': '舆情功能暂时不可用', 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
     except Exception as e:
         logger.error(f"获取舆情分析结果时出错: {e}")
         return {
-            'error': str(e),
+            'error': '获取舆情数据失败',
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
+
 
 @app.get("/daily_recommend", response_class=HTMLResponse)
 async def daily_recommend_page(request: Request):
@@ -637,14 +776,12 @@ async def daily_recommend_page(request: Request):
             "data": recommend_data,
             "title": "每日股票推荐"
         })
+    except ImportError as e:
+        logger.error(f"导入推荐模块失败: {e}")
+        return handle_error(request, Exception("每日推荐功能暂时不可用"), "每日推荐")
     except Exception as e:
-        error_msg = f"{str(e)}\n{traceback.format_exc()}"
-        logger.error(f"每日推荐页面加载出错: {error_msg}")
-        return templates.TemplateResponse("error.html", {
-            "request": request,
-            "error": error_msg,
-            "title": "错误"
-        })
+        return handle_error(request, e, "每日推荐页面加载")
+
 
 @app.get("/refresh_recommend", response_class=HTMLResponse)
 async def refresh_recommend_page(request: Request):
@@ -663,14 +800,12 @@ async def refresh_recommend_page(request: Request):
             "data": recommend_data,
             "title": "每日股票推荐"
         })
+    except ImportError as e:
+        logger.error(f"导入推荐模块失败: {e}")
+        return handle_error(request, Exception("每日推荐功能暂时不可用"), "每日推荐刷新")
     except Exception as e:
-        error_msg = f"{str(e)}\n{traceback.format_exc()}"
-        logger.error(f"每日推荐刷新出错: {error_msg}")
-        return templates.TemplateResponse("error.html", {
-            "request": request,
-            "error": error_msg,
-            "title": "错误"
-        })
+        return handle_error(request, e, "每日推荐刷新")
+
 
 @app.post("/analyze_sentiment", response_class=HTMLResponse)
 async def analyze_sentiment(
@@ -680,9 +815,24 @@ async def analyze_sentiment(
 ):
     """执行舆情分析并显示结果"""
     client_ip = request.client.host
+    
+    # 清理输入
+    strategy = sanitize_string(strategy, 50)
+    stock_code = sanitize_string(stock_code, 10)
+    
     logger.info(f"收到舆情分析请求 - 客户端IP: {client_ip}, 策略: {strategy}, 股票: {stock_code}")
     
     try:
+        # 验证股票代码
+        valid, error = validate_stock_code(stock_code)
+        if not valid:
+            raise ValidationError(error)
+        
+        # 验证策略名称
+        valid, error = validate_strategy_name(strategy)
+        if not valid:
+            raise ValidationError(error)
+        
         from src.factor.sentiment import get_or_generate_sentiment_data
         from nes_data.trendradar.trendradar import check_recent_txt_exists, parse_trendradar_txt
         
@@ -696,7 +846,7 @@ async def analyze_sentiment(
         stock_sector = get_stock_sector(stock_code)
         logger.info(f"股票 {stock_code} 所属行业: {stock_sector}")
         
-        has_recent, txt_file = check_recent_txt_exists(max_age_seconds=3600)
+        has_recent, txt_file = check_recent_txt_exists(max_age_seconds=SENTIMENT_CACHE_TIMEOUT)
         if has_recent:
             news_data = parse_trendradar_txt(txt_file)
             if news_data:
@@ -747,14 +897,13 @@ async def analyze_sentiment(
             "title": "舆情分析结果"
         })
         
+    except ValidationError as e:
+        return handle_error(request, e, "舆情分析参数验证")
+    except ImportError as e:
+        logger.error(f"导入舆情模块失败: {e}")
+        return handle_error(request, Exception("舆情分析功能暂时不可用"), "舆情分析")
     except Exception as e:
-        error_msg = f"{str(e)}\n{traceback.format_exc()}"
-        logger.error(f"舆情分析执行出错: {error_msg}")
-        return templates.TemplateResponse("error.html", {
-            "request": request,
-            "error": error_msg,
-            "title": "错误"
-        })
+        return handle_error(request, e, "舆情分析执行")
 
 
 def generate_sentiment_chart(sentiment_result: dict, sentiment_dir: str, timestamp: str) -> str:
@@ -813,8 +962,11 @@ def save_sentiment_analysis_result(sentiment_result: dict, strategy: str, stock_
         }
         save_sentiment_result(save_data)
         logger.info("舆情分析结果已保存")
+    except ImportError as e:
+        logger.warning(f"导入保存模块失败: {e}")
     except Exception as e:
         logger.warning(f"保存舆情结果失败: {e}")
+
 
 if __name__ == "__main__":
     # 运行Web服务器

@@ -14,228 +14,281 @@ from openai import OpenAI
 # 加载环境变量
 load_dotenv()
 
+# 导入配置加载器
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from config.config_loader import get_config
+
+# 加载情感分析配置
+_config = get_config()
+SENTIMENT_CONFIG = _config.load_sentiment_config()
+
+# 从配置中获取情感词典
+POSITIVE_WORDS = SENTIMENT_CONFIG.get('positive_words', {})
+NEGATIVE_WORDS = SENTIMENT_CONFIG.get('negative_words', {})
+
+# 从配置中获取阈值
+THRESHOLDS = SENTIMENT_CONFIG.get('sentiment_thresholds', {})
+POSITIVE_THRESHOLD = THRESHOLDS.get('positive', 0.1)
+NEGATIVE_THRESHOLD = THRESHOLDS.get('negative', -0.1)
+BUY_SIGNAL_THRESHOLD = THRESHOLDS.get('buy_signal', 0.3)
+SELL_SIGNAL_THRESHOLD = THRESHOLDS.get('sell_signal', -0.3)
+
+# 从配置中获取行业列表
+INDUSTRIES = SENTIMENT_CONFIG.get('industries', [])
+
+# 从配置中获取LLM配置
+LLM_CONFIG = SENTIMENT_CONFIG.get('llm_config', {})
+DEFAULT_MODEL = LLM_CONFIG.get('model', "Qwen/Qwen3-235B-A22B-Instruct-2507")
+DEFAULT_BASE_URL = LLM_CONFIG.get('base_url', "https://api.siliconflow.cn/v1")
+DEFAULT_TEMPERATURE = LLM_CONFIG.get('temperature', 0.75)
+
+# 从配置中获取缓存配置
+CACHE_CONFIG = SENTIMENT_CONFIG.get('cache_config', {})
+SENTIMENT_CACHE_TIMEOUT = CACHE_CONFIG.get('sentiment_cache_timeout', 3600)
+
 
 class SentimentAnalyzer:
     """
     情绪分析器 - 基于关键词的情感分析
     """
     
-    def __init__(self, debug: bool = False, model: str = "Qwen/Qwen3-235B-A22B-Instruct-2507", base_url: str = "https://api.siliconflow.cn/v1", api_key: str = os.environ["DASHSCOPE_API_KEY"]):
+    def __init__(self, debug: bool = False, model: str = None, base_url: str = None, api_key: str = None):
         """
         初始化情绪分析器
-        """
-        # 正面关键词及其权重
-        self.positive_words = {
-            '上涨': 0.8,
-            '涨停': 1.0,
-            '利好': 0.9,
-            '增长': 0.7,
-            '上升': 0.6,
-            '突破': 0.8,
-            '创新高': 0.9,
-            '强势': 0.7,
-            '超预期': 0.8,
-            '好转': 0.6,
-            '回暖': 0.7,
-            '复苏': 0.8,
-            '盈利': 0.7,
-            '增长': 0.6,
-            '机会': 0.5,
-            '看好': 0.8,
-            '买入': 0.9,
-            '持有': 0.4,
-            '推荐': 0.8
-        }
         
-        # 负面关键词及其权重
-        self.negative_words = {
-            '下跌': 0.8,
-            '跌停': 1.0,
-            '利空': 0.9,
-            '下降': 0.6,
-            '下跌': 0.8,
-            '跌破': 0.7,
-            '创新低': 0.9,
-            '弱势': 0.7,
-            '低于预期': 0.8,
-            '恶化': 0.6,
-            '降温': 0.7,
-            '衰退': 0.8,
-            '亏损': 0.7,
-            '减少': 0.6,
-            '风险': 0.5,
-            '看空': 0.8,
-            '卖出': 0.9,
-            '减持': 0.7,
-            '警告': 0.8
-        }
+        :param debug: 是否开启调试模式
+        :param model: LLM模型名称，默认从配置读取
+        :param base_url: LLM API基础URL，默认从配置读取
+        :param api_key: API密钥，默认从环境变量读取
+        """
+        # 使用配置中的情感词典
+        self.positive_words = POSITIVE_WORDS
+        self.negative_words = NEGATIVE_WORDS
+        
         from src.factor.daily_recommend import StockSectorMapper
         self.stock_mapper = StockSectorMapper()
         
-        # 初始化llm
-        self.client = OpenAI(
-            # 示例为阿里云，根据实际情况更改
-            api_key=api_key,
-            # base_url="https://dashscope.aliyuncs.com/api/v2/apps/protocols/compatible-mode/v1",
-            base_url=base_url
-        )
-        self.model = model
+        # 初始化LLM配置
+        self.model = model or DEFAULT_MODEL
+        self.base_url = base_url or DEFAULT_BASE_URL
+        self.api_key = api_key or os.environ.get("DASHSCOPE_API_KEY")
         self.debug = debug
+        
+        # 初始化OpenAI客户端
+        if self.api_key:
+            self.client = OpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url
+            )
+        else:
+            logger.warning("API密钥未设置，情感分析功能将受限")
+            self.client = None
     
-    def analyze_sentiment(self, text: str) -> float:
+    def analyze_sentiment(self, text: str) -> List[float]:
         """
         分析文本的情感倾向
         
         Args:
             text: 分析的新闻文本
-            stock_code: 股票代码
             
         Returns:
-            float: 该股票对于输入新闻的情绪得分，范围从 -1（极度负面）到 1（极度正面）
+            List[float]: 各行业的情感得分列表（范围从 -1 到 1）
         """
-        # 获取股票信息
-        # stock_info = self.stock_mapper.get_info_by_code(stock_code)
-        # stock_name = stock_info.get("name")
-        # sector = stock_info.get("sector")
+        if not self.client:
+            logger.warning("LLM客户端未初始化，返回默认得分")
+            return [0.0] * len(INDUSTRIES) if INDUSTRIES else [0.0] * 64
+        
+        # 构建行业列表字符串
+        industry_list = '、'.join(INDUSTRIES) if INDUSTRIES else '装修建材、能源金属、石油行业等64个行业'
+        
         prompt = f"""
         新闻文本：{text}
-        行业种类：
-        '装修建材','能源金属','石油行业','消费电子','电力行业','小金属','电池','工程建设',
-        '燃气','银行','航运港口','家电行业','通信设备','汽车零部件','航天航空','文化传媒',
-        '纺织服装','汽车整车','煤炭行业','交运设备','化学原料','化纤行业','电网设备','软件开发',
-        '行业','光伏设备','医疗器械','有色金属','通信服务','多元金融','医药商业','美容护理',
-        '橡胶制品','食品饮料','中药','贵金属','证券','商业百货','化肥行业','电子元件','化学制品',
-        '铁路公路','医疗服务','家用轻工','水泥建材','半导体','农牧饲渔','酿酒行业','工程机械',
-        '房地产开发','非金属材料','船舶制造','计算机设备','玻璃玻纤','化学制药','电源设备',
-        '航空机场','钢铁行业','旅游酒店','物流行业','保险','生物制品','光学光电子','互联网服务'
-        请返回一个浮点数列表，每个浮点数范围从 -1（极度负面）到 1（极度正面），列表长度总是为64。表示输入新闻对上列64个行业种类的情绪影响，
-        你只需返回列表，不需要其他解释。
+        行业种类：{industry_list}
+        
+        请返回一个浮点数列表，每个浮点数范围从 -1（极度负面）到 1（极度正面），
+        列表长度总是为{len(INDUSTRIES) if INDUSTRIES else 64}。
+        表示输入新闻对各行业的情绪影响，你只需返回列表，不需要其他解释。
         """
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": "你是一个专业的金融情绪分析器，你的任务是根据提供的股票以及其所属行业，分析以下新闻文本对该股票的情感倾向。"},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.75
-        )
-        # 解析llm返回的结果
-        content = response.choices[0].message.content.strip()
-        if self.debug:
-            print(content)
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "你是一个专业的金融情绪分析器，你的任务是根据提供的股票以及其所属行业，分析以下新闻文本对该股票的情感倾向。"},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=DEFAULT_TEMPERATURE
+            )
+            
+            # 解析LLM返回的结果
+            content = response.choices[0].message.content.strip()
+            if self.debug:
+                logger.debug(f"LLM响应: {content}")
+            
+            # 提取列表中的浮点数
+            scores = self._parse_sentiment_scores(content)
+            return scores
+            
+        except Exception as e:
+            logger.error(f"LLM情感分析失败: {e}")
+            return [0.0] * (len(INDUSTRIES) if INDUSTRIES else 64)
+    
+    def _parse_sentiment_scores(self, content: str) -> List[float]:
+        """
+        解析LLM返回的情感得分
+        
+        :param content: LLM返回的文本内容
+        :return: 解析后的情感得分列表
+        """
+        expected_length = len(INDUSTRIES) if INDUSTRIES else 64
+        
         try:
             # 提取列表中的浮点数
-            scores = [float(x) for x in content.strip('[]').split(',')]
-            scores = [max(-1.0, min(1.0, score)) for score in scores]
-            # 确保列表长度为64
-            if len(scores) != 64:
-                if len(scores) > 64:
-                    scores = scores[:64]
+            scores = [float(x.strip()) for x in content.strip('[]').split(',')]
+            scores = [max(-1.0, min(1.0, score)) for score in scores]  # 限制在[-1, 1]范围内
+            
+            # 确保列表长度正确
+            if len(scores) != expected_length:
+                if len(scores) > expected_length:
+                    scores = scores[:expected_length]
                 else:
-                    scores.extend([0.0] * (64 - len(scores)))
-        except ValueError:
-            scores = [0.0] * 64
+                    scores.extend([0.0] * (expected_length - len(scores)))
+                    
+        except (ValueError, AttributeError) as e:
+            logger.warning(f"解析情感得分失败: {e}, 使用默认值")
+            scores = [0.0] * expected_length
         
         return scores
         
     def analyze_news_list(self, news_list: List[Dict]) -> Tuple[List[float], Dict]:
         """
         分析新闻列表的整体情感倾向，按行业计算情感得分
-        将所有新闻合并后一次性分析
         
         Args:
             news_list: 新闻数据列表，每个元素包含 'title' 和 'content' 字段
             
         Returns:
-            Tuple[list[float], Dict]: 
-                - list[float]: 整体各行业的平均情感得分列表（每个元素范围从 -1 到 1）
-                - Dict: 详细分析结果，包含以下字段：
-                    - total_news: 处理的总新闻数
-                    - positive_industry_count: 正面行业数（得分>0.1）
-                    - negative_industry_count: 负面行业数（得分<-0.1）
-                    - neutral_industry_count: 中性行业数（得分在-0.1到0.1之间）
-                    - average_score: 整体平均得分
-                    - score_distribution: 情感分布比例
-                        - positive: 正面行业占比
-                        - negative: 负面行业占比
-                        - neutral: 中性行业占比
-                    - industry_details: 各行业详细分析列表，每个元素包含：
-                        - industry: 行业名称
-                        - score: 该行业的情感得分（-1到1之间）
-                        - sentiment: 情感分类（'positive'/'negative'/'neutral'）
+            Tuple[List[float], Dict]: 情感得分列表和详细分析结果
         """
         if not news_list:
-            return [0.0] * 64, {
-                'total_news': 0,
-                'positive_industry_count': 0,
-                'negative_industry_count': 0,
-                'neutral_industry_count': 64,
-                'average_score': 0.0,
-                'score_distribution': {
-                    'positive': 0.0,
-                    'negative': 0.0,
-                    'neutral': 1.0
-                },
-                'industry_details': []
-            }
+            return self._get_empty_analysis_result()
         
-        industry_names = [
-            '装修建材','能源金属','石油行业','消费电子','电力行业','小金属','电池','工程建设',
-            '燃气','银行','航运港口','家电行业','通信设备','汽车零部件','航天航空','文化传媒',
-            '纺织服装','汽车整车','煤炭行业','交运设备','化学原料','化纤行业','电网设备','软件开发',
-            '行业','光伏设备','医疗器械','有色金属','通信服务','多元金融','医药商业','美容护理',
-            '橡胶制品','食品饮料','中药','贵金属','证券','商业百货','化肥行业','电子元件','化学制品',
-            '铁路公路','医疗服务','家用轻工','水泥建材','半导体','农牧饲渔','酿酒行业','工程机械',
-            '房地产开发','非金属材料','船舶制造','计算机设备','玻璃玻纤','化学制药','电源设备',
-            '航空机场','钢铁行业','旅游酒店','物流行业','保险','生物制品','光学光电子','互联网服务'
-        ]
+        # 合并所有新闻文本
+        combined_text = self._combine_news_text(news_list)
         
-        combined_text = ""
+        # 分析情感
+        scores = self.analyze_sentiment(combined_text)
+        
+        # 生成分析结果
+        analysis_result = self._generate_analysis_result(scores, news_list)
+        
+        return scores, analysis_result
+    
+    def _combine_news_text(self, news_list: List[Dict]) -> str:
+        """
+        合并新闻列表为单个文本
+        
+        :param news_list: 新闻列表
+        :return: 合并后的文本
+        """
+        combined_parts = []
         for news in news_list:
             title = news.get('title', '')
             content = news.get('content', '')
-            combined_text += f"标题：{title}\n内容：{content}\n---\n"
+            if title or content:
+                combined_parts.append(f"标题：{title}\n内容：{content}")
         
-        scores = self.analyze_sentiment(combined_text)
-        avg_scores = scores
+        return "\n---\n".join(combined_parts)
+    
+    def _get_empty_analysis_result(self) -> Tuple[List[float], Dict]:
+        """
+        获取空的分析结果
         
-        positive_count = sum(1 for score in avg_scores if score > 0.1)
-        negative_count = sum(1 for score in avg_scores if score < -0.1)
-        neutral_count = 64 - positive_count - negative_count
+        :return: 空的情感得分和分析结果
+        """
+        expected_length = len(INDUSTRIES) if INDUSTRIES else 64
         
-        average_score = sum(avg_scores) / 64
+        return [0.0] * expected_length, {
+            'total_news': 0,
+            'positive_industry_count': 0,
+            'negative_industry_count': 0,
+            'neutral_industry_count': expected_length,
+            'average_score': 0.0,
+            'score_distribution': {
+                'positive': 0.0,
+                'negative': 0.0,
+                'neutral': 1.0
+            },
+            'industry_details': []
+        }
+    
+    def _generate_analysis_result(self, scores: List[float], news_list: List[Dict]) -> Dict:
+        """
+        生成分析结果
         
+        :param scores: 情感得分列表
+        :param news_list: 新闻列表
+        :return: 分析结果字典
+        """
+        industries = INDUSTRIES if INDUSTRIES else self._get_default_industries()
+        
+        # 统计正面/负面/中性行业数量
+        positive_count = sum(1 for score in scores if score > POSITIVE_THRESHOLD)
+        negative_count = sum(1 for score in scores if score < NEGATIVE_THRESHOLD)
+        neutral_count = len(scores) - positive_count - negative_count
+        
+        # 计算平均分
+        average_score = sum(scores) / len(scores) if scores else 0.0
+        
+        # 生成行业详情
         industry_details = []
-        for i, score in enumerate(avg_scores):
-            if score > 0.1:
+        for i, score in enumerate(scores):
+            if score > POSITIVE_THRESHOLD:
                 sentiment = 'positive'
-            elif score < -0.1:
+            elif score < NEGATIVE_THRESHOLD:
                 sentiment = 'negative'
             else:
                 sentiment = 'neutral'
             
+            industry_name = industries[i] if i < len(industries) else f"行业{i+1}"
             industry_details.append({
-                'industry': industry_names[i],
+                'industry': industry_name,
                 'score': score,
                 'sentiment': sentiment
             })
         
-        analysis_result = {
+        return {
             'total_news': len(news_list),
             'positive_industry_count': positive_count,
             'negative_industry_count': negative_count,
             'neutral_industry_count': neutral_count,
             'average_score': average_score,
             'score_distribution': {
-                'positive': positive_count / 64,
-                'negative': negative_count / 64,
-                'neutral': neutral_count / 64
+                'positive': positive_count / len(scores) if scores else 0.0,
+                'negative': negative_count / len(scores) if scores else 0.0,
+                'neutral': neutral_count / len(scores) if scores else 0.0
             },
             'industry_details': industry_details
         }
-        
-        return avg_scores, analysis_result
     
+    def _get_default_industries(self) -> List[str]:
+        """
+        获取默认行业列表
+        
+        :return: 默认行业列表
+        """
+        return [
+            '装修建材', '能源金属', '石油行业', '消费电子', '电力行业', '小金属', '电池', '工程建设',
+            '燃气', '银行', '航运港口', '家电行业', '通信设备', '汽车零部件', '航天航空', '文化传媒',
+            '纺织服装', '汽车整车', '煤炭行业', '交运设备', '化学原料', '化纤行业', '电网设备', '软件开发',
+            '行业', '光伏设备', '医疗器械', '有色金属', '通信服务', '多元金融', '医药商业', '美容护理',
+            '橡胶制品', '食品饮料', '中药', '贵金属', '证券', '商业百货', '化肥行业', '电子元件', '化学制品',
+            '铁路公路', '医疗服务', '家用轻工', '水泥建材', '半导体', '农牧饲渔', '酿酒行业', '工程机械',
+            '房地产开发', '非金属材料', '船舶制造', '计算机设备', '玻璃玻纤', '化学制药', '电源设备',
+            '航空机场', '钢铁行业', '旅游酒店', '物流行业', '保险', '生物制品', '光学光电子', '互联网服务'
+        ]
+
 
 def calculate_sentiment_factor(news_list: List[Dict]) -> Dict:
     """
@@ -251,7 +304,7 @@ def calculate_sentiment_factor(news_list: List[Dict]) -> Dict:
     sentiment_scores, analysis_result = analyzer.analyze_news_list(news_list)
     
     # 使用整体平均得分生成交易信号
-    average_score = analysis_result['average_score']
+    average_score = analysis_result.get('average_score', 0.0)
     
     # 生成情绪因子
     sentiment_factor = {
@@ -275,9 +328,9 @@ def generate_trading_signal(sentiment_score: float) -> str:
     Returns:
         str: 交易信号 ('buy', 'sell', 'hold')
     """
-    if sentiment_score > 0.3:
+    if sentiment_score > BUY_SIGNAL_THRESHOLD:
         return 'buy'
-    elif sentiment_score < -0.3:
+    elif sentiment_score < SELL_SIGNAL_THRESHOLD:
         return 'sell'
     else:
         return 'hold'
@@ -285,6 +338,12 @@ def generate_trading_signal(sentiment_score: float) -> str:
 
 # Z-score标准化
 def z_score_normalize(values):
+    """
+    Z-score标准化
+    
+    :param values: 数值列表
+    :return: 标准化后的数值列表
+    """
     if len(values) == 0:
         return []
     
@@ -296,51 +355,28 @@ def z_score_normalize(values):
     
     return [(x - mean_val) / std_val for x in values]
 
-# 新闻已按时间顺序排列，将同一天的新闻分组，按天分析当天各行业的舆情
-# 按行业分析舆情倾向
-def analyze_industry_sentiment(news_list):
-    sentiment_list = {}
-    '''
-    新闻数据示例：
-    {"id": "BkKujE_xK7ICqmropAK1", "content": "XXXXX", "title": "XXXX", "language": "zh", "date": "2022-08-18", "num_words": 1083, "max_word_length": 12, "frac_chars_non_alphanumeric": 0.10963793982661907, "frac_chars_dupe_5grams": 0.004410143329658167, "frac_chars_dupe_9grams": 0.0, "keywords": ["券商", "行情", "利率", "贸易", "投资", "消费", "合资", "上市"], "sentiment": "positive", "opinion": {"industry": "制造业", "sentiment": {"label": "positive", "score": {"positive": 0.7087072134017944, "negative": 0.29129278659820557}}}}
-    '''
-    for news in news_list:
-        try:
-            if 'opinion' not in news:
-                continue
-            # 划分日期，若不存在以该日期为键创建空字典以存放分析结果
-            date_str = news['date']
-            if date_str not in sentiment_list:
-                sentiment_list[date_str] = {}
-            industry = news['opinion']['industry']
-            if industry not in sentiment_list[date_str]:
-                sentiment_list[date_str][industry] = {
-                    'avg_positive': 0,
-                    'avg_negative': 0,
-                    'news_count': 0
-                }
-            # 更新平均分数
-            total_pos = sentiment_list[date_str][industry]['avg_positive'] * sentiment_list[date_str][industry]['news_count'] + news['opinion']['sentiment']['score']['positive']
-            total_neg = sentiment_list[date_str][industry]['avg_negative'] * sentiment_list[date_str][industry]['news_count'] + news['opinion']['sentiment']['score']['negative']
-            sentiment_list[date_str][industry]['news_count'] += 1
-            sentiment_list[date_str][industry]['avg_positive'] = total_pos / sentiment_list[date_str][industry]['news_count']
-            sentiment_list[date_str][industry]['avg_negative'] = total_neg / sentiment_list[date_str][industry]['news_count']
-        except Exception as e:
-            print(f"处理{news['id']}新闻时出错: {e}")
-            continue
-
-    return sentiment_list
-
 
 # 舆情结果持久化
-SENTIMENT_SAVE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "nes_data", "sentiment_results")
+SENTIMENT_SAVE_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "nes_data", "sentiment_results"
+)
+
 
 def _ensure_sentiment_save_dir():
+    """确保舆情结果保存目录存在"""
     if not os.path.exists(SENTIMENT_SAVE_DIR):
         os.makedirs(SENTIMENT_SAVE_DIR, exist_ok=True)
         logger.info(f"创建舆情结果保存目录: {SENTIMENT_SAVE_DIR}")
 
+
 def save_sentiment_result(data: Dict) -> str:
+    """
+    保存舆情分析结果
+    
+    :param data: 舆情分析数据
+    :return: 保存的文件路径
+    """
     _ensure_sentiment_save_dir()
     
     date_str = datetime.now().strftime("%Y%m%d")
@@ -356,7 +392,14 @@ def save_sentiment_result(data: Dict) -> str:
         logger.error(f"保存舆情分析结果失败: {e}")
         raise
 
+
 def load_sentiment_result(date_str: str = None) -> Optional[Dict]:
+    """
+    加载舆情分析结果
+    
+    :param date_str: 日期字符串，格式为YYYYMMDD，默认为今天
+    :return: 舆情分析数据
+    """
     if date_str is None:
         date_str = datetime.now().strftime("%Y%m%d")
     
@@ -371,29 +414,38 @@ def load_sentiment_result(date_str: str = None) -> Optional[Dict]:
             data = json.load(f)
         logger.info(f"加载舆情分析结果: {file_path}")
         return data
+    except json.JSONDecodeError as e:
+        logger.error(f"解析舆情结果文件失败: {e}")
+        return None
     except Exception as e:
         logger.error(f"加载舆情分析结果失败: {e}")
         return None
 
+
 def get_latest_sentiment_result() -> Optional[Dict]:
+    """
+    获取最新的舆情分析结果
+    
+    :return: 最新的舆情分析数据
+    """
     if not os.path.exists(SENTIMENT_SAVE_DIR):
         return None
     
-    files = [f for f in os.listdir(SENTIMENT_SAVE_DIR) if f.endswith('.json')]
-    if not files:
-        return None
-    
-    files.sort(reverse=True)
-    latest_file = files[0]
-    
-    file_date_str = latest_file.replace('.json', '')
-    today_str = datetime.now().strftime("%Y%m%d")
-    
-    if file_date_str != today_str:
-        return None
-    
-    file_path = os.path.join(SENTIMENT_SAVE_DIR, latest_file)
     try:
+        files = [f for f in os.listdir(SENTIMENT_SAVE_DIR) if f.endswith('.json')]
+        if not files:
+            return None
+        
+        files.sort(reverse=True)
+        latest_file = files[0]
+        
+        file_date_str = latest_file.replace('.json', '')
+        today_str = datetime.now().strftime("%Y%m%d")
+        
+        if file_date_str != today_str:
+            return None
+        
+        file_path = os.path.join(SENTIMENT_SAVE_DIR, latest_file)
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         return data
@@ -453,7 +505,7 @@ def get_or_generate_sentiment_data(force_refresh: bool = False) -> Tuple[Optiona
     news_data = None
     sentiment_data = None
     
-    has_recent, txt_file = check_recent_txt_exists(max_age_seconds=3600)
+    has_recent, txt_file = check_recent_txt_exists(max_age_seconds=SENTIMENT_CACHE_TIMEOUT)
     
     if force_refresh:
         if has_recent and txt_file:

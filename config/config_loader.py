@@ -289,6 +289,116 @@ class ConfigLoader:
         :return: 环境配置字典
         """
         return self.get('environment', {})
+    
+    def load_sentiment_config(self) -> Dict[str, Any]:
+        """
+        加载情感分析配置文件
+        
+        支持通过环境变量 QDT_SENTIMENT_CONFIG_PATH 覆盖默认路径
+        :return: 情感分析配置字典
+        """
+        # 优先从环境变量获取配置路径
+        env_path = os.environ.get('QDT_SENTIMENT_CONFIG_PATH')
+        if env_path:
+            sentiment_config_path = Path(env_path)
+        else:
+            # 使用 Path 类确保跨平台兼容性
+            config_dir = Path(self.config_path).parent
+            sentiment_config_path = config_dir / 'sentiment_config.yaml'
+        
+        try:
+            if sentiment_config_path.exists():
+                with open(sentiment_config_path, 'r', encoding='utf-8') as file:
+                    return yaml.safe_load(file) or {}
+            else:
+                self.logger.warning(f"情感分析配置文件不存在: {sentiment_config_path}")
+                return self._get_default_sentiment_config()
+        except (OSError, yaml.YAMLError) as e:
+            self.logger.error(f"加载情感分析配置失败: {e}")
+            return self._get_default_sentiment_config()
+    
+    def _get_default_sentiment_config(self) -> Dict[str, Any]:
+        """
+        获取默认情感分析配置
+        :return: 默认情感分析配置字典
+        """
+        return {
+            'positive_words': {
+                '上涨': 0.8, '涨停': 1.0, '利好': 0.9, '增长': 0.7,
+                '上升': 0.6, '突破': 0.8, '创新高': 0.9, '强势': 0.7
+            },
+            'negative_words': {
+                '下跌': 0.8, '跌停': 1.0, '利空': 0.9, '下降': 0.6,
+                '跌破': 0.7, '创新低': 0.9, '弱势': 0.7
+            },
+            'sentiment_thresholds': {
+                'positive': 0.1,
+                'negative': -0.1,
+                'buy_signal': 0.3,
+                'sell_signal': -0.3
+            }
+        }
+    
+    def load_scoring_config(self) -> Dict[str, Any]:
+        """
+        加载评分配置文件
+        
+        支持通过环境变量 QDT_SCORING_CONFIG_PATH 覆盖默认路径
+        :return: 评分配置字典
+        """
+        # 优先从环境变量获取配置路径
+        env_path = os.environ.get('QDT_SCORING_CONFIG_PATH')
+        if env_path:
+            scoring_config_path = Path(env_path)
+        else:
+            # 使用 Path 类确保跨平台兼容性
+            config_dir = Path(self.config_path).parent
+            scoring_config_path = config_dir / 'scoring_config.yaml'
+        
+        try:
+            if scoring_config_path.exists():
+                with open(scoring_config_path, 'r', encoding='utf-8') as file:
+                    return yaml.safe_load(file) or {}
+            else:
+                self.logger.warning(f"评分配置文件不存在: {scoring_config_path}")
+                return self._get_default_scoring_config()
+        except (OSError, yaml.YAMLError) as e:
+            self.logger.error(f"加载评分配置失败: {e}")
+            return self._get_default_scoring_config()
+    
+    def _get_default_scoring_config(self) -> Dict[str, Any]:
+        """
+        获取默认评分配置
+        :return: 默认评分配置字典
+        """
+        return {
+            'price_change_scoring': {
+                'change_5d': {'weight': 0.35},
+                'change_10d': {'weight': 0.25},
+                'change_20d': {'weight': 0.20},
+                'ma_trend': {'weight': 0.20}
+            },
+            'volume_scoring': {
+                'vol_ratio_5': {'weight': 0.30},
+                'vol_ratio_10': {'weight': 0.20},
+                'current_vs_avg': {'weight': 0.25},
+                'vol_trend': {'weight': 0.25}
+            },
+            'technical_scoring': {
+                'ma_system': {'weight': 0.20},
+                'macd': {'weight': 0.20},
+                'rsi': {'weight': 0.15},
+                'bollinger': {'weight': 0.15},
+                'kdj': {'weight': 0.15},
+                'atr': {'weight': 0.15}
+            },
+            'composite_weights': {
+                'price_score': 0.25,
+                'volume_score': 0.20,
+                'sentiment_score': 0.30,
+                'technical_score': 0.25
+            }
+        }
 
 
 # 全局配置实例
