@@ -8,6 +8,17 @@ import sys
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+
+def parse_bool(value) -> bool:
+    """Parse common bool representations from strategy JSON parameters."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
 # 添加项目路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -50,7 +61,8 @@ class PerformanceAnalyzer:
         """计算年化收益率"""
         if len(self.returns) == 0:
             return 0.0
-        self.annualized_return = (1 + self.returns).pow(periods_per_year / len(self.returns)).mean() - 1
+        total_return = (1 + self.returns).prod()
+        self.annualized_return = total_return ** (periods_per_year / len(self.returns)) - 1
         return self.annualized_return
     
     def calculate_annualized_volatility(self, periods_per_year: int = 252) -> float:
@@ -819,7 +831,7 @@ def run_backtest_with_charts(
                 elif param_type == 'float':
                     params[param_name] = float(param_default)
                 elif param_type == 'bool':
-                    params[param_name] = bool(param_default)
+                    params[param_name] = parse_bool(param_default)
                 else:
                     params[param_name] = param_default
     

@@ -3684,3 +3684,24 @@ stock_data/zh_a/688981/qfq/daily/688981_qfq_daily_factor.csv
 stock_data/zh_a/688981/qfq/minute/688981_qfq_minute_factor.csv
 stock_data/zh_a/688981/qfq/minute/688981_qfq_minute.csv
 .env
+.trae
+
+# Runtime and local development artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.vscode/
+
+# Secrets and local environment
+.env.*
+!.env.example
+
+# Generated outputs, logs, and caches
+logs/
+output/
+nes_data/sentiment_results/
+nes_data/trendradar/output/
+stock_data/stock_cache/

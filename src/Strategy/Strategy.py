@@ -305,6 +305,17 @@ STRATEGY_TEMPLATES = {
 }
 
 
+def parse_bool(value) -> bool:
+    """Parse common bool representations from strategy JSON parameters."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
 def create_user_strategy_class(user_config):
     """根据用户配置动态创建策略类"""
     import backtrader as bt
@@ -325,7 +336,7 @@ def create_user_strategy_class(user_config):
             elif param_type == "float":
                 param_dict[name] = float(default)
             elif param_type == "bool":
-                param_dict[name] = bool(default) if isinstance(default, bool) else (default == "true" or default == "True")
+                param_dict[name] = parse_bool(default)
             else:
                 param_dict[name] = default
     

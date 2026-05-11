@@ -4,7 +4,7 @@ Web界面 - 量化策略回测系统
 提供Web界面让用户可以进行策略回测、舆情分析、每日个股推荐
 """
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
@@ -75,9 +75,6 @@ def setup_logger():
 logger = setup_logger()
 
 
-app = FastAPI(title="Qdt_test Web Interface")
-
-
 # 预加载策略以提高性能
 def preload_strategies():
     """预加载策略列表以提高首次访问性能"""
@@ -85,8 +82,8 @@ def preload_strategies():
     import time
     
     try:
-        from src.Strategy import global_strategy_manager
-        strategies = list(global_strategy_manager.get_all_strategies().keys())
+        from src.Strategy.strategy_manager import load_user_strategies
+        strategies = list(load_user_strategies().keys())
         _strategy_cache = strategies
         _cache_timestamp = time.time()
         logger.info(f"预加载策略完成，共 {len(strategies)} 个策略")
@@ -107,6 +104,9 @@ from contextlib import asynccontextmanager
 async def lifespan(app: FastAPI):
     preload_strategies()
     yield
+
+
+app = FastAPI(title="Qdt_test Web Interface", lifespan=lifespan)
 
 # 挂载静态文件和模板
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -144,10 +144,10 @@ def get_cached_strategies():
     
     current_time = time.time()
     
-    # 检查缓存是否有效（缩短为10秒，方便测试）
+    # 检查缓存是否有效
     if (_strategy_cache is not None and 
         _cache_timestamp is not None and 
-        current_time - _cache_timestamp < 10):
+        current_time - _cache_timestamp < CACHE_TIMEOUT):
         return _strategy_cache
     
     # 只从用户策略JSON文件读取策略列表
@@ -167,6 +167,17 @@ def get_cached_strategies():
     _cache_timestamp = current_time
     
     return strategies
+
+
+def clear_strategy_cache():
+    """Invalidate the in-process strategy list cache after strategy mutations."""
+    global _strategy_cache, _cache_timestamp
+    _strategy_cache = None
+    _cache_timestamp = None
+
+
+def api_error(message: str, status_code: int) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"error": message})
 
 
 def handle_error(request: Request, error: Exception, operation: str = "操作") -> HTMLResponse:
@@ -423,10 +434,10 @@ async def get_strategies_api():
         return result
     except ImportError as e:
         logger.error(f"导入策略模块失败: {e}")
-        return {"error": "策略功能暂时不可用"}, 503
+        return api_error("策略功能暂时不可用", 503)
     except Exception as e:
         logger.error(f"获取策略列表失败: {e}")
-        return {"error": "获取策略列表失败"}, 500
+        return api_error("获取策略列表失败", 500)
 
 
 @app.get("/api/strategies/detail/{strategy_name}")
@@ -438,7 +449,7 @@ async def get_strategy_detail(strategy_name: str):
     strategy_name = sanitize_string(strategy_name, 50)
     valid, error = validate_strategy_name(strategy_name)
     if not valid:
-        return {"error": error}, 400
+        return api_error(error, 400)
     
     try:
         from src.Strategy.strategy_manager import get_user_strategy, is_user_strategy
@@ -458,7 +469,7 @@ async def get_strategy_detail(strategy_name: str):
         strategy_class = global_strategy_manager.get_strategy(strategy_name)
         
         if not strategy_class:
-            return {"error": "策略不存在"}, 404
+            return api_error("策略不存在", 404)
         
         parameters = []
         if hasattr(strategy_class, 'params'):
@@ -480,10 +491,10 @@ async def get_strategy_detail(strategy_name: str):
         }
     except ImportError as e:
         logger.error(f"导入策略模块失败: {e}")
-        return {"error": "策略功能暂时不可用"}, 503
+        return api_error("策略功能暂时不可用", 503)
     except Exception as e:
         logger.error(f"获取策略详情失败: {e}")
-        return {"error": "获取策略详情失败"}, 500
+        return api_error("获取策略详情失败", 500)
 
 
 @app.post("/api/strategies/create_new")
@@ -503,13 +514,13 @@ async def create_strategy(request: Request):
         # 验证策略名称
         valid, error = validate_strategy_name(name)
         if not valid:
-            return {"error": error}, 400
+            return api_error(error, 400)
         
         if is_user_strategy(name):
-            return {"error": "策略名称已存在"}, 400
+            return api_error("策略名称已存在", 400)
         
         if not parameters or len(parameters) == 0:
-            return {"error": "自定义参数不能为空"}, 400
+            return api_error("自定义参数不能为空", 400)
         
         config = {
             "description": description,
@@ -519,16 +530,17 @@ async def create_strategy(request: Request):
         }
         
         if save_user_strategy(name, config):
+            clear_strategy_cache()
             logger.info(f"用户策略 {name} 创建成功（自定义参数）")
             return {"success": True, "name": name}
         else:
-            return {"error": "保存策略失败"}, 500
+            return api_error("保存策略失败", 500)
     except ImportError as e:
         logger.error(f"导入策略模块失败: {e}")
-        return {"error": "策略功能暂时不可用"}, 503
+        return api_error("策略功能暂时不可用", 503)
     except Exception as e:
         logger.error(f"创建策略失败: {e}")
-        return {"error": "创建策略失败"}, 500
+        return api_error("创建策略失败", 500)
 
 
 @app.post("/api/strategies/create_from_template")
@@ -547,14 +559,14 @@ async def create_strategy_from_template(request: Request):
         # 验证策略名称
         valid, error = validate_strategy_name(name)
         if not valid:
-            return {"error": error}, 400
+            return api_error(error, 400)
         
         if is_user_strategy(name):
-            return {"error": "策略名称已存在"}, 400
+            return api_error("策略名称已存在", 400)
         
         template = get_strategy_template(template_name)
         if not template:
-            return {"error": "无效的策略模板"}, 400
+            return api_error("无效的策略模板", 400)
         
         base_params = template.get("base_params", [])
         parameters = []
@@ -575,16 +587,17 @@ async def create_strategy_from_template(request: Request):
         }
         
         if save_user_strategy(name, config):
+            clear_strategy_cache()
             logger.info(f"用户策略 {name} 创建成功（基于模板 {template_name}）")
             return {"success": True, "name": name, "parameters": parameters}
         else:
-            return {"error": "保存策略失败"}, 500
+            return api_error("保存策略失败", 500)
     except ImportError as e:
         logger.error(f"导入策略模块失败: {e}")
-        return {"error": "策略功能暂时不可用"}, 503
+        return api_error("策略功能暂时不可用", 503)
     except Exception as e:
         logger.error(f"创建策略失败: {e}")
-        return {"error": "创建策略失败"}, 500
+        return api_error("创建策略失败", 500)
 
 
 @app.get("/api/strategies/templates")
@@ -605,10 +618,10 @@ async def get_strategy_templates_api():
         return result
     except ImportError as e:
         logger.error(f"导入策略模块失败: {e}")
-        return {"error": "策略功能暂时不可用"}, 503
+        return api_error("策略功能暂时不可用", 503)
     except Exception as e:
         logger.error(f"获取策略模板失败: {e}")
-        return {"error": "获取策略模板失败"}, 500
+        return api_error("获取策略模板失败", 500)
 
 
 @app.put("/api/strategies/{strategy_name}")
@@ -620,13 +633,13 @@ async def update_strategy(strategy_name: str, request: Request):
     strategy_name = sanitize_string(strategy_name, 50)
     valid, error = validate_strategy_name(strategy_name)
     if not valid:
-        return {"error": error}, 400
+        return api_error(error, 400)
     
     try:
         from src.Strategy.strategy_manager import get_user_strategy, save_user_strategy
         
         if not get_user_strategy(strategy_name):
-            return {"error": "只能修改用户创建的策略"}, 403
+            return api_error("只能修改用户创建的策略", 403)
         
         body = await request.json()
         description = sanitize_string(body.get("description", ""), 200)
@@ -640,16 +653,17 @@ async def update_strategy(strategy_name: str, request: Request):
         }
         
         if save_user_strategy(strategy_name, config):
+            clear_strategy_cache()
             logger.info(f"用户策略 {strategy_name} 更新成功")
             return {"success": True, "name": strategy_name}
         else:
-            return {"error": "保存策略失败"}, 500
+            return api_error("保存策略失败", 500)
     except ImportError as e:
         logger.error(f"导入策略模块失败: {e}")
-        return {"error": "策略功能暂时不可用"}, 503
+        return api_error("策略功能暂时不可用", 503)
     except Exception as e:
         logger.error(f"更新策略失败: {e}")
-        return {"error": "更新策略失败"}, 500
+        return api_error("更新策略失败", 500)
 
 
 @app.delete("/api/strategies/{strategy_name}")
@@ -661,25 +675,26 @@ async def delete_strategy(strategy_name: str):
     strategy_name = sanitize_string(strategy_name, 50)
     valid, error = validate_strategy_name(strategy_name)
     if not valid:
-        return {"error": error}, 400
+        return api_error(error, 400)
     
     try:
         from src.Strategy.strategy_manager import delete_user_strategy, is_user_strategy
         
         if not is_user_strategy(strategy_name):
-            return {"error": "只能删除用户创建的策略"}, 403
+            return api_error("只能删除用户创建的策略", 403)
         
         if delete_user_strategy(strategy_name):
+            clear_strategy_cache()
             logger.info(f"用户策略 {strategy_name} 删除成功")
             return {"success": True}
         else:
-            return {"error": "删除策略失败"}, 500
+            return api_error("删除策略失败", 500)
     except ImportError as e:
         logger.error(f"导入策略模块失败: {e}")
-        return {"error": "策略功能暂时不可用"}, 503
+        return api_error("策略功能暂时不可用", 503)
     except Exception as e:
         logger.error(f"删除策略失败: {e}")
-        return {"error": "删除策略失败"}, 500
+        return api_error("删除策略失败", 500)
 
 
 @app.get("/sentiment", response_class=HTMLResponse)
@@ -933,11 +948,12 @@ def generate_sentiment_chart(sentiment_result: dict, sentiment_dir: str, timesta
     ax.axis('equal')
     plt.title('舆情情绪分布')
     
-    chart_path = f"{sentiment_dir}/sentiment_distribution_{timestamp}.png"
+    chart_path = os.path.join(sentiment_dir, f"sentiment_distribution_{timestamp}.png")
     plt.savefig(chart_path)
     plt.close(fig)
-    
-    return f"/output/sentiment_analysis/{os.path.basename(sentiment_dir)}/{os.path.basename(chart_path)}"
+
+    rel_path = os.path.relpath(chart_path, output_dir).replace(os.sep, "/")
+    return f"/output/{rel_path}"
 
 
 def save_sentiment_analysis_result(sentiment_result: dict, strategy: str, stock_code: str, stock_sector: str, news_data: list):

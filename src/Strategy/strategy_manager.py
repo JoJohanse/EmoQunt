@@ -3,6 +3,8 @@ import json
 import logging
 from typing import Dict, List, Optional
 from datetime import datetime
+from threading import RLock
+import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -10,6 +12,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SAVE_DIR = os.path.join(BASE_DIR, "user_strategies")
 
 USER_STRATEGY_MARKER = "__user_strategy__"
+_strategy_file_lock = RLock()
 
 def ensure_save_dir():
     if not os.path.exists(SAVE_DIR):
@@ -27,8 +30,9 @@ def load_user_strategies() -> Dict:
         return {}
     
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        with _strategy_file_lock:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
         logger.info(f"加载了 {len(data)} 个用户策略")
         return data
     except Exception as e:
@@ -39,8 +43,20 @@ def save_user_strategies(strategies: Dict) -> bool:
     """保存所有用户策略"""
     try:
         file_path = get_strategies_file()
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(strategies, f, ensure_ascii=False, indent=2)
+        save_dir = os.path.dirname(file_path)
+        with _strategy_file_lock:
+            fd, tmp_path = tempfile.mkstemp(prefix=".strategies.", suffix=".json", dir=save_dir)
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    json.dump(strategies, f, ensure_ascii=False, indent=2)
+                    f.write("\n")
+                os.replace(tmp_path, file_path)
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
         logger.info(f"保存了 {len(strategies)} 个用户策略")
         return True
     except Exception as e:
@@ -49,11 +65,13 @@ def save_user_strategies(strategies: Dict) -> bool:
 
 def save_user_strategy(name: str, config: Dict) -> bool:
     """保存单个用户策略"""
-    strategies = load_user_strategies()
-    config[USER_STRATEGY_MARKER] = True
-    config['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    strategies[name] = config
-    return save_user_strategies(strategies)
+    with _strategy_file_lock:
+        strategies = load_user_strategies()
+        saved_config = dict(config)
+        saved_config[USER_STRATEGY_MARKER] = True
+        saved_config['updated_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        strategies[name] = saved_config
+        return save_user_strategies(strategies)
 
 def get_user_strategy(name: str) -> Optional[Dict]:
     """获取单个用户策略"""
@@ -62,11 +80,12 @@ def get_user_strategy(name: str) -> Optional[Dict]:
 
 def delete_user_strategy(name: str) -> bool:
     """删除用户策略"""
-    strategies = load_user_strategies()
-    if name in strategies:
-        del strategies[name]
-        return save_user_strategies(strategies)
-    return False
+    with _strategy_file_lock:
+        strategies = load_user_strategies()
+        if name in strategies:
+            del strategies[name]
+            return save_user_strategies(strategies)
+        return False
 
 def is_user_strategy(name: str) -> bool:
     """检查是否为用户策略"""
