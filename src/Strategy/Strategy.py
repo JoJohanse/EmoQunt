@@ -316,35 +316,86 @@ def parse_bool(value) -> bool:
     return bool(value)
 
 
-def create_user_strategy_class(user_config):
-    """根据用户配置动态创建策略类"""
-    import backtrader as bt
-    
+def extract_param_value(param_dict):
+    """
+    从单个参数描述字典中提取 (name, value)，做类型转换。
+
+    修复点：strategies.json 中参数写的是 ``"value"`` 键，而旧代码只读 ``"default"``，
+    导致用户配置的策略参数被静默忽略，策略永远跑模板默认值。这里同时识别两个键，
+    优先 ``"value"``（用户实际配置），回退 ``"default"``（模板）。
+
+    :param param_dict: 形如 ``{"name": "short_period", "value": 5, "type": "int"}``
+                      或 ``{"name": "short_period", "default": 5, "type": "int"}``
+    :return: (name, value) 或 (None, None) 表示该参数缺失/无值
+    """
+    name = param_dict.get("name")
+    # 用户保存的实际值用 "value"，模板默认用 "default"；优先用户值
+    raw_value = param_dict.get("value")
+    if raw_value is None:
+        raw_value = param_dict.get("default")
+    if not name or raw_value is None:
+        return None, None
+
+    param_type = param_dict.get("type", "int")
+    if param_type == "int":
+        return name, int(raw_value)
+    if param_type == "float":
+        return name, float(raw_value)
+    if param_type == "bool":
+        return name, parse_bool(raw_value)
+    return name, raw_value
+
+
+def build_param_dict(user_config):
+    """
+    从用户策略配置构建参数字典 {name: value}。
+
+    模板默认参数（STRATEGY_TEMPLATES[...]["base_params"]）作为基底，
+    用户在 strategies.json 中显式配置的同名参数会覆盖模板默认值。
+
+    :param user_config: 用户策略配置字典
+    :return: {param_name: typed_value}
+    """
     template_name = user_config.get("template", "sentiment_ma")
     template = STRATEGY_TEMPLATES.get(template_name, {})
     base_params = template.get("base_params", [])
-    
-    user_params = user_config.get("parameters", [])
+
     param_dict = {}
-    for p in user_params:
-        name = p.get("name")
-        default = p.get("default")
-        if name and default is not None:
-            param_type = p.get("type", "int")
-            if param_type == "int":
-                param_dict[name] = int(default)
-            elif param_type == "float":
-                param_dict[name] = float(default)
-            elif param_type == "bool":
-                param_dict[name] = parse_bool(default)
-            else:
-                param_dict[name] = default
-    
+    # 先填模板默认值
+    for p in base_params:
+        name, value = extract_param_value(p)
+        if name is not None:
+            param_dict[name] = value
+    # 用户配置覆盖模板默认值
+    for p in user_config.get("parameters", []):
+        name, value = extract_param_value(p)
+        if name is not None:
+            param_dict[name] = value
+    return param_dict
+
+
+def create_user_strategy_class(user_config, sentiment_series=None, sentiment_sector=None):
+    """
+    根据用户配置动态创建策略类。
+
+    :param user_config: 用户策略配置字典
+    :param sentiment_series: 可选，行业情绪时间序列（pd.Series, index=快照日期），
+                             用于情绪过滤。为 None 时回退为关闭情绪过滤（中性 0）。
+    :param sentiment_sector: sentiment_series 对应的行业名。为 None 时不应用过滤。
+    :return: 策略类
+    """
+    import backtrader as bt
+
+    param_dict = build_param_dict(user_config)
     param_tuples = tuple((name, value) for name, value in param_dict.items())
+
+    # 通过闭包把情绪数据传入策略实例（backtrader 的 params 不便直接放 pd.Series）
+    _sentiment_series = sentiment_series
+    _sentiment_sector = sentiment_sector
     
     class DynamicUserStrategy(StrategyBase):
         params = param_tuples
-        
+
         def __init__(self):
             super().__init__()
             import backtrader as bt
@@ -355,16 +406,49 @@ def create_user_strategy_class(user_config):
                 self.data.close, period=self.p.long_period
             )
             self.crossover = bt.indicators.CrossOver(self.short_ma, self.long_ma)
-            
+
+        def _sentiment_at(self, current_date):
+            """
+            取截至 current_date 最近的情绪快照分数（避免未来函数）。
+            无可用快照时返回 0.0（中性，等价于关闭过滤）。
+            """
+            if _sentiment_series is None or _sentiment_sector is None:
+                return 0.0
+            try:
+                prior = _sentiment_series[_sentiment_series.index <= current_date]
+                if prior.empty:
+                    return 0.0
+                return float(prior.iloc[-1])
+            except Exception:
+                return 0.0
+
         def next(self):
             if self.order:
                 return
+
+            use_filter = getattr(self.p, "use_sentiment_filter", False)
+            threshold = getattr(self.p, "sentiment_threshold", 0.0)
+            weight = getattr(self.p, "sentiment_weight", 1.0)
+
             if self.crossover > 0:
+                # 金叉 -> 买入意图
+                if use_filter:
+                    # 取当日最近情绪快照，要求情绪 >= -threshold（非过度悲观）
+                    current_date = self.data.datetime.date(0)
+                    score = self._sentiment_at(current_date)
+                    # 软加权：score 越低越倾向于放弃这笔买入
+                    if score < -threshold and weight >= 1.0:
+                        return  # 完全过滤
                 self.order = self.buy()
             elif self.crossover < 0:
                 if self.position:
+                    if use_filter:
+                        current_date = self.data.datetime.date(0)
+                        score = self._sentiment_at(current_date)
+                        if score > threshold and weight >= 1.0:
+                            return  # 情绪仍偏强，过滤卖出信号
                     self.order = self.sell()
-    
+
     return DynamicUserStrategy
 
 

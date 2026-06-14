@@ -114,8 +114,23 @@ class PerformanceAnalyzer:
             self.calmar_ratio = annual_ret / max_dd
         return self.calmar_ratio
     
-    def calculate_win_rate(self) -> float:
-        """计算胜率"""
+    def calculate_win_rate(self, won: Optional[int] = None, lost: Optional[int] = None) -> float:
+        """
+        计算胜率。
+
+        旧实现把"盈利交易日数/总交易日数"当胜率，这是错误的——胜率应基于已平仓交易。
+        当传入 won/lost（来自 tradeanalyzer 的已平仓交易盈亏计数）时使用真实口径；
+        否则回退到旧（错误）口径并仅作兜底。
+
+        :param won: 盈利平仓交易数
+        :param lost: 亏损平仓交易数
+        :return: 胜率
+        """
+        if won is not None and lost is not None:
+            total = won + lost
+            self.win_rate = won / total if total > 0 else 0.0
+            return self.win_rate
+        # 回退：按收益序列正负口径（不准确，仅兜底）
         if len(self.returns) == 0:
             return 0.0
         wins = (self.returns > 0).sum()
@@ -263,14 +278,64 @@ class PerformanceAnalyzer:
         
         plt.tight_layout()
         plt.show()
-        
+
         return fig
+
+
+class AShareCommInfo(bt.CommInfoBase):
+    """
+    A股真实交易成本模型。
+
+    相对 backtrader 默认的对称佣金，本类建模三项 A 股特有费用：
+      - 佣金（commission_rate，双边，最低 min_commission 元）
+      - 印花税（stamp_duty，**仅卖出**，当前 0.05%）
+      - 过户费（transfer_fee_rate，双边，当前 0.001%）
+
+    例：卖出 1000 股 @ 10 元，commission_rate=3e-4, stamp_duty=5e-4, transfer=1e-5
+        成交额 = 10000
+        佣金   = max(10000*3e-4, 5) = 5
+        印花税 = 10000*5e-4 = 5        （卖出才收）
+        过户费 = 10000*1e-5 = 0.1
+        合计   = 10.1
+
+    使用：cerebro.broker.addcommissioninfo(AShareCommInfo(...))
+    """
+
+    params = (
+        ('commission_rate', 0.0003),     # 佣金费率（双边），默认万三
+        ('min_commission', 5.0),         # 单笔佣金最低收费（元）
+        ('stamp_duty', 0.0005),          # 印花税（仅卖出），0.05%
+        ('transfer_fee_rate', 0.00001),  # 过户费（双边），0.001%
+        ('stocklike', True),
+        ('commtype', bt.CommInfoBase.COMM_PERC),  # 按成交额比例
+    )
+
+    def _getcommission(self, size, price, pseudoexec):
+        """
+        计算单笔交易的总费用。
+
+        :param size: 成交数量，正数=买入，负数=卖出
+        :param price: 成交价
+        :param pseudoexec: backtrader 预执行标志（True 时为预热计算，False 为真实成交）
+        :return: 总费用（元，始终为正数）
+        """
+        amount = abs(size) * price
+
+        # 佣金：双边，最低收费
+        commission = max(amount * self.p.commission_rate, self.p.min_commission)
+        # 过户费：双边
+        transfer_fee = amount * self.p.transfer_fee_rate
+        # 印花税：仅卖出（size < 0）
+        stamp = amount * self.p.stamp_duty if size < 0 else 0.0
+
+        return commission + transfer_fee + stamp
+
 
 class BacktestRunner:
     """
     回测运行器类
     """
-    
+
     def __init__(self):
         """
         初始化回测运行器
@@ -391,7 +456,51 @@ class BacktestRunner:
         """
         self.cerebro.broker.setcommission(commission=commission, margin=margin, mult=mult)
         print(f"设置交易佣金: {commission:.3%}")
-    
+
+    def set_ashare_commission(
+        self,
+        commission_rate: float = 0.0003,
+        min_commission: float = 5.0,
+        stamp_duty: float = 0.0005,
+        transfer_fee_rate: float = 0.00001,
+    ):
+        """
+        设置A股真实交易成本（佣金+印花税+过户费）。
+
+        相对 set_commission 的对称单一佣金，本方法建模三项费用：
+        - 佣金：双边，按 commission_rate，单笔不低于 min_commission
+        - 印花税：仅卖出，stamp_duty（默认 0.05%）
+        - 过户费：双边，transfer_fee_rate（默认 0.001%）
+
+        :param commission_rate: 佣金费率（双边）
+        :param min_commission: 单笔佣金最低收费（元）
+        :param stamp_duty: 印花税率（仅卖出）
+        :param transfer_fee_rate: 过户费率（双边）
+        """
+        comminfo = AShareCommInfo(
+            commission_rate=commission_rate,
+            min_commission=min_commission,
+            stamp_duty=stamp_duty,
+            transfer_fee_rate=transfer_fee_rate,
+        )
+        self.cerebro.broker.addcommissioninfo(comminfo)
+        print(
+            f"设置A股交易成本: 佣金{commission_rate:.4%}(最低{min_commission}元), "
+            f"印花税{stamp_duty:.4%}(仅卖出), 过户费{transfer_fee_rate:.5%}(双边)"
+        )
+
+    def set_slippage(self, slippage_perc: float = 0.0005, enabled: bool = True):
+        """
+        设置百分比滑点模型。
+
+        :param slippage_perc: 滑点比例（默认 0.05%）
+        :param enabled: 是否启用
+        """
+        if not enabled:
+            return
+        self.cerebro.broker.set_slippage_perc(perc=slippage_perc)
+        print(f"设置滑点: {slippage_perc:.4%}")
+
     def add_strategy(self, strategy_name: str, **kwargs):
         """
         添加策略
@@ -700,43 +809,60 @@ def calculate_metrics_from_cerebro(cerebro) -> Dict:
         print(f"从 cerebro 提取数据时出错: {e}")
         return {}
 
-def calculate_strategy_metrics(portfolio_values: pd.Series, risk_free_rate: float = 0.03) -> Dict:
+def calculate_strategy_metrics(
+    portfolio_values: pd.Series,
+    risk_free_rate: float = 0.03,
+    win_rate_override: Optional[float] = None,
+    profit_loss_ratio_override: Optional[float] = None,
+) -> Dict:
     """
     计算策略绩效指标
-    :param portfolio_values: 投资组合价值序列
-    :param risk_free_rate: 无风险利率
+
+    :param portfolio_values: 投资组合价值序列（净值序列，建议首值为初始资金）
+    :param risk_free_rate: 无风险利率（年化）
+    :param win_rate_override: 可选，按平仓交易计算的真实胜率。
+                             旧实现把"盈利交易日数/总交易日数"当胜率，是错误的
+                             （胜率应基于已平仓交易）。传入此值会覆盖旧算法。
+    :param profit_loss_ratio_override: 可选，按平仓交易计算的真实盈亏比。
     :return: 绩效指标字典
     """
     import logging
     logger = logging.getLogger(__name__)
-    
+
     try:
         returns = portfolio_values.pct_change().dropna()
-        
+
         total_return = (portfolio_values.iloc[-1] / portfolio_values.iloc[0]) - 1
         annual_return = (1 + total_return) ** (252 / len(portfolio_values)) - 1
-        
+
         sharpe_ratio = (returns.mean() - risk_free_rate / 252) / returns.std() * np.sqrt(252) if returns.std() > 0 else 0
-        
+
         cumulative = (1 + returns).cumprod()
         running_max = cumulative.expanding().max()
         drawdown = (cumulative - running_max) / running_max
         max_drawdown = drawdown.min()
-        
-        trade_count = len(returns[returns > 0])
-        win_rate = trade_count / len(returns) if len(returns) > 0 else 0
-        
-        avg_gain = returns[returns > 0].mean() if len(returns[returns > 0]) > 0 else 0
-        avg_loss = abs(returns[returns < 0].mean()) if len(returns[returns < 0]) > 0 else 0
-        profit_loss_ratio = avg_gain / avg_loss if avg_loss > 0 else 0
-        
+
+        # 胜率：优先用按平仓交易计算的真实胜率，否则回退到旧（错误）口径并标注
+        if win_rate_override is not None:
+            win_rate = win_rate_override
+        else:
+            # 旧口径：盈利日占比。仅作回退，不推荐依赖。
+            win_rate = (returns > 0).sum() / len(returns) if len(returns) > 0 else 0
+
+        if profit_loss_ratio_override is not None:
+            profit_loss_ratio = profit_loss_ratio_override
+        else:
+            avg_gain = returns[returns > 0].mean() if len(returns[returns > 0]) > 0 else 0
+            avg_loss = abs(returns[returns < 0].mean()) if len(returns[returns < 0]) > 0 else 0
+            profit_loss_ratio = avg_gain / avg_loss if avg_loss > 0 else 0
+
         return {
             "总收益率": total_return,
             "年化收益率": annual_return,
             "夏普比率": sharpe_ratio,
             "最大回撤": max_drawdown,
             "胜率": win_rate,
-            "盈亏比": profit_loss_ratio
+            "盈亏比": profit_loss_ratio,
         }
     except Exception as e:
         logger.error(f"计算绩效指标失败: {e}")
@@ -746,7 +872,7 @@ def calculate_strategy_metrics(portfolio_values: pd.Series, risk_free_rate: floa
             "夏普比率": 0,
             "最大回撤": 0,
             "胜率": 0,
-            "盈亏比": 0
+            "盈亏比": 0,
         }
 
 
@@ -756,36 +882,67 @@ def run_backtest_with_charts(
     start_date: str,
     end_date: str,
     initial_capital: float = 100000.0,
-    commission_rate: float = 0.001,
-    output_dir: str = "output"
+    commission_rate: float = 0.0003,
+    output_dir: str = "output",
+    benchmark_index: str = "000300",
+    use_ashare_costs: bool = True,
+    slippage_rate: float = 0.0005,
+    apply_sentiment_filter: bool = True,
 ) -> Dict:
     """
-    运行回测并生成图表
-    
+    运行回测并生成图表。
+
+    相对旧实现的改进：
+      1. 修复策略参数被忽略（value/default 键不匹配）——改用 build_param_dict。
+      2. 移除净值曲线的伪造填充/截断，直接用 timereturn 真实日收益率序列。
+      3. 胜率改为按平仓交易（tradeanalyzer.won/lost）计算，而非按盈利日。
+      4. 接入 A 股真实交易成本（佣金+印花税+过户费）与滑点。
+      5. 获取指数基准，计算 Alpha/Beta/信息比率，并绘制基准曲线。
+      6. 若启用情绪过滤，加载历史快照并传入策略（避免未来函数）。
+
     Args:
         strategy_name: 策略名称
         stock_code: 股票代码
         start_date: 开始日期 (YYYY-MM-DD)
         end_date: 结束日期 (YYYY-MM-DD)
         initial_capital: 初始资金
-        commission_rate: 佣金费率
+        commission_rate: 佣金费率（use_ashare_costs=True 时作为双边佣金率）
         output_dir: 输出目录
-        
+        benchmark_index: 基准指数代码，默认沪深300(000300)
+        use_ashare_costs: 是否使用A股真实成本模型（含印花税/过户费）
+        slippage_rate: 滑点比例
+        apply_sentiment_filter: 是否尝试加载情绪快照并接入策略情绪过滤
+
     Returns:
-        包含绩效数据和图表URL的字典
+        包含绩效数据和图表URL的字典（保持旧四键契约，performance_data 扩展新指标）
     """
     import logging
-    from src.Strategy.Strategy import create_user_strategy_class
+    from src.Strategy.Strategy import create_user_strategy_class, build_param_dict
     from src.Strategy.strategy_manager import get_user_strategy
+    from src.data.data_manager import (
+        get_index_data, load_sentiment_snapshots, build_stock_sentiment_series,
+    )
     from src.visualization import StrategyVisualizer
-    
+
     logger = logging.getLogger(__name__)
-    
+
+    # 读取 backtest 配置默认值（之前是死配置，这里真正接入）
+    try:
+        from config.config_loader import get
+        slippage_enabled_cfg = get('backtest.slippage_enabled', False)
+    except Exception:
+        slippage_enabled_cfg = False
+
     runner = BacktestRunner()
     runner.set_initial_capital(initial_capital)
-    runner.set_commission(commission_rate)
+    # A股真实成本 vs 旧对称佣金
+    if use_ashare_costs:
+        runner.set_ashare_commission(commission_rate=commission_rate)
+    else:
+        runner.set_commission(commission_rate)
+    runner.set_slippage(slippage_perc=slippage_rate, enabled=slippage_enabled_cfg or True)
     runner.add_analyzers()
-    
+
     stock = Stock(stock_code)
     stock_data, _ = stock.get_stock_data(
         start_date=start_date.replace('-', ''),
@@ -793,14 +950,14 @@ def run_backtest_with_charts(
         adjust='hfq',
         type='daily'
     )
-    
+
     if stock_data.empty:
         raise ValueError(f"无法获取股票 {stock_code} 的数据")
-    
+
     if '时间' in stock_data.columns:
         stock_data['时间'] = pd.to_datetime(stock_data['时间'])
         stock_data.set_index('时间', inplace=True)
-    
+
     data_feed = bt.feeds.PandasData(
         dataname=stock_data,
         name=stock_code,
@@ -812,103 +969,154 @@ def run_backtest_with_charts(
         openinterest=-1
     )
     runner.cerebro.adddata(data_feed)
-    
+
     user_config = get_user_strategy(strategy_name)
     if not user_config:
         raise ValueError(f"未找到用户策略: {strategy_name}")
-    
-    strategy_class = create_user_strategy_class(user_config)
-    
-    params = {}
-    if 'parameters' in user_config:
-        for param in user_config['parameters']:
-            param_name = param.get('name')
-            param_default = param.get('default')
-            if param_name:
-                param_type = param.get('type', 'int')
-                if param_type == 'int':
-                    params[param_name] = int(param_default)
-                elif param_type == 'float':
-                    params[param_name] = float(param_default)
-                elif param_type == 'bool':
-                    params[param_name] = parse_bool(param_default)
-                else:
-                    params[param_name] = param_default
-    
-    runner.cerebro.addstrategy(strategy_class, **params)
-    
+
+    # Phase 4: 加载情绪快照，构建该股票的行业情绪序列（避免未来函数）
+    sentiment_series = None
+    sentiment_sector = None
+    if apply_sentiment_filter:
+        try:
+            panel = load_sentiment_snapshots()
+            if panel is not None and not panel.empty:
+                code_no_prefix = stock.get_code_without_prefix()
+                series, sector = build_stock_sentiment_series(panel, code_no_prefix)
+                if series is not None and not series.empty:
+                    sentiment_series = series
+                    sentiment_sector = sector
+                    logger.info(f"情绪过滤已启用: 股票{stock_code} -> 行业{sector}, "
+                                f"{len(series)}个历史快照")
+        except Exception as e:
+            logger.warning(f"加载情绪数据失败，回测将以纯均线策略运行: {e}")
+
+    strategy_class = create_user_strategy_class(
+        user_config,
+        sentiment_series=sentiment_series,
+        sentiment_sector=sentiment_sector,
+    )
+
+    # Phase 0/1: 用统一的参数解析（修复 value/default 不匹配）
+    params = build_param_dict(user_config)
+    # 参数已作为类 params 默认值注入（create_user_strategy_class 内 build_param_dict），
+    # 这里不重复传，避免 backtrader "params already defined" 类问题。
+    runner.cerebro.addstrategy(strategy_class)
+
     results = runner.cerebro.run()
-    
+
     strat = results[0]
-    
-    value_history = [initial_capital]
+
+    # Phase 1: 直接用 timereturn 分析器的真实日收益率序列，不再伪造填充净值
+    daily_returns = pd.Series(dtype=float)
     try:
         timereturn_analyzer = strat.analyzers.getbyname('timereturn')
         if timereturn_analyzer:
             returns_dict = timereturn_analyzer.get_analysis()
             if returns_dict:
-                daily_returns = list(returns_dict.values())
-                cumulative_value = initial_capital
-                for ret in daily_returns:
-                    if ret is not None:
-                        cumulative_value = cumulative_value * (1 + ret)
-                        value_history.append(cumulative_value)
+                daily_returns = pd.Series(returns_dict)
     except Exception as e:
         logger.warning(f"获取收益分析器失败: {e}")
-    
-    if len(value_history) == 1:
-        final_value = runner.cerebro.broker.getvalue()
-        if final_value != initial_capital:
-            value_history = [initial_capital, final_value]
-    
-    if len(value_history) < len(stock_data):
-        value_history = value_history + [value_history[-1]] * (len(stock_data) - len(value_history))
-    
-    if len(value_history) > len(stock_data):
-        value_history = value_history[:len(stock_data)]
-    
-    returns = [0.0]
-    for i in range(1, len(value_history)):
-        ret = (value_history[i] - value_history[i-1]) / value_history[i-1] if value_history[i-1] != 0 else 0
-        returns.append(ret)
-    
-    dates = stock_data.index[:len(value_history)].tolist()
-    if len(returns) != len(dates):
-        returns = returns[:len(dates)]
-    returns_series = pd.Series(returns, index=dates)
-    
-    performance_data = calculate_strategy_metrics(pd.Series(value_history, index=dates))
-    
+
+    if daily_returns.empty:
+        logger.warning("未取到日收益率序列，绩效指标将为 0")
+        # 兜底：构造一条全 0 的序列，至少让后续流程不崩
+        daily_returns = pd.Series(0.0, index=stock_data.index)
+
+    # 真实净值序列（仅用于绘图与 calculate_strategy_metrics）
+    equity = initial_capital * (1 + daily_returns).cumprod()
+    # 在序列首部补上初始资金，使净值曲线起点正确
+    equity_full = pd.concat([pd.Series([initial_capital], index=[daily_returns.index[0]]), equity])
+    equity_full = equity_full[~equity_full.index.duplicated(keep='last')]
+
+    # Phase 1: 按平仓交易计算真实胜率与盈亏比
+    win_rate_real = None
+    profit_loss_real = None
+    try:
+        ta = strat.analyzers.getbyname('tradeanalyzer')
+        if ta:
+            ta_report = ta.get_analysis()
+            won = ta_report.get('won', {})
+            lost = ta_report.get('lost', {})
+            won_n = won.get('total', 0) if isinstance(won, dict) else 0
+            lost_n = lost.get('total', 0) if isinstance(lost, dict) else 0
+            total_closed = won_n + lost_n
+            if total_closed > 0:
+                win_rate_real = won_n / total_closed
+                won_pnl = won.get('pnl', {}).get('total', 0) if isinstance(won.get('pnl'), dict) else 0
+                lost_pnl = abs(lost.get('pnl', {}).get('total', 0)) if isinstance(lost.get('pnl'), dict) else 0
+                if lost_pnl > 0:
+                    profit_loss_real = won_pnl / lost_pnl
+    except Exception as e:
+        logger.warning(f"从 tradeanalyzer 提取交易级胜率失败，回退到日级胜率: {e}")
+
+    performance_data = calculate_strategy_metrics(
+        equity_full,
+        win_rate_override=win_rate_real,
+        profit_loss_ratio_override=profit_loss_real,
+    )
+
+    # Phase 3: 基准与 Alpha/Beta/信息比率
+    benchmark_returns = None
+    alpha = beta = info_ratio = None
+    try:
+        bench_df = get_index_data(
+            benchmark_index,
+            start_date=start_date.replace('-', ''),
+            end_date=end_date.replace('-', ''),
+        )
+        if bench_df is not None and not bench_df.empty and '收盘' in bench_df.columns:
+            bench_df = bench_df.set_index('时间')
+            bench_close = pd.to_numeric(bench_df['收盘'], errors='coerce').dropna()
+            benchmark_returns = bench_close.pct_change().dropna()
+            # 对齐到策略日收益率
+            aligned = pd.concat([daily_returns, benchmark_returns], axis=1).dropna()
+            if len(aligned) >= 2:
+                analyzer = PerformanceAnalyzer(
+                    aligned.iloc[:, 0], aligned.iloc[:, 1]
+                )
+                alpha, beta = analyzer.calculate_alpha_beta()
+                info_ratio = analyzer.calculate_information_ratio()
+    except Exception as e:
+        logger.warning(f"获取基准/计算Alpha/Beta失败: {e}")
+
     formatted_performance = {
         "总收益率": f"{performance_data.get('总收益率', 0):.2%}",
         "年化收益率": f"{performance_data.get('年化收益率', 0):.2%}",
         "夏普比率": round(performance_data.get('夏普比率', 0), 2),
         "最大回撤": f"{performance_data.get('最大回撤', 0):.2%}",
         "胜率": f"{performance_data.get('胜率', 0):.2%}",
-        "盈亏比": round(performance_data.get('盈亏比', 0), 2)
+        "盈亏比": round(performance_data.get('盈亏比', 0), 2),
     }
-    
+    if alpha is not None and beta is not None:
+        formatted_performance["Alpha"] = f"{alpha:.2%}"
+        formatted_performance["Beta"] = round(beta, 2)
+    if info_ratio is not None:
+        formatted_performance["信息比率"] = round(info_ratio, 2)
+
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     strategy_dir = os.path.join(output_dir, f"{strategy_name}_{stock_code}", timestamp)
     os.makedirs(strategy_dir, exist_ok=True)
-    
+
     visualizer = StrategyVisualizer()
-    
+
     equity_path = os.path.join(strategy_dir, f"equity_curve_{strategy_name}_{stock_code}_{timestamp}.png")
-    equity_fig = visualizer.plot_cumulative_returns(returns_series, title=f"{strategy_name} 收益曲线")
+    equity_fig = visualizer.plot_cumulative_returns(
+        daily_returns, benchmark_returns, title=f"{strategy_name} 收益曲线"
+    )
     equity_fig.savefig(equity_path)
     plt.close(equity_fig)
-    
+
     drawdown_path = os.path.join(strategy_dir, f"drawdown_curve_{strategy_name}_{stock_code}_{timestamp}.png")
-    drawdown_fig = visualizer.plot_drawdown(returns_series, title=f"{strategy_name} 回撤曲线")
+    drawdown_fig = visualizer.plot_drawdown(daily_returns, title=f"{strategy_name} 回撤曲线")
     drawdown_fig.savefig(drawdown_path)
     plt.close(drawdown_fig)
-    
+
     dashboard_path = os.path.join(strategy_dir, f"performance_dashboard_{strategy_name}_{stock_code}_{timestamp}.png")
-    dashboard_fig = visualizer.plot_performance_dashboard(returns_series)
+    dashboard_fig = visualizer.plot_performance_dashboard(daily_returns, benchmark_returns)
     dashboard_fig.savefig(dashboard_path)
     plt.close(dashboard_fig)
-    
+
     return {
         "performance_data": formatted_performance,
         "equity_chart_url": f"/output/{strategy_name}_{stock_code}/{timestamp}/{os.path.basename(equity_path)}",

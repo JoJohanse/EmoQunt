@@ -299,3 +299,221 @@ def get_hs300_stocks():
     except Exception as e:
         print(f"获取沪深300成分股列表时发生错误: {e}")
         raise e
+
+
+# 常用指数代码（akshare stock_zh_index_daily 的 symbol 形如 sh000300 / sz399001）
+INDEX_SYMBOLS = {
+    '000300': 'sh000300',   # 沪深300
+    '399300': 'sz399300',
+    '000001': 'sh000001',   # 上证指数
+    '399001': 'sz399001',   # 深证成指
+    '399006': 'sz399006',   # 创业板指
+}
+
+
+def get_index_data(index_code: str = '000300', start_date: str = '', end_date: str = '') -> pd.DataFrame:
+    """
+    获取A股指数日线数据，用于回测基准（Alpha/Beta/信息比率）。
+
+    :param index_code: 指数代码（不带前缀），默认 '000300'（沪深300）
+    :param start_date: 开始日期 'YYYYMMDD'
+    :param end_date: 结束日期 'YYYYMMDD'，默认今天
+    :return: 与 Stock.get_stock_data 列名一致的 DataFrame
+             （开盘/最高/最低/收盘/成交量/时间，'时间' 为列而非 index）。
+             失败时返回空 DataFrame。
+    """
+    try:
+        if not end_date:
+            end_date = datetime.now().strftime('%Y%m%d')
+
+        symbol = INDEX_SYMBOLS.get(index_code)
+        if symbol is None:
+            # 兜底：6 开头归上交所，0/3 开头归深交所
+            symbol = ('sh' if str(index_code).startswith('6') else 'sz') + str(index_code)
+
+        print(f"正在获取指数 {index_code} 的日线数据，日期范围: {start_date} 至 {end_date}")
+        df = ak.stock_zh_index_daily(symbol=symbol)
+
+        if df is None or df.empty:
+            print(f"指数 {index_code} 返回空数据")
+            return pd.DataFrame()
+
+        # stock_zh_index_daily 通常含列: date, open, high, low, close, volume, amount
+        rename_map = {
+            'date': '时间', 'open': '开盘', 'high': '最高',
+            'low': '最低', 'close': '收盘', 'volume': '成交量', 'amount': '成交额',
+        }
+        rename_map = {k: v for k, v in rename_map.items() if k in df.columns}
+        df = df.rename(columns=rename_map)
+
+        # 按日期过滤（akshare 的 stock_zh_index_daily 不接受 start/end，需本地过滤）
+        if '时间' in df.columns:
+            df['时间'] = pd.to_datetime(df['时间'])
+            if start_date:
+                df = df[df['时间'] >= pd.to_datetime(start_date)]
+            if end_date:
+                df = df[df['时间'] <= pd.to_datetime(end_date)]
+            df = df.sort_values('时间').reset_index(drop=True)
+
+        print(f"成功获取指数数据，数据行数: {len(df)}")
+        return df
+    except Exception as e:
+        print(f"获取指数数据失败: {e}")
+        traceback.print_exc()
+        return pd.DataFrame()
+
+
+def load_sentiment_snapshots(snapshots_dir: str = None) -> pd.DataFrame:
+    """
+    扫描本地历史情绪快照，构建"快照日期 × 行业"的情绪分数面板。
+
+    用于回测中的情绪过滤：某回测日只能使用"截至该日最近的历史快照"，
+    以避免未来函数（lookahead bias）。
+
+    快照文件位于 nes_data/sentiment_results/{YYYYMMDD}.json，结构为：
+        {
+          'date': 'YYYY-MM-DD',
+          'timestamp': 'YYYY-MM-DD HH:MM:SS',
+          'all_sectors': [ {'name': '石油行业', 'sentiment': 60, 'stocks': [...]}, ... 64 个 ],
+          ...
+        }
+    其中 ``sentiment`` 为 0-100 量表（50 为中性）。本函数归一化到 -1..1：(s-50)/50。
+
+    :param snapshots_dir: 快照目录，默认为项目根下 nes_data/sentiment_results
+    :return: DataFrame，index=快照日期（DatetimeIndex, name='日期'），
+             columns=行业名称（如"石油行业"），值为归一化情绪分数(-1..1)。
+             无快照时返回空 DataFrame。
+    """
+    try:
+        import glob
+        import json
+
+        if snapshots_dir is None:
+            # __file__ = <root>/src/data/data_manager.py -> 需回溯 3 层到项目根
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            snapshots_dir = os.path.join(project_root, 'nes_data', 'sentiment_results')
+
+        files = sorted(glob.glob(os.path.join(snapshots_dir, '*.json')))
+        if not files:
+            return pd.DataFrame()
+
+        records = []  # list of dict {行业名: 归一化分数}
+        dates = []
+        for fp in files:
+            try:
+                with open(fp, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except Exception:
+                continue
+
+            # 日期优先用文件名，其次 date 字段，再次 timestamp
+            stem = os.path.splitext(os.path.basename(fp))[0]
+            try:
+                snap_date = pd.to_datetime(stem, format='%Y%m%d')
+            except Exception:
+                snap_date = pd.to_datetime(data.get('date') or data.get('timestamp'))
+
+            sectors = data.get('all_sectors')
+            if not sectors:
+                continue
+            row = {}
+            for sec in sectors:
+                name = sec.get('name')
+                if name is None:
+                    continue
+                raw = sec.get('sentiment')
+                # 0-100 -> -1..1，越界时裁剪；缺失/不可解析时记为中性 0.0，
+                # 避免不同快照间因某行业缺失而产生 NaN 列。
+                try:
+                    norm = (float(raw) - 50.0) / 50.0
+                except (TypeError, ValueError):
+                    norm = 0.0
+                row[name] = max(-1.0, min(1.0, norm))
+            if row:
+                records.append(row)
+                dates.append(snap_date)
+
+        if not records:
+            return pd.DataFrame()
+
+        panel = pd.DataFrame(records, index=pd.DatetimeIndex(dates, name='日期'))
+        panel = panel.sort_index()
+        # 不同快照间行业集合可能不一致（个别快照缺某行业），缺失填中性 0.0
+        panel = panel.fillna(0.0)
+        return panel
+    except Exception as e:
+        print(f"加载情绪快照失败: {e}")
+        return pd.DataFrame()
+
+
+def build_stock_sentiment_series(panel: pd.DataFrame, stock_code: str) -> 'tuple[pd.Series, object]':
+    """
+    从情绪面板中提取某只股票所属行业的情绪时间序列。
+
+    通过各快照 all_sectors[i]['stocks'] 中的成分代码定位行业。若同一股票在多个
+    行业出现，取第一个匹配。返回的序列可直接用于回测过滤：某回测日取"截至该日
+    最近的快照值"，避免未来函数。
+
+    :param panel: load_sentiment_snapshots() 返回的面板（index=日期, columns=行业名）
+    :param stock_code: 不带前缀的 6 位股票代码，如 '000001'
+    :return: (series, sector_name)。series 的 index 为快照日期，值为归一化情绪分数；
+             若无法定位行业，series 为空、sector_name 为 None。
+    """
+    try:
+        import glob
+        import json
+
+        code = str(stock_code).zfill(6)
+        # 去掉可能的 sh/sz 前缀
+        if code.startswith(('sh', 'sz')):
+            code = code[2:]
+        code = code.zfill(6)
+
+        if panel is None or panel.empty:
+            return pd.Series(dtype=float), None
+
+        # 优先通过行业映射器定位行业（覆盖快照未显式列出的股票），
+        # 失败时回退到扫描快照的成分股代码。
+        sector_name = None
+        try:
+            from src.factor.daily_recommend import StockSectorMapper
+            mapper = StockSectorMapper()
+            sector_name = mapper.get_sector_by_code(code)
+        except Exception:
+            sector_name = None
+
+        # 若映射器没结果或映射出的行业不在面板里，回退到成分股扫描
+        if not sector_name or sector_name not in panel.columns:
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            snapshots_dir = os.path.join(project_root, 'nes_data', 'sentiment_results')
+            files = sorted(glob.glob(os.path.join(snapshots_dir, '*.json')))
+            found = None
+            for fp in files:
+                try:
+                    with open(fp, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                except Exception:
+                    continue
+                for sec in data.get('all_sectors', []):
+                    for st in sec.get('stocks', []):
+                        if str(st.get('code', '')).zfill(6) == code:
+                            found = sec.get('name')
+                            break
+                    if found:
+                        break
+                if found:
+                    break
+            if found and found in panel.columns:
+                sector_name = found
+            elif sector_name not in panel.columns:
+                sector_name = None
+
+        if not sector_name or sector_name not in panel.columns:
+            return pd.Series(dtype=float), None
+
+        series = panel[sector_name].copy()
+        series.name = sector_name
+        return series, sector_name
+    except Exception as e:
+        print(f"构建股票情绪序列失败: {e}")
+        return pd.Series(dtype=float), None

@@ -1,0 +1,423 @@
+/* ============================================================
+   EmoQunt 量化系统 — 全站设计系统
+   统一配色、排版、组件样式。所有页面 extends base.html 引用本文件。
+   ============================================================ */
+
+:root {
+    /* 品牌主色（紫渐变） */
+    --brand-start: #667eea;
+    --brand-end: #764ba2;
+    --brand-grad: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+
+    /* 语义色 */
+    --success: #28a745;
+    --success-grad: linear-gradient(135deg, #28a745, #48c764);
+    --warning: #f59e0b;
+    --warning-grad: linear-gradient(135deg, #f59e0b, #fbbf24);
+    --danger: #dc3545;
+    --danger-grad: linear-gradient(135deg, #dc3545, #e4606d);
+    --info: #0ea5e9;
+    --info-grad: linear-gradient(135deg, #0ea5e9, #38bdf8);
+    --neutral: #6c757d;
+
+    /* 中性面 */
+    --bg: #f5f7fa;
+    --surface: #ffffff;
+    --border: #e9ecef;
+    --text: #1f2937;
+    --text-muted: #6b7280;
+
+    /* 阴影 / 圆角 */
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+    --shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+    --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.12);
+    --radius: 12px;
+    --radius-sm: 8px;
+}
+
+/* ---------- 基础 ---------- */
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        "Helvetica Neue", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+    background-color: var(--bg);
+    color: var(--text);
+}
+
+a { color: var(--brand-start); }
+a:hover { color: var(--brand-end); }
+
+/* ---------- 导航栏 ---------- */
+.app-navbar {
+    background: var(--brand-grad) !important;
+    box-shadow: 0 2px 12px rgba(102, 126, 234, 0.3);
+}
+.app-navbar .navbar-brand,
+.app-navbar .nav-link {
+    color: rgba(255, 255, 255, 0.92) !important;
+    font-weight: 500;
+    transition: color 0.2s;
+}
+.app-navbar .navbar-brand {
+    font-weight: 700;
+    font-size: 1.25rem;
+}
+.app-navbar .nav-link:hover,
+.app-navbar .nav-link.active {
+    color: #fff !important;
+}
+.app-navbar .nav-link.active {
+    position: relative;
+}
+.app-navbar .nav-link.active::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 2px;
+    width: 24px;
+    height: 2px;
+    background: #fff;
+    border-radius: 2px;
+}
+.app-navbar .navbar-toggler {
+    border-color: rgba(255, 255, 255, 0.5);
+}
+
+/* ---------- 页头 hero ---------- */
+.page-hero {
+    background: var(--surface);
+    padding: 2rem 2rem;
+    border-radius: var(--radius);
+    margin-bottom: 1.75rem;
+    box-shadow: var(--shadow-sm);
+    border-left: 5px solid var(--brand-start);
+}
+.page-hero h1,
+.page-hero h2 {
+    margin: 0;
+    font-weight: 700;
+    color: var(--text);
+}
+.page-hero h1 { font-size: 1.75rem; }
+.page-hero h2 { font-size: 1.5rem; }
+.page-hero .subtitle {
+    color: var(--text-muted);
+    margin-top: 0.5rem;
+    margin-bottom: 0;
+}
+
+/* 首页大 hero（渐变背景） */
+.hero-gradient {
+    background: var(--brand-grad);
+    color: #fff;
+    border-radius: var(--radius);
+    padding: 3rem 2rem;
+    margin-bottom: 2rem;
+    box-shadow: var(--shadow);
+    text-align: center;
+}
+.hero-gradient h1 {
+    font-size: 2.25rem;
+    font-weight: 800;
+    margin-bottom: 0.75rem;
+}
+.hero-gradient p {
+    font-size: 1.1rem;
+    opacity: 0.92;
+    margin-bottom: 0;
+}
+
+/* ---------- 卡片 ---------- */
+.app-card {
+    background: var(--surface);
+    border: none;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.app-card.hoverable:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-lg);
+}
+.app-card .card-header {
+    background: var(--surface);
+    border-bottom: 2px solid var(--border);
+    border-radius: var(--radius) var(--radius) 0 0 !important;
+    font-weight: 600;
+}
+.app-card .card-header.bg-brand {
+    background: var(--brand-grad) !important;
+    color: #fff;
+    border-bottom: none;
+}
+
+/* ---------- 功能卡（首页） ---------- */
+.feature-icon {
+    width: 64px;
+    height: 64px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    margin: 0 auto 1rem;
+    font-size: 1.5rem;
+    color: #fff;
+    box-shadow: var(--shadow);
+}
+.feature-icon.brand { background: var(--brand-grad); }
+.feature-icon.success { background: var(--success-grad); }
+.feature-icon.warning { background: var(--warning-grad); }
+.feature-icon.info { background: var(--info-grad); }
+
+.feature-card {
+    text-align: center;
+    height: 100%;
+}
+.feature-card .btn {
+    border: none;
+    color: #fff;
+}
+.btn-brand { background: var(--brand-grad); color: #fff; }
+.btn-brand:hover { opacity: 0.92; color: #fff; }
+
+/* ---------- 指标卡（回测结果） ---------- */
+.metric-card {
+    text-align: center;
+    padding: 1.25rem 0.75rem;
+    background: var(--surface);
+    border-radius: var(--radius-sm);
+    height: 100%;
+    border: 1px solid var(--border);
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+.metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow);
+}
+.metric-card .metric-label {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-bottom: 0.4rem;
+    font-weight: 500;
+}
+.metric-card .metric-value {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--brand-start);
+    line-height: 1.1;
+}
+.metric-card .metric-icon {
+    font-size: 0.9rem;
+    opacity: 0.6;
+    margin-bottom: 0.25rem;
+}
+.metric-value.positive { color: var(--success); }
+.metric-value.negative { color: var(--danger); }
+.metric-value.neutral  { color: var(--neutral); }
+
+/* 指标卡分组色条 */
+.metric-card.group-return { border-top: 3px solid var(--success); }
+.metric-card.group-risk    { border-top: 3px solid var(--danger); }
+.metric-card.group-benchmark { border-top: 3px solid var(--info); }
+
+/* ---------- 区块标题 ---------- */
+.section-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--brand-start);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* ---------- 图表容器（防布局抖动） ---------- */
+.chart-frame {
+    width: 100%;
+    text-align: center;
+}
+.chart-frame img {
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--radius-sm);
+}
+.chart-placeholder {
+    padding: 3rem 1rem;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+/* ---------- 新闻卡 ---------- */
+.news-card {
+    background: var(--surface);
+    border-radius: var(--radius-sm);
+    padding: 1rem 1.25rem;
+    margin-bottom: 0.75rem;
+    box-shadow: var(--shadow-sm);
+    border-left: 4px solid var(--brand-start);
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+.news-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow);
+}
+.news-card .news-source {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-bottom: 0.4rem;
+}
+.news-card .news-title {
+    font-size: 1rem;
+    color: var(--text);
+    font-weight: 500;
+    line-height: 1.5;
+    margin: 0;
+}
+.news-card .news-title a { color: inherit; text-decoration: none; }
+.news-card .news-title a:hover { color: var(--brand-start); }
+
+/* ---------- 板块卡 ---------- */
+.sector-card {
+    background: var(--surface);
+    border-radius: var(--radius-sm);
+    padding: 1.25rem;
+    margin-bottom: 0.75rem;
+    box-shadow: var(--shadow-sm);
+    transition: transform 0.15s;
+}
+.sector-card:hover { transform: translateY(-2px); }
+.sector-card.positive { border-left: 4px solid var(--success); }
+.sector-card.negative { border-left: 4px solid var(--danger); }
+.sector-card.neutral  { border-left: 4px solid var(--neutral); }
+.sector-name { font-size: 1.05rem; font-weight: 600; color: var(--text); }
+.sentiment-score { font-size: 1.75rem; font-weight: 700; line-height: 1; }
+.sentiment-score.positive { color: var(--success); }
+.sentiment-score.negative { color: var(--danger); }
+.sentiment-score.neutral  { color: var(--neutral); }
+
+.sentiment-bar {
+    height: 8px;
+    background: var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 0.75rem 0;
+}
+.sentiment-bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s; }
+.sentiment-bar-fill.positive { background: var(--success-grad); }
+.sentiment-bar-fill.negative { background: var(--danger-grad); }
+.sentiment-bar-fill.neutral  { background: linear-gradient(90deg, #6c757d, #868e96); }
+
+.stock-tags { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.stock-tag {
+    background: #f0f2f5;
+    padding: 0.2rem 0.6rem;
+    border-radius: 12px;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+.stock-tag .code { color: var(--brand-start); font-weight: 600; }
+
+/* ---------- 信号徽章 ---------- */
+.signal-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 1.25rem;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 1.1rem;
+    color: #fff;
+}
+.signal-badge.buy  { background: var(--success-grad); }
+.signal-badge.sell { background: var(--danger-grad); }
+.signal-badge.hold { background: linear-gradient(135deg, #6c757d, #868e96); }
+
+/* ---------- 统计盒 ---------- */
+.stats-box {
+    background: var(--brand-grad);
+    color: #fff;
+    border-radius: var(--radius-sm);
+    padding: 1.5rem;
+    text-align: center;
+}
+.stats-box .number { font-size: 2rem; font-weight: 800; }
+.stats-box .label { font-size: 0.9rem; opacity: 0.9; }
+
+/* ---------- 空状态 ---------- */
+.empty-state {
+    text-align: center;
+    padding: 3.5rem 1rem;
+    color: var(--text-muted);
+}
+.empty-state i {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    opacity: 0.4;
+}
+
+/* ---------- 表单 ---------- */
+.form-control:focus,
+.form-select:focus {
+    border-color: var(--brand-start);
+    box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.15);
+}
+.input-group-text {
+    background: var(--bg);
+    color: var(--text-muted);
+}
+
+/* ---------- 表格 ---------- */
+.table-app {
+    background: var(--surface);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+.table-app thead th {
+    background: #f8f9fc;
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.85rem;
+    text-transform: none;
+    border-bottom: 2px solid var(--border);
+}
+.table-app tbody tr:hover { background: #f8f9fc; }
+
+/* 推荐表排名徽章 */
+.rank-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    font-weight: 700;
+    font-size: 0.85rem;
+    background: var(--border);
+    color: var(--text-muted);
+}
+.rank-badge.top1 { background: linear-gradient(135deg, #f59e0b, #fbbf24); color: #fff; }
+.rank-badge.top2 { background: linear-gradient(135deg, #9ca3af, #d1d5db); color: #fff; }
+.rank-badge.top3 { background: linear-gradient(135deg, #b45309, #d97706); color: #fff; }
+
+/* ---------- 页脚 ---------- */
+.app-footer {
+    background: #1f2937;
+    color: rgba(255, 255, 255, 0.7);
+    padding: 1.75rem 0;
+    margin-top: 3rem;
+}
+.app-footer .brand-line { color: #fff; font-weight: 600; }
+
+/* ---------- 工具类 ---------- */
+.text-brand { color: var(--brand-start) !important; }
+.bg-brand { background: var(--brand-grad) !important; }
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 768px) {
+    .page-hero { padding: 1.25rem; }
+    .hero-gradient { padding: 2rem 1rem; }
+    .hero-gradient h1 { font-size: 1.5rem; }
+    .metric-card .metric-value { font-size: 1.15rem; }
+}

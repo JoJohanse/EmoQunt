@@ -10,7 +10,12 @@ from .Strategy import (
     global_strategy_manager,
     Strategy,
     TradeRecordManager,
-    TradeRecord
+    TradeRecord,
+    parse_bool,
+    extract_param_value,
+    build_param_dict,
+    create_user_strategy_class,
+    STRATEGY_TEMPLATES,
 )
 
 __all__ = [
@@ -19,5 +24,10 @@ __all__ = [
     'global_strategy_manager',
     'Strategy',
     'TradeRecordManager',
-    'TradeRecord'
+    'TradeRecord',
+    'parse_bool',
+    'extract_param_value',
+    'build_param_dict',
+    'create_user_strategy_class',
+    'STRATEGY_TEMPLATES',
 ]

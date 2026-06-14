@@ -125,6 +125,8 @@ os.makedirs(output_dir, exist_ok=True)
 
 # 挂载output目录作为静态文件服务
 app.mount("/output", StaticFiles(directory=output_dir), name="output")
+# 挂载web/static作为全站静态资源（CSS/JS/favicon）
+app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "web", "static")), name="static")
 
 # 缓存策略列表
 _strategy_cache = None
@@ -217,7 +219,8 @@ async def home(request: Request):
     return templates.TemplateResponse("index.html", {
         "request": request,
         "strategies": strategies,
-        "title": "量化策略回测系统"
+        "title": "量化策略回测系统",
+        "nav_active": "home"
     })
 
 
@@ -226,10 +229,14 @@ async def backtest_form(request: Request):
     """回测表单页面"""
     logger.info(f"用户访问回测表单页面 - 客户端IP: {request.client.host}")
     strategies = get_cached_strategies()
+    # 支持从策略列表跳转预选策略：/backtest?strategy_name=xxx
+    preselected_strategy = request.query_params.get("strategy_name", "")
     return templates.TemplateResponse("backtest_form.html", {
         "request": request,
         "strategies": strategies,
-        "title": "策略回测"
+        "title": "策略回测",
+        "nav_active": "backtest",
+        "preselected_strategy": preselected_strategy
     })
 
 
@@ -297,7 +304,8 @@ async def run_backtest(
             "equity_chart_url": result["equity_chart_url"],
             "drawdown_chart_url": result["drawdown_chart_url"],
             "dashboard_url": result["dashboard_url"],
-            "title": "回测结果"
+            "title": "回测结果",
+            "nav_active": "backtest"
         })
         
     except ValidationError as e:
@@ -322,14 +330,28 @@ async def refresh_sentiment_page(request: Request):
         _sentiment_cache = sentiment_result
         _sentiment_cache_time = datetime.now()
         logger.info("舆情分析刷新成功")
-        
+
+        # 从刷新后的结果中提取板块得分与新闻（修复原先渲染空数据的问题）
+        sectors = []
+        if sentiment_result and 'top_sectors' in sentiment_result:
+            sectors = sentiment_result['top_sectors']
+        news_list = []
+        try:
+            from nes_data.trendradar.trendradar import check_recent_txt_exists, parse_trendradar_txt
+            has_recent, txt_file = check_recent_txt_exists(max_age_seconds=SENTIMENT_CACHE_TIMEOUT)
+            if has_recent:
+                news_list = parse_trendradar_txt(txt_file) or []
+        except Exception:
+            news_list = []
+
         return templates.TemplateResponse("sentiment_analysis.html", {
             "request": request,
             "title": "舆情分析",
-            "news_list": [],
-            "sectors": [],
-            "news_count": 0,
-            "update_time": _sentiment_cache_time.strftime('%Y-%m-%d %H:%M:%S')
+            "news_list": news_list[:20],
+            "sectors": sectors,
+            "news_count": len(news_list),
+            "update_time": _sentiment_cache_time.strftime('%Y-%m-%d %H:%M:%S'),
+            "nav_active": "sentiment"
         })
     except ImportError as e:
         logger.error(f"导入舆情模块失败: {e}")
@@ -394,7 +416,8 @@ async def strategies_list(request: Request):
             "request": request,
             "strategy_details": strategy_details,
             "templates": strategy_templates,
-            "title": "策略列表"
+            "title": "策略列表",
+            "nav_active": "strategies"
         })
     except ImportError as e:
         logger.error(f"导入策略模块失败: {e}")
@@ -717,7 +740,8 @@ async def sentiment_analysis(request: Request):
             "news_list": news_data[:20] if news_data else [],
             "sectors": sectors,
             "news_count": len(news_data) if news_data else 0,
-            "update_time": sentiment_data.get('timestamp', '') if sentiment_data else ''
+            "update_time": sentiment_data.get('timestamp', '') if sentiment_data else '',
+            "nav_active": "sentiment"
         })
     except ImportError as e:
         logger.error(f"导入舆情模块失败: {e}")
@@ -789,7 +813,8 @@ async def daily_recommend_page(request: Request):
         return templates.TemplateResponse("daily_recommend.html", {
             "request": request,
             "data": recommend_data,
-            "title": "每日股票推荐"
+            "title": "每日股票推荐",
+            "nav_active": "recommend"
         })
     except ImportError as e:
         logger.error(f"导入推荐模块失败: {e}")
@@ -813,7 +838,8 @@ async def refresh_recommend_page(request: Request):
         return templates.TemplateResponse("daily_recommend.html", {
             "request": request,
             "data": recommend_data,
-            "title": "每日股票推荐"
+            "title": "每日股票推荐",
+            "nav_active": "recommend"
         })
     except ImportError as e:
         logger.error(f"导入推荐模块失败: {e}")
@@ -909,7 +935,8 @@ async def analyze_sentiment(
             "sentiment_result": sentiment_result,
             "sentiment_chart_url": sentiment_chart_url,
             "news_data": news_data[:10] if news_data else [],
-            "title": "舆情分析结果"
+            "title": "舆情分析结果",
+            "nav_active": "sentiment"
         })
         
     except ValidationError as e:
