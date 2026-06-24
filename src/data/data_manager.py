@@ -9,14 +9,19 @@ class Stock:
     def __init__(self, stock_code, market='zh_a'):
         """
         初始化Stock类
-        :param stock_code: 股票代码
-        :param market: 股票市场: 默认A股
+        :param stock_code: 股票代码（A股为6位数字代码；美股为字母代码如 AAPL）
+        :param market: 股票市场: 默认A股('zh_a')，美股为 'us'
         """
         self.stock_code = stock_code
         self.market = market
-        
+
+        # 美股：统一大写，不做 sh/sz 前缀处理
+        if self.market == 'us':
+            if not isinstance(self.stock_code, str):
+                self.stock_code = str(self.stock_code)
+            self.stock_code = self.stock_code.strip().upper()
         # 为中国A股股票代码添加市场前缀
-        if self.market == 'zh_a':
+        elif self.market == 'zh_a':
             # 若不是字符串类型，转换为字符串
             if not isinstance(self.stock_code, str):
                 self.stock_code = str(self.stock_code)
@@ -34,19 +39,42 @@ class Stock:
                         self.stock_code = 'sz' + self.stock_code
                     else:
                         print(f"警告：股票代码{self.stock_code}可能不是有效的A股代码")
-        
+
         self.stock_name = ''
         # 设置股票数据目录
         self.stock_data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'stock_data', self.market)
-    
+
     def get_code_without_prefix(self):
         """
         获取不带市场前缀的股票代码
-        :return: 不带前缀的股票代码
+        :return: 不带前缀的股票代码（A股去掉 sh/sz；美股原样返回大写 ticker）
         """
+        if self.market == 'us':
+            return self.stock_code
         if self.stock_code.startswith('sh') or self.stock_code.startswith('sz'):
             return self.stock_code[2:]
         return self.stock_code
+
+    @staticmethod
+    def _filter_us_daily_by_date(df: pd.DataFrame, start_date: str, end_date: str) -> pd.DataFrame:
+        """
+        本地过滤美股日线数据日期范围（ak.stock_us_daily 不支持 start/end 参数）。
+
+        :param df: stock_us_daily 返回的 DataFrame（含 date 列）
+        :param start_date: 起始日期 'YYYYMMDD'
+        :param end_date: 结束日期 'YYYYMMDD'
+        :return: 过滤后的 DataFrame
+        """
+        if df is None or df.empty or 'date' not in df.columns:
+            return df
+        try:
+            dates = pd.to_datetime(df['date'])
+            start = pd.to_datetime(start_date, format='%Y%m%d')
+            end = pd.to_datetime(end_date, format='%Y%m%d')
+            mask = (dates >= start) & (dates <= end)
+            return df[mask].reset_index(drop=True)
+        except Exception:
+            return df
 
     def get_stock_name(self):
         """
@@ -102,27 +130,36 @@ class Stock:
                 stock_data = pd.read_csv(file_path)
                 return stock_data, file_name
             else:
-                # 定义复权类型映射
+                # 定义复权类型映射（A股与美股通用）
                 adjust_map = {
                     'nfq': '',
                     'qfq': 'qfq',
                     'hfq': 'hfq'
                 }
-                
+
                 if type == 'daily':
                     # 获取日线数据
                     if end_date is None:
                         # 使用当前日期作为结束日期
                         end_date = datetime.now().strftime('%Y%m%d')
                     print(f"正在获取{self.stock_code}的历史数据（日线），日期范围: {start_date}至{end_date}")
-                    stock_data = ak.stock_zh_a_daily(
-                        symbol=self.stock_code,
-                        start_date=start_date,
-                        end_date=end_date,
-                        adjust=adjust_map[adjust]
-                    )
+                    if self.market == 'us':
+                        # 美股（新浪源）：stock_us_daily 不支持 start/end 参数，需本地过滤
+                        ticker = self.get_code_without_prefix()
+                        stock_data = ak.stock_us_daily(symbol=ticker, adjust=adjust_map[adjust])
+                        stock_data = self._filter_us_daily_by_date(stock_data, start_date, end_date)
+                    else:
+                        stock_data = ak.stock_zh_a_daily(
+                            symbol=self.stock_code,
+                            start_date=start_date,
+                            end_date=end_date,
+                            adjust=adjust_map[adjust]
+                        )
                 elif type == 'minute':
-                    # 获取分钟级数据
+                    # 获取分钟级数据（仅 A 股支持）
+                    if self.market == 'us':
+                        print("错误：美股暂不支持分钟级数据")
+                        return pd.DataFrame(), ''
                     print(f"正在获取{self.stock_code}的历史数据（分钟级）")
                     stock_data = ak.stock_zh_a_minute(
                         symbol=self.stock_code,
@@ -311,17 +348,31 @@ INDEX_SYMBOLS = {
 }
 
 
-def get_index_data(index_code: str = '000300', start_date: str = '', end_date: str = '') -> pd.DataFrame:
-    """
-    获取A股指数日线数据，用于回测基准（Alpha/Beta/信息比率）。
+# 美股指数代码（akshare index_us_stock_sina 的 symbol 为新浪点前缀代码）
+US_INDEX_SYMBOLS = {
+    'SP500': '.INX',        # 标普500
+    'NASDAQ': '.IXIC',      # 纳斯达克综合
+    'DOWJONES': '.DJI',     # 道琼斯工业
+    'NASDAQ100': '.NDX',    # 纳斯达克100
+}
 
-    :param index_code: 指数代码（不带前缀），默认 '000300'（沪深300）
+
+def get_index_data(index_code: str = '000300', start_date: str = '', end_date: str = '',
+                   market: str = 'zh_a') -> pd.DataFrame:
+    """
+    获取指数日线数据，用于回测基准（Alpha/Beta/信息比率）。
+
+    :param index_code: 指数代码。A股默认 '000300'（沪深300）；
+                       美股为 US_INDEX_SYMBOLS 的键（如 'SP500'）。
     :param start_date: 开始日期 'YYYYMMDD'
     :param end_date: 结束日期 'YYYYMMDD'，默认今天
+    :param market: 市场，'zh_a'（A股，默认）或 'us'（美股）
     :return: 与 Stock.get_stock_data 列名一致的 DataFrame
              （开盘/最高/最低/收盘/成交量/时间，'时间' 为列而非 index）。
              失败时返回空 DataFrame。
     """
+    if market == 'us':
+        return get_us_index_data(index_code, start_date, end_date)
     try:
         if not end_date:
             end_date = datetime.now().strftime('%Y%m%d')
@@ -359,6 +410,54 @@ def get_index_data(index_code: str = '000300', start_date: str = '', end_date: s
         return df
     except Exception as e:
         print(f"获取指数数据失败: {e}")
+        traceback.print_exc()
+        return pd.DataFrame()
+
+
+def get_us_index_data(index_code: str = 'SP500', start_date: str = '', end_date: str = '') -> pd.DataFrame:
+    """
+    获取美股指数日线数据（新浪源），用于美股回测基准。
+
+    :param index_code: US_INDEX_SYMBOLS 的键，默认 'SP500'（标普500）。
+                       也接受新浪点前缀代码本身（如 '.INX'）。
+    :param start_date: 开始日期 'YYYYMMDD'
+    :param end_date: 结束日期 'YYYYMMDD'，默认今天
+    :return: 与 get_index_data 列名一致的 DataFrame。失败时返回空 DataFrame。
+    """
+    try:
+        if not end_date:
+            end_date = datetime.now().strftime('%Y%m%d')
+
+        # 支持 US_INDEX_SYMBOLS 的键 或 直接的新浪代码（.INX 等）
+        symbol = US_INDEX_SYMBOLS.get(str(index_code).upper(), index_code)
+
+        print(f"正在获取美股指数 {index_code} 的日线数据，日期范围: {start_date} 至 {end_date}")
+        df = ak.index_us_stock_sina(symbol=symbol)
+
+        if df is None or df.empty:
+            print(f"美股指数 {index_code} 返回空数据")
+            return pd.DataFrame()
+
+        rename_map = {
+            'date': '时间', 'open': '开盘', 'high': '最高',
+            'low': '最低', 'close': '收盘', 'volume': '成交量', 'amount': '成交额',
+        }
+        rename_map = {k: v for k, v in rename_map.items() if k in df.columns}
+        df = df.rename(columns=rename_map)
+
+        # 本地日期过滤
+        if '时间' in df.columns:
+            df['时间'] = pd.to_datetime(df['时间'])
+            if start_date:
+                df = df[df['时间'] >= pd.to_datetime(start_date)]
+            if end_date:
+                df = df[df['时间'] <= pd.to_datetime(end_date)]
+            df = df.sort_values('时间').reset_index(drop=True)
+
+        print(f"成功获取美股指数数据，数据行数: {len(df)}")
+        return df
+    except Exception as e:
+        print(f"获取美股指数数据失败: {e}")
         traceback.print_exc()
         return pd.DataFrame()
 

@@ -13,6 +13,9 @@ data:
   # 数据缓存设置
   cache_enabled: true
   cache_duration_days: 7
+  # 默认基准指数：A股沪深300，美股标普500
+  default_benchmark_zh_a: "000300"
+  default_benchmark_us: "SP500"
 
 # 策略配置
 strategy:

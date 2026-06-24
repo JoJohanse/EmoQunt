@@ -4,7 +4,7 @@ Web界面 - 量化策略回测系统
 提供Web界面让用户可以进行策略回测、舆情分析、每日个股推荐
 """
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
@@ -128,6 +128,26 @@ app.mount("/output", StaticFiles(directory=output_dir), name="output")
 # 挂载web/static作为全站静态资源（CSS/JS/favicon）
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "web", "static")), name="static")
 
+# Vue3 SPA 构建产物目录（npm run build 后产物在 frontend/dist）
+SPA_DIST_DIR = os.path.join(BASE_DIR, "frontend", "dist")
+# 挂载 SPA 静态资源（assets 子目录），仅在已构建时挂载
+_spa_assets_dir = os.path.join(SPA_DIST_DIR, "assets")
+if os.path.isdir(_spa_assets_dir):
+    app.mount("/assets", StaticFiles(directory=_spa_assets_dir), name="spa-assets")
+
+
+@app.get("/spa/{full_path:path}")
+async def spa_fallback(full_path: str):
+    """Vue3 SPA history 路由回退：未匹配的路径返回 index.html，由前端路由接管。"""
+    index_path = os.path.join(SPA_DIST_DIR, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return HTMLResponse(
+        "<h1>Vue3 前端未构建</h1><p>请在 frontend/ 目录执行 <code>npm install &amp;&amp; npm run build</code></p>",
+        status_code=503,
+    )
+
+
 # 缓存策略列表
 _strategy_cache = None
 _cache_timestamp = None
@@ -231,12 +251,17 @@ async def backtest_form(request: Request):
     strategies = get_cached_strategies()
     # 支持从策略列表跳转预选策略：/backtest?strategy_name=xxx
     preselected_strategy = request.query_params.get("strategy_name", "")
+    # 支持市场预选：/backtest?market=us
+    preselected_market = request.query_params.get("market", "zh_a")
+    if preselected_market not in ('zh_a', 'us'):
+        preselected_market = "zh_a"
     return templates.TemplateResponse("backtest_form.html", {
         "request": request,
         "strategies": strategies,
         "title": "策略回测",
         "nav_active": "backtest",
-        "preselected_strategy": preselected_strategy
+        "preselected_strategy": preselected_strategy,
+        "preselected_market": preselected_market
     })
 
 
@@ -248,45 +273,51 @@ async def run_backtest(
     start_date: str = Form(...),
     end_date: str = Form(...),
     commission_rate: float = Form(0.001),
-    stock_code: str = Form("000001")
+    stock_code: str = Form("000001"),
+    market: str = Form("zh_a")
 ):
     """运行策略回测"""
     client_ip = request.client.host
-    
+
     # 清理输入
     strategy_name = sanitize_string(strategy_name, 50)
     stock_code = sanitize_string(stock_code, 10)
-    
-    logger.info(f"收到回测请求 - 客户端IP: {client_ip}, 策略: {strategy_name}, 股票: {stock_code}")
-    
+    # 市场仅允许 zh_a / us
+    market = market if market in ('zh_a', 'us') else 'zh_a'
+
+    logger.info(f"收到回测请求 - 客户端IP: {client_ip}, 策略: {strategy_name}, 股票: {stock_code}, 市场: {market}")
+
     try:
         # 验证策略名称
         valid, error = validate_strategy_name(strategy_name)
         if not valid:
             raise ValidationError(error)
-        
-        # 验证股票代码
-        valid, error = validate_stock_code(stock_code)
+
+        # 验证股票代码（按市场）
+        valid, error = validate_stock_code(stock_code, market=market)
         if not valid:
             raise ValidationError(error)
-        
+
         # 验证日期范围
         valid, error = validate_date_range(start_date, end_date)
         if not valid:
             raise ValidationError(error)
-        
+
         # 验证初始资金
         valid, error = validate_initial_capital(initial_capital)
         if not valid:
             raise ValidationError(error)
-        
+
         # 验证佣金费率
         valid, error = validate_commission_rate(commission_rate)
         if not valid:
             raise ValidationError(error)
-        
+
         from src.backtest.backtest_manager import run_backtest_with_charts
-        
+
+        # 美股基准为标普500，A股基准为沪深300
+        benchmark_index = "SP500" if market == 'us' else "000300"
+
         result = run_backtest_with_charts(
             strategy_name=strategy_name,
             stock_code=stock_code,
@@ -294,9 +325,11 @@ async def run_backtest(
             end_date=end_date,
             initial_capital=initial_capital,
             commission_rate=commission_rate,
-            output_dir=output_dir
+            output_dir=output_dir,
+            benchmark_index=benchmark_index,
+            market=market,
         )
-        
+
         return templates.TemplateResponse("backtest_result.html", {
             "request": request,
             "strategy_name": strategy_name,
@@ -305,7 +338,8 @@ async def run_backtest(
             "drawdown_chart_url": result["drawdown_chart_url"],
             "dashboard_url": result["dashboard_url"],
             "title": "回测结果",
-            "nav_active": "backtest"
+            "nav_active": "backtest",
+            "market": market
         })
         
     except ValidationError as e:
@@ -461,6 +495,133 @@ async def get_strategies_api():
     except Exception as e:
         logger.error(f"获取策略列表失败: {e}")
         return api_error("获取策略列表失败", 500)
+
+
+@app.get("/api/strategies/list")
+async def get_strategies_list_api():
+    """API接口：获取策略列表（数组形式，含参数，供 Vue3 前端使用）"""
+    logger.info("API接口被调用：获取策略列表（数组）")
+    try:
+        from src.Strategy.strategy_manager import load_user_strategies, get_strategy_templates
+        user_strategies = load_user_strategies()
+        strategy_templates = get_strategy_templates()
+        _, global_strategy_manager, _, _, _ = get_backtest_components()
+        builtin = global_strategy_manager.get_all_strategies()
+        details = []
+        for name, strategy_class in builtin.items():
+            tmpl = strategy_templates.get('sentiment_ma', {})
+            details.append({
+                "name": name,
+                "description": getattr(strategy_class, '__doc__', '') or '',
+                "parameters": [],
+                "template": "sentiment_ma",
+                "template_name": tmpl.get("name", ""),
+                "is_user_strategy": False,
+            })
+        for name, config in user_strategies.items():
+            tmpl_name = config.get("template", "sentiment_ma")
+            tmpl = strategy_templates.get(tmpl_name, {})
+            details.append({
+                "name": name,
+                "description": config.get("description", ""),
+                "parameters": config.get("parameters", []),
+                "template": tmpl_name,
+                "template_name": tmpl.get("name", ""),
+                "is_user_strategy": True,
+            })
+        return details
+    except Exception as e:
+        logger.error(f"获取策略列表失败: {e}")
+        return api_error("获取策略列表失败", 500)
+
+
+@app.post("/api/backtest/run")
+async def run_backtest_api(request: Request):
+    """API接口：运行回测，返回 JSON 时序数据（供 Vue3 ECharts 动态绘制）"""
+    try:
+        payload = await request.json()
+        strategy_name = sanitize_string(str(payload.get("strategy_name", "")), 50)
+        stock_code = sanitize_string(str(payload.get("stock_code", "")), 10)
+        market = payload.get("market", "zh_a")
+        if market not in ("zh_a", "us"):
+            market = "zh_a"
+        start_date = str(payload.get("start_date", ""))
+        end_date = str(payload.get("end_date", ""))
+        initial_capital = float(payload.get("initial_capital", 100000.0))
+        commission_rate = float(payload.get("commission_rate", 0.0003))
+
+        # 参数校验
+        valid, error = validate_strategy_name(strategy_name)
+        if not valid:
+            return JSONResponse({"error": error}, status_code=400)
+        valid, error = validate_stock_code(stock_code, market=market)
+        if not valid:
+            return JSONResponse({"error": error}, status_code=400)
+        valid, error = validate_date_range(start_date, end_date)
+        if not valid:
+            return JSONResponse({"error": error}, status_code=400)
+
+        from src.backtest.backtest_manager import run_backtest_json
+        benchmark_index = "SP500" if market == "us" else "000300"
+        result = run_backtest_json(
+            strategy_name=strategy_name,
+            stock_code=stock_code,
+            start_date=start_date,
+            end_date=end_date,
+            initial_capital=initial_capital,
+            commission_rate=commission_rate,
+            benchmark_index=benchmark_index,
+            market=market,
+        )
+        return result
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        logger.error(f"回测API失败: {e}")
+        return JSONResponse({"error": f"回测失败: {e}"}, status_code=500)
+
+
+@app.get("/api/sentiment/data")
+async def get_sentiment_data_api():
+    """API接口：获取舆情数据（JSON，供 Vue3 前端）"""
+    try:
+        from src.factor.sentiment import get_or_generate_sentiment_data
+        sentiment_data, news_data = get_or_generate_sentiment_data()
+        sectors = []
+        if sentiment_data and 'top_sectors' in sentiment_data:
+            sectors = sentiment_data['top_sectors']
+        return {
+            "news_list": (news_data or [])[:20],
+            "sectors": sectors,
+            "news_count": len(news_data or []),
+            "update_time": sentiment_data.get('timestamp', '') if sentiment_data else '',
+        }
+    except Exception as e:
+        logger.error(f"获取舆情数据失败: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/daily-recommend")
+async def get_daily_recommend_api():
+    """API接口：获取每日推荐（JSON，供 Vue3 前端）"""
+    try:
+        from src.factor.daily_recommend import get_cached_recommendation
+        return get_cached_recommendation()
+    except Exception as e:
+        logger.error(f"获取每日推荐失败: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/daily-recommend/refresh")
+async def refresh_daily_recommend_api():
+    """API接口：刷新每日推荐（JSON）"""
+    try:
+        from src.factor.daily_recommend import refresh_recommendation, reload_sentiment
+        reload_sentiment()
+        return refresh_recommendation()
+    except Exception as e:
+        logger.error(f"刷新每日推荐失败: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.get("/api/strategies/detail/{strategy_name}")

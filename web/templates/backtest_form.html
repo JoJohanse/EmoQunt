@@ -5,7 +5,7 @@
 {% block content %}
 <div class="page-hero">
     <h1><i class="fas fa-sliders text-brand me-2"></i>策略回测配置</h1>
-    <p class="subtitle">选择策略与标的，运行回测查看含 Alpha/Beta、最大回撤的详细绩效</p>
+    <p class="subtitle">选择市场、策略与标的，运行回测查看含 Alpha/Beta、最大回撤的详细绩效</p>
 </div>
 
 <div class="row g-4">
@@ -15,7 +15,26 @@
                 <i class="fas fa-play-circle me-1"></i> 回测参数
             </div>
             <div class="card-body p-4">
-                <form action="/run_backtest" method="post">
+                <form action="/run_backtest" method="post" id="backtestForm">
+                    <!-- 市场选择 -->
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">
+                            <i class="fas fa-globe me-1 text-brand"></i> 市场
+                        </label>
+                        <div class="btn-group w-100" role="group" id="marketGroup">
+                            <input type="radio" class="btn-check" name="market" id="market_zh" value="zh_a"
+                                   autocomplete="off" {% if preselected_market != 'us' %}checked{% endif %}>
+                            <label class="btn btn-outline-primary" for="market_zh">
+                                <i class="fas fa-yen-sign me-1"></i>A 股
+                            </label>
+                            <input type="radio" class="btn-check" name="market" id="market_us" value="us"
+                                   autocomplete="off" {% if preselected_market == 'us' %}checked{% endif %}>
+                            <label class="btn btn-outline-primary" for="market_us">
+                                <i class="fas fa-dollar-sign me-1"></i>美股
+                            </label>
+                        </div>
+                    </div>
+
                     <div class="mb-3">
                         <label for="strategy_name" class="form-label fw-semibold">
                             <i class="fas fa-list-check me-1 text-brand"></i> 选择策略
@@ -39,16 +58,17 @@
                             <div class="input-group">
                                 <span class="input-group-text"><i class="fas fa-tag"></i></span>
                                 <input type="text" class="form-control" id="stock_code" name="stock_code"
-                                       value="000001" placeholder="如 000001" required>
+                                       value="{% if preselected_market == 'us' %}AAPL{% else %}000001{% endif %}"
+                                       placeholder="如 000001" required>
                             </div>
-                            <small class="text-muted">不带前缀的 6 位 A 股代码</small>
+                            <small class="text-muted" id="stockHint">不带前缀的 6 位 A 股代码</small>
                         </div>
                         <div class="col-md-6">
                             <label for="initial_capital" class="form-label fw-semibold">
-                                <i class="fas fa-wallet me-1 text-brand"></i> 初始资金（元）
+                                <i class="fas fa-wallet me-1 text-brand"></i> <span id="capitalLabel">初始资金（元）</span>
                             </label>
                             <div class="input-group">
-                                <span class="input-group-text"><i class="fas fa-yen-sign"></i></span>
+                                <span class="input-group-text"><i class="fas fa-yen-sign" id="currencyIcon"></i></span>
                                 <input type="number" step="any" min="1000" class="form-control"
                                        id="initial_capital" name="initial_capital" value="100000.0" required>
                             </div>
@@ -61,14 +81,14 @@
                                 <i class="fas fa-calendar-day me-1 text-brand"></i> 开始日期
                             </label>
                             <input type="date" class="form-control" id="start_date" name="start_date"
-                                   value="2026-01-01" required>
+                                   value="2024-01-01" required>
                         </div>
                         <div class="col-md-6">
                             <label for="end_date" class="form-label fw-semibold">
                                 <i class="fas fa-calendar-check me-1 text-brand"></i> 结束日期
                             </label>
                             <input type="date" class="form-control" id="end_date" name="end_date"
-                                   value="2026-05-31" required>
+                                   value="2024-12-31" required>
                         </div>
                     </div>
 
@@ -81,7 +101,7 @@
                             <input type="number" step="0.0001" min="0" max="0.01" class="form-control"
                                    id="commission_rate" name="commission_rate" value="0.0003">
                         </div>
-                        <small class="text-muted">A股已自动叠加印花税（卖出 0.05%）与过户费（双边 0.001%）</small>
+                        <small class="text-muted" id="commissionHint">A 股已自动叠加印花税（卖出 0.05%）与过户费（双边 0.001%）</small>
                     </div>
 
                     <div class="d-flex gap-2 mt-4">
@@ -102,18 +122,50 @@
             <div class="card-header"><i class="fas fa-circle-info me-1 text-brand"></i> 使用说明</div>
             <div class="card-body">
                 <ul class="list-unstyled mb-0 small">
+                    <li class="mb-2"><i class="fas fa-check text-success me-2"></i>选择市场（A股 / 美股）</li>
                     <li class="mb-2"><i class="fas fa-check text-success me-2"></i>选择已创建的策略</li>
-                    <li class="mb-2"><i class="fas fa-check text-success me-2"></i>输入 A 股代码（如 000001）</li>
-                    <li class="mb-2"><i class="fas fa-check text-success me-2"></i>设定日期范围与资金</li>
+                    <li class="mb-2"><i class="fas fa-check text-success me-2"></i>输入股票代码（A股如 000001，美股如 AAPL）</li>
                     <li class="mb-2"><i class="fas fa-check text-success me-2"></i>运行后查看绩效指标与图表</li>
                 </ul>
                 <hr>
                 <div class="alert alert-info py-2 mb-0 small">
                     <i class="fas fa-lightbulb me-1"></i>
-                    回测已接入真实 A 股交易成本、沪深300 基准与情绪过滤。
+                    <span id="benchmarkHint">A 股基准为沪深300；美股基准为标普500。美股仅佣金，无印花税/过户费。</span>
                 </div>
             </div>
         </div>
     </div>
 </div>
+
+<script>
+// 市场联动：切换时更新股票代码占位符、提示文案、货币符号
+(function() {
+    const zhDefaults = { code: '000001', codePlaceholder: '如 000001',
+        stockHint: '不带前缀的 6 位 A 股代码', capitalLabel: '初始资金（元）',
+        commissionHint: 'A 股已自动叠加印花税（卖出 0.05%）与过户费（双边 0.001%）',
+        currencyIcon: 'fas fa-yen-sign' };
+    const usDefaults = { code: 'AAPL', codePlaceholder: '如 AAPL',
+        stockHint: '美股字母代码，如 AAPL、MSFT、BRK.B', capitalLabel: '初始资金（美元）',
+        commissionHint: '美股仅佣金（双边），无印花税/过户费',
+        currencyIcon: 'fas fa-dollar-sign' };
+
+    function applyMarket(market) {
+        const d = market === 'us' ? usDefaults : zhDefaults;
+        const codeInput = document.getElementById('stock_code');
+        codeInput.placeholder = d.codePlaceholder;
+        document.getElementById('stockHint').textContent = d.stockHint;
+        document.getElementById('capitalLabel').textContent = d.capitalLabel;
+        document.getElementById('commissionHint').textContent = d.commissionHint;
+        const icon = document.getElementById('currencyIcon');
+        icon.className = d.currencyIcon;
+    }
+
+    document.querySelectorAll('input[name="market"]').forEach(function(el) {
+        el.addEventListener('change', function() { applyMarket(this.value); });
+    });
+    // 初始化：按当前选中市场设置
+    const checked = document.querySelector('input[name="market"]:checked');
+    if (checked) applyMarket(checked.value);
+})();
+</script>
 {% endblock %}

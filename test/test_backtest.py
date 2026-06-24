@@ -241,5 +241,113 @@ class TestSentimentSnapshots:
         assert series.name == "石油行业"
 
 
+# ---------------------------------------------------------------------------
+# 美股功能：校验、成本模型、指数映射
+# ---------------------------------------------------------------------------
+class TestUSValidation:
+    """美股代码校验测试。"""
+
+    def test_us_valid_tickers(self):
+        from src.utils.validators import validate_us_stock_code
+        for t in ["AAPL", "MSFT", "BRK.B", "aapl", "TSLA", "BABA"]:
+            assert validate_us_stock_code(t) == (True, None), f"{t} 应通过"
+
+    def test_us_reject_pure_digits(self):
+        """纯数字不应通过（避免与 A 股 6 位代码混淆）。"""
+        from src.utils.validators import validate_us_stock_code
+        for t in ["", "123456", "123", "0", "007"]:
+            ok, _ = validate_us_stock_code(t)
+            assert ok is False, f"{t!r} 应被拒绝"
+
+    def test_us_reject_too_long_or_bad_chars(self):
+        from src.utils.validators import validate_us_stock_code
+        for t in ["TOOLONGCODE", "AA-BB", "AA BB", "A@B"]:
+            ok, _ = validate_us_stock_code(t)
+            assert ok is False, f"{t!r} 应被拒绝"
+
+    def test_validate_stock_code_market_routing(self):
+        """validate_stock_code 按 market 参数路由到美股/A股校验。"""
+        from src.utils.validators import validate_stock_code
+        # 美股路径：AAPL 通过，000001 失败
+        assert validate_stock_code("AAPL", market="us")[0] is True
+        assert validate_stock_code("000001", market="us")[0] is False
+        # A 股路径（默认）：000001 通过，AAPL 失败
+        assert validate_stock_code("000001")[0] is True
+        assert validate_stock_code("000001", market="zh_a")[0] is True
+        assert validate_stock_code("AAPL")[0] is False
+
+    def test_validate_backtest_params_market_passthrough(self):
+        """validate_backtest_params 透传 market 参数。"""
+        from src.utils.validators import validate_backtest_params
+        ok, _ = validate_backtest_params(
+            "AAPL", "2024-01-01", "2024-06-30", 100000.0, 0.0005, market="us")
+        assert ok is True
+        # 美股模式下 000001 应失败
+        ok, _ = validate_backtest_params(
+            "000001", "2024-01-01", "2024-06-30", 100000.0, 0.0005, market="us")
+        assert ok is False
+
+
+class TestUSStockCommInfo:
+    """美股成本模型测试（对比 A 股的不对称性）。"""
+
+    def test_us_commission_symmetric(self):
+        """美股佣金买卖对称（无印花税）。"""
+        from src.backtest.backtest_manager import USStockCommInfo
+        ci = USStockCommInfo(commission_rate=0.0005)
+        buy = ci._getcommission(100, 200.0, False)
+        sell = ci._getcommission(-100, 200.0, False)
+        # 成交额 20000，佣金 20000 * 5e-4 = 10
+        assert buy == pytest.approx(10.0, abs=1e-9)
+        assert sell == pytest.approx(10.0, abs=1e-9)
+        assert buy == sell
+
+    def test_us_no_stamp_duty(self):
+        """美股卖出费用等于买入费用（无印花税额外项）。"""
+        from src.backtest.backtest_manager import USStockCommInfo
+        ci = USStockCommInfo()
+        assert ci._getcommission(1000, 10.0, False) == ci._getcommission(-1000, 10.0, False)
+
+    def test_us_vs_a_share_asymmetry(self):
+        """美股对称 vs A 股卖出更贵（印花税）。"""
+        from src.backtest.backtest_manager import USStockCommInfo, AShareCommInfo
+        us = USStockCommInfo()
+        ac = AShareCommInfo()
+        us_buy = us._getcommission(1000, 10.0, False)
+        us_sell = us._getcommission(-1000, 10.0, False)
+        ac_sell = ac._getcommission(-1000, 10.0, False)
+        # 美股买卖相等
+        assert us_buy == us_sell
+        # A 股卖出（含印花税）严格大于美股卖出
+        assert ac_sell > us_sell
+
+
+class TestUSIndexSymbols:
+    """美股指数映射测试。"""
+
+    def test_us_index_symbols_mapping(self):
+        from src.data.data_manager import US_INDEX_SYMBOLS
+        assert US_INDEX_SYMBOLS["SP500"] == ".INX"
+        assert US_INDEX_SYMBOLS["NASDAQ"] == ".IXIC"
+        assert US_INDEX_SYMBOLS["DOWJONES"] == ".DJI"
+        assert US_INDEX_SYMBOLS["NASDAQ100"] == ".NDX"
+
+    def test_stock_us_init_uppercase(self):
+        """美股 Stock 初始化大写化、无 sh/sz 前缀。"""
+        from src.data.data_manager import Stock
+        s = Stock("aapl", market="us")
+        assert s.stock_code == "AAPL"
+        assert s.get_code_without_prefix() == "AAPL"
+        assert s.stock_data_dir.endswith(os.path.join("stock_data", "us"))
+
+    def test_stock_ashare_unchanged(self):
+        """A 股 Stock 初始化行为不变（向后兼容）。"""
+        from src.data.data_manager import Stock
+        s = Stock("000001")
+        assert s.market == "zh_a"
+        assert s.stock_code == "sz000001"
+        assert s.get_code_without_prefix() == "000001"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

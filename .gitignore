@@ -3705,3 +3705,9 @@ output/
 nes_data/sentiment_results/
 nes_data/trendradar/output/
 stock_data/stock_cache/
+
+# Frontend (Vue3 / Vite) build artifacts and dependencies
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+.eslintcache

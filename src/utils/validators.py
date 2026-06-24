@@ -19,6 +19,8 @@ class ValidationError(Exception):
 
 # 常量定义
 STOCK_CODE_PATTERN = re.compile(r'^[0-9]{6}$')
+# 美股 ticker：1-6 个字符，字母/数字/点（如 AAPL, BRK.B），且不能纯数字
+US_STOCK_CODE_PATTERN = re.compile(r'^(?![0-9.]+$)[A-Za-z0-9.]{1,6}$')
 DATE_PATTERN = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 MIN_DATE = datetime(2000, 1, 1)
 MAX_DATE = datetime(2030, 12, 31)
@@ -30,29 +32,53 @@ MIN_COMMISSION_RATE = 0.0
 MAX_COMMISSION_RATE = 0.1
 
 
-def validate_stock_code(stock_code: str) -> Tuple[bool, Optional[str]]:
+def validate_us_stock_code(stock_code: str) -> Tuple[bool, Optional[str]]:
     """
-    验证股票代码格式
-    
-    :param stock_code: 股票代码
+    验证美股股票代码（ticker）格式。
+
+    规则：1-6 个字符，仅含字母/数字/点（如 AAPL, MSFT, BRK.B），大写化；
+    拒绝纯数字（避免与 A 股 6 位代码混淆）。
+
+    :param stock_code: 美股代码
     :return: (是否有效, 错误信息)
     """
     if not stock_code:
+        return False, "美股代码不能为空"
+
+    clean_code = stock_code.strip()
+    if not US_STOCK_CODE_PATTERN.match(clean_code):
+        return False, f"美股代码格式错误: {stock_code}，应为1-6位字母/数字（如 AAPL、BRK.B），不能纯数字"
+
+    return True, None
+
+
+def validate_stock_code(stock_code: str, market: str = 'zh_a') -> Tuple[bool, Optional[str]]:
+    """
+    验证股票代码格式
+
+    :param stock_code: 股票代码（A股6位数字；美股字母代码如 AAPL）
+    :param market: 市场，'zh_a'（A股，默认）或 'us'（美股）
+    :return: (是否有效, 错误信息)
+    """
+    if market == 'us':
+        return validate_us_stock_code(stock_code)
+
+    if not stock_code:
         return False, "股票代码不能为空"
-    
+
     # 去除可能的前缀
     clean_code = stock_code.strip()
     if clean_code.startswith(('sh', 'sz')):
         clean_code = clean_code[2:]
-    
+
     if not STOCK_CODE_PATTERN.match(clean_code):
         return False, f"股票代码格式错误: {stock_code}，应为6位数字"
-    
+
     # 验证股票代码开头
     first_digit = clean_code[0]
     if first_digit not in ('0', '3', '6'):
         return False, f"股票代码 {stock_code} 不是有效的A股代码"
-    
+
     return True, None
 
 
@@ -187,20 +213,22 @@ def validate_backtest_params(
     start_date: str,
     end_date: str,
     initial_capital: float,
-    commission_rate: float
+    commission_rate: float,
+    market: str = 'zh_a'
 ) -> Tuple[bool, Optional[str]]:
     """
     验证回测参数
-    
-    :param stock_code: 股票代码
+
+    :param stock_code: 股票代码（A股6位数字；美股字母代码）
     :param start_date: 开始日期
     :param end_date: 结束日期
     :param initial_capital: 初始资金
     :param commission_rate: 佣金费率
+    :param market: 市场，'zh_a'（A股，默认）或 'us'（美股）
     :return: (是否有效, 错误信息)
     """
     # 验证股票代码
-    valid, error = validate_stock_code(stock_code)
+    valid, error = validate_stock_code(stock_code, market=market)
     if not valid:
         return False, error
     

@@ -68,7 +68,9 @@ class ConfigLoader:
                 'default_adjust': 'hfq',
                 'default_data_type': 'daily',
                 'cache_enabled': True,
-                'cache_duration_days': 7
+                'cache_duration_days': 7,
+                'default_benchmark_zh_a': '000300',
+                'default_benchmark_us': 'SP500'
             },
             'strategy': {
                 'min_order_size': 100,

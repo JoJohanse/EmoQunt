@@ -1,0 +1,75 @@
+:root {
+  --brand-start: #667eea;
+  --brand-end: #764ba2;
+  --brand-grad: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --success: #28a745;
+  --warning: #f59e0b;
+  --danger: #dc3545;
+  --info: #0ea5e9;
+  --neutral: #6c757d;
+  --bg: #f5f7fa;
+  --surface: #ffffff;
+  --border: #e9ecef;
+  --text: #1f2937;
+  --text-muted: #6b7280;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.12);
+  --radius: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+  background-color: var(--bg);
+  color: var(--text);
+}
+
+a {
+  color: var(--brand-start);
+  text-decoration: none;
+}
+
+/* 页头 hero 块通用 */
+.page-hero {
+  background: var(--surface);
+  padding: 1.5rem;
+  border-radius: var(--radius);
+  margin-bottom: 1.5rem;
+  box-shadow: var(--shadow-sm);
+  border-left: 5px solid var(--brand-start);
+}
+.page-hero h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+.page-hero .subtitle {
+  color: var(--text-muted);
+  margin: 0;
+}
+
+/* 区块标题 */
+.section-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 1.25rem 0 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid var(--brand-start);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* 空状态 */
+.empty-state {
+  text-align: center;
+  padding: 3.5rem 1rem;
+  color: var(--text-muted);
+}
