@@ -11,6 +11,10 @@ from typing import Any, Dict, Optional, Union
 from pathlib import Path
 import logging
 
+from src.utils.env import load_env
+load_env()
+from src.utils.paths import get_config_dir
+
 
 class ConfigLoader:
     """
@@ -23,7 +27,7 @@ class ConfigLoader:
         :param config_path: 配置文件路径
         :param env_prefix: 环境变量前缀
         """
-        self.config_path = config_path or os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config', 'config.yaml')
+        self.config_path = config_path or str(get_config_dir() / 'config.yaml')
         self.env_prefix = env_prefix
         self.config_data = {}
         self.logger = logging.getLogger(__name__)
@@ -292,32 +296,37 @@ class ConfigLoader:
         """
         return self.get('environment', {})
     
+    def _load_yaml_config(self, filename: str, env_var: str, default_factory) -> Dict[str, Any]:
+        """
+        通用 YAML 配置加载器。
+        :param filename: 配置文件名（如 'sentiment_config.yaml'）
+        :param env_var: 覆盖路径的环境变量名
+        :param default_factory: 返回默认配置的可调用对象
+        :return: 配置字典
+        """
+        env_path = os.environ.get(env_var)
+        if env_path:
+            config_path = Path(env_path)
+        else:
+            config_path = Path(self.config_path).parent / filename
+        try:
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as file:
+                    return yaml.safe_load(file) or {}
+            else:
+                self.logger.warning(f"配置文件不存在: {config_path}")
+                return default_factory()
+        except (OSError, yaml.YAMLError) as e:
+            self.logger.error(f"加载配置失败: {e}")
+            return default_factory()
+
     def load_sentiment_config(self) -> Dict[str, Any]:
         """
         加载情感分析配置文件
-        
         支持通过环境变量 QDT_SENTIMENT_CONFIG_PATH 覆盖默认路径
         :return: 情感分析配置字典
         """
-        # 优先从环境变量获取配置路径
-        env_path = os.environ.get('QDT_SENTIMENT_CONFIG_PATH')
-        if env_path:
-            sentiment_config_path = Path(env_path)
-        else:
-            # 使用 Path 类确保跨平台兼容性
-            config_dir = Path(self.config_path).parent
-            sentiment_config_path = config_dir / 'sentiment_config.yaml'
-        
-        try:
-            if sentiment_config_path.exists():
-                with open(sentiment_config_path, 'r', encoding='utf-8') as file:
-                    return yaml.safe_load(file) or {}
-            else:
-                self.logger.warning(f"情感分析配置文件不存在: {sentiment_config_path}")
-                return self._get_default_sentiment_config()
-        except (OSError, yaml.YAMLError) as e:
-            self.logger.error(f"加载情感分析配置失败: {e}")
-            return self._get_default_sentiment_config()
+        return self._load_yaml_config('sentiment_config.yaml', 'QDT_SENTIMENT_CONFIG_PATH', self._get_default_sentiment_config)
     
     def _get_default_sentiment_config(self) -> Dict[str, Any]:
         """
@@ -344,29 +353,10 @@ class ConfigLoader:
     def load_scoring_config(self) -> Dict[str, Any]:
         """
         加载评分配置文件
-        
         支持通过环境变量 QDT_SCORING_CONFIG_PATH 覆盖默认路径
         :return: 评分配置字典
         """
-        # 优先从环境变量获取配置路径
-        env_path = os.environ.get('QDT_SCORING_CONFIG_PATH')
-        if env_path:
-            scoring_config_path = Path(env_path)
-        else:
-            # 使用 Path 类确保跨平台兼容性
-            config_dir = Path(self.config_path).parent
-            scoring_config_path = config_dir / 'scoring_config.yaml'
-        
-        try:
-            if scoring_config_path.exists():
-                with open(scoring_config_path, 'r', encoding='utf-8') as file:
-                    return yaml.safe_load(file) or {}
-            else:
-                self.logger.warning(f"评分配置文件不存在: {scoring_config_path}")
-                return self._get_default_scoring_config()
-        except (OSError, yaml.YAMLError) as e:
-            self.logger.error(f"加载评分配置失败: {e}")
-            return self._get_default_scoring_config()
+        return self._load_yaml_config('scoring_config.yaml', 'QDT_SCORING_CONFIG_PATH', self._get_default_scoring_config)
     
     def _get_default_scoring_config(self) -> Dict[str, Any]:
         """

@@ -1,22 +1,19 @@
 import os
 import json
-from dotenv import load_dotenv
 import re
 import logging
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 import numpy as np
 
+from src.utils.env import get_env, get_env_float, get_env_int
+from src.utils.paths import PROJECT_ROOT, ensure_dir
+
 logger = logging.getLogger(__name__)
 
 from openai import OpenAI
 
-# 加载环境变量
-load_dotenv()
-
 # 导入配置加载器
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from config.config_loader import get_config
 
 # 加载情感分析配置
@@ -37,11 +34,12 @@ SELL_SIGNAL_THRESHOLD = THRESHOLDS.get('sell_signal', -0.3)
 # 从配置中获取行业列表
 INDUSTRIES = SENTIMENT_CONFIG.get('industries', [])
 
-# 从配置中获取LLM配置
-LLM_CONFIG = SENTIMENT_CONFIG.get('llm_config', {})
-DEFAULT_MODEL = LLM_CONFIG.get('model', "Qwen/Qwen3-235B-A22B-Instruct-2507")
-DEFAULT_BASE_URL = LLM_CONFIG.get('base_url', "https://api.siliconflow.cn/v1")
-DEFAULT_TEMPERATURE = LLM_CONFIG.get('temperature', 0.75)
+# LLM 模型配置统一从环境变量（.env）加载
+DEFAULT_MODEL = get_env("LLM_MODEL", "mimo-v2.5")
+DEFAULT_BASE_URL = get_env("LLM_BASE_URL", "https://token-plan-cn.xiaomimimo.com/v1")
+DEFAULT_TEMPERATURE = get_env_float("LLM_TEMPERATURE", 0.75)
+DEFAULT_MAX_TOKENS = get_env_int("LLM_MAX_TOKENS", 5120)
+DEFAULT_TIMEOUT = get_env_int("LLM_TIMEOUT", 30)
 
 # 从配置中获取缓存配置
 CACHE_CONFIG = SENTIMENT_CONFIG.get('cache_config', {})
@@ -118,7 +116,9 @@ class SentimentAnalyzer:
                     {"role": "system", "content": "你是一个专业的金融情绪分析器，你的任务是根据提供的股票以及其所属行业，分析以下新闻文本对该股票的情感倾向。"},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=DEFAULT_TEMPERATURE
+                temperature=DEFAULT_TEMPERATURE,
+                max_tokens=DEFAULT_MAX_TOKENS,
+                timeout=DEFAULT_TIMEOUT
             )
             
             # 解析LLM返回的结果
@@ -357,17 +357,13 @@ def z_score_normalize(values):
 
 
 # 舆情结果持久化
-SENTIMENT_SAVE_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "nes_data", "sentiment_results"
-)
+SENTIMENT_SAVE_DIR = str(PROJECT_ROOT / "nes_data" / "sentiment_results")
 
 
 def _ensure_sentiment_save_dir():
     """确保舆情结果保存目录存在"""
-    if not os.path.exists(SENTIMENT_SAVE_DIR):
-        os.makedirs(SENTIMENT_SAVE_DIR, exist_ok=True)
-        logger.info(f"创建舆情结果保存目录: {SENTIMENT_SAVE_DIR}")
+    ensure_dir(SENTIMENT_SAVE_DIR)
+    logger.info(f"确保舆情结果保存目录存在: {SENTIMENT_SAVE_DIR}")
 
 
 def save_sentiment_result(data: Dict) -> str:

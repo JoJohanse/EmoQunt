@@ -1,15 +1,16 @@
 import os
 import sys
 
+from src.utils.env import load_env
+load_env()
+from src.utils.paths import get_trendradar_dir
+
 # 将 trendradar 目录添加到路径
-TRENDRADAR_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "nes_data", "trendradar"
-)
+TRENDRADAR_DIR = str(get_trendradar_dir())
 sys.path.insert(0, TRENDRADAR_DIR)
 
-# 设置配置文件路径
-os.environ["CONFIG_PATH"] = os.path.join(TRENDRADAR_DIR, "config", "config.yaml")
+# 设置配置文件路径（.env 中定义的 CONFIG_PATH 优先）
+os.environ.setdefault("CONFIG_PATH", os.path.join(TRENDRADAR_DIR, "config", "config.yaml"))
 
 # 导入 trendradar 模块的功能
 from trendradar import (

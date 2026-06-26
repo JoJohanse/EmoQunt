@@ -134,14 +134,6 @@ industries:
   - 光学光电子
   - 互联网服务
 
-# LLM配置
-llm_config:
-  model: "mimo-v2.5"
-  base_url: "https://token-plan-cn.xiaomimimo.com/v1"
-  temperature: 0.75
-  max_tokens: 5120
-  timeout: 30
-
 # 缓存配置
 cache_config:
   sentiment_cache_timeout: 3600  # 1小时

@@ -3,7 +3,11 @@ import pandas as pd
 import re
 import os
 import traceback
+import logging
+from src.utils.paths import PROJECT_ROOT, ensure_dir
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 class Stock:
     def __init__(self, stock_code, market='zh_a'):
@@ -303,27 +307,25 @@ def get_hs300_stocks():
     :return: 沪深300成分股代码列表
     """
     try:
-        save_path = "d:/workplace/codeplace/junkcode/Qdt_test/stock_data/沪深300"
+        save_path = str(PROJECT_ROOT / "stock_data" / "沪深300")
         
         # 创建保存路径（如果不存在）
-        if not os.path.exists(save_path):
-            os.makedirs(save_path)
-            print(f"创建保存路径: {save_path}")
+        ensure_dir(save_path)
         
         # 获取沪深300成分股列表，先看本地是否有缓存文件
         cache_file = os.path.join(save_path, '沪深300成分股列表.csv')
         if os.path.exists(cache_file):
-            print(f"发现本地缓存文件: {cache_file}")
+            logger.info(f"发现本地缓存文件: {cache_file}")
             hs300_df = pd.read_csv(cache_file, encoding='utf-8')
             
             # 处理股票代码格式
             stock_list = hs300_df['股票代码'].tolist()
             
-            print(f"从缓存文件加载沪深300成分股，共{len(stock_list)}只股票")
+            logger.info(f"从缓存文件加载沪深300成分股，共{len(stock_list)}只股票")
             return stock_list
         else:
             # 如果缓存文件不存在，直接使用akshare获取沪深300成分股列表
-            print("本地缓存文件不存在，正在从akshare获取沪深300成分股列表")
+            logger.info("本地缓存文件不存在，正在从akshare获取沪深300成分股列表")
             hs300_df = ak.index_stock_info(index_code="000300")
             
             # 处理股票代码格式
@@ -331,10 +333,10 @@ def get_hs300_stocks():
             
             # 保存到缓存文件
             hs300_df.to_csv(cache_file, encoding='utf-8', index=False)
-            print(f"已获取并保存沪深300成分股列表到{cache_file}，共{len(stock_list)}只股票")
+            logger.info(f"已获取并保存沪深300成分股列表到{cache_file}，共{len(stock_list)}只股票")
             return stock_list
     except Exception as e:
-        print(f"获取沪深300成分股列表时发生错误: {e}")
+        logger.error(f"获取沪深300成分股列表时发生错误: {e}")
         raise e
 
 

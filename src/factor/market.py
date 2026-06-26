@@ -2,12 +2,13 @@ from akshare.stock_feature.stock_zh_valuation_baidu import stock_zh_valuation_ba
 import os
 import time
 import pandas as pd
+from src.utils.paths import get_stock_data_dir, ensure_dir
 
 # 获取股票的总市值（目前仅支持a股）
 def get_market_value(stock_code,period='近五年',market='zh_a'):
     if isinstance(stock_code, int):
         stock_code = str(stock_code).zfill(6)
-    save_dir = fr'Qdt_test\stock_data\{market}\{stock_code}'
+    save_dir = os.path.join(str(get_stock_data_dir(market)), stock_code)
     # 先检查是否存在文件
     file_path = os.path.join(save_dir, f'{stock_code}_{period}市值变化.csv')
     if os.path.exists(file_path):
@@ -24,7 +25,6 @@ def get_market_value(stock_code,period='近五年',market='zh_a'):
             # 基于date列合并数据
             df = pd.merge(df, df_indicator, on='date', how='outer')
     # 存入对应路径
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
+    ensure_dir(save_dir)
     df.to_csv(os.path.join(save_dir, f'{stock_code}_{period}市值变化.csv'), index=False)
     return df

@@ -3,6 +3,7 @@ import akshare as ak
 import pandas as pd
 import numpy as np
 import os
+from src.utils.paths import get_stock_data_dir
 
 # 数据路径： Qdt_test\stock_data\zh_a\000001\hfq\daily\000001_hfq_daily_20200101_20241231.csv
 # 000001 股票代码;hfq 复权类型，hfq-后复权，nfq-不复权，qfq-前复权;daily 数据类型，daily-日线;20200101 开始日期;20241231 结束日期
@@ -19,7 +20,7 @@ def calculate_factor(stock_code, datatype='daily',fq='hfq',market='zh_a'):
     # 字符化代码若code为int类型，若已经为str类型，直接使用
     if isinstance(stock_code, int):
         stock_code = str(stock_code).zfill(6)
-    stock_data_path = r'Qdt_test\stock_data\{market}'.format(market=market)
+    stock_data_path = str(get_stock_data_dir(market))
     stock_path = os.path.join(stock_data_path, stock_code, fq, datatype)
     stock_data_file = os.path.join(stock_path, os.listdir(stock_path)[0])
     df = pd.read_csv(stock_data_file)

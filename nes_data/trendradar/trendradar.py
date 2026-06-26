@@ -6,6 +6,12 @@ from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional
 
+from dotenv import load_dotenv
+
+# 加载项目根目录的 .env
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(dotenv_path=str(_PROJECT_ROOT / ".env"))
+
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
@@ -14,10 +20,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # TrendRadar 项目路径
-TRENDRADAR_BASE_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "nes_data", "trendradar"
-)
+TRENDRADAR_BASE_DIR = str(_PROJECT_ROOT / "nes_data" / "trendradar")
 
 # 设置工作目录，确保加载正确的配置文件
 os.chdir(TRENDRADAR_BASE_DIR)

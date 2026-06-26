@@ -28,3 +28,4 @@ frontend/dist/
 *.tsbuildinfo
 .eslintcache
 logs/web_app.log
+.slim/

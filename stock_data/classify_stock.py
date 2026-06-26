@@ -4,7 +4,9 @@ import os
 import time
 
 # 导入沪深300股票列表
-stock_list_file = r'D:\workplace\codeplace\junkcode\Qdt_test\stock_data\沪深300'
+from pathlib import Path
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+stock_list_file = str(_PROJECT_ROOT / "stock_data" / "沪深300")
 stock_list = os.path.join(stock_list_file, '沪深300成分股列表_cleaned.csv')
 # 读取CSV文件时将股票代码列指定为字符串类型，避免前导零丢失
 df_stock_list = pd.read_csv(stock_list, dtype={'股票代码': str})

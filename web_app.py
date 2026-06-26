@@ -12,14 +12,16 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import os
-import sys
 import traceback
 import logging
 from logging.handlers import RotatingFileHandler
 
-# 添加项目路径
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 加载环境变量
+from src.utils.env import load_env
+load_env()
 
+from src.utils.paths import PROJECT_ROOT, get_logs_dir, get_output_dir, get_web_dir, get_frontend_dist_dir, ensure_dir
+from src.utils.logger import get_logger
 
 from src.factor import get_trendradar_sentiment, get_latest_trendradar_data, get_stock_sector, is_hs300_stock
 from src.utils.validators import (
@@ -36,43 +38,23 @@ def get_backtest_components():
     import backtrader as bt
     return BacktestRunner, global_strategy_manager, Stock, PerformanceAnalyzer, bt
 
-# 设置日志
-def setup_logger():
-    """设置日志记录器"""
-    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
-    os.makedirs(log_dir, exist_ok=True)
-    
-    logger = logging.getLogger("web_app")
-    logger.setLevel(logging.INFO)
-    
-    file_handler = RotatingFileHandler(
-        os.path.join(log_dir, "web_app.log"), 
-        maxBytes=10*1024*1024,  # 10MB
-        backupCount=5,
-        encoding='utf-8'
-    )
-    file_handler.setLevel(logging.INFO)
-    
-    # 创建处理器 - 控制台处理器
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    
-    # 创建格式器 - 不包含敏感信息
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    file_handler.setFormatter(formatter)
-    console_handler.setFormatter(formatter)
-    
-    # 添加处理器到日志记录器
-    if not logger.handlers:
-        logger.addHandler(file_handler)
-        logger.addHandler(console_handler)
-    
-    return logger
+logger = get_logger("web_app")
 
 
-logger = setup_logger()
+def extract_strategy_params(strategy_class, strategy_name: str = "") -> list:
+    """从 backtrader 策略类提取参数列表"""
+    parameters = []
+    if hasattr(strategy_class, 'params'):
+        try:
+            for param_name, default_value in strategy_class.params._getpairs().items():
+                parameters.append({
+                    "name": param_name,
+                    "default": default_value,
+                    "type": type(default_value).__name__
+                })
+        except (AttributeError, TypeError) as e:
+            logger.warning(f"获取策略 {strategy_name} 参数时出错: {e}")
+    return parameters
 
 
 # 预加载策略以提高性能
@@ -109,27 +91,24 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Qdt_test Web Interface", lifespan=lifespan)
 
 # 挂载静态文件和模板
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "web/templates"))
+templates = Jinja2Templates(directory=str(get_web_dir() / "templates"))
 
 # 创建web目录
-web_dir = os.path.join(BASE_DIR, "web")
-os.makedirs(os.path.join(web_dir, "static"), exist_ok=True)
-os.makedirs(os.path.join(web_dir, "templates"), exist_ok=True)
+ensure_dir(get_web_dir() / "static")
+ensure_dir(get_web_dir() / "templates")
 # 创建logs目录
-logs_dir = os.path.join(BASE_DIR, "logs")
-os.makedirs(logs_dir, exist_ok=True)
+ensure_dir(get_logs_dir())
 # 创建output目录用于存储图表
-output_dir = os.path.join(BASE_DIR, "output")
-os.makedirs(output_dir, exist_ok=True)
+output_dir = str(get_output_dir())
+ensure_dir(output_dir)
 
 # 挂载output目录作为静态文件服务
 app.mount("/output", StaticFiles(directory=output_dir), name="output")
 # 挂载web/static作为全站静态资源（CSS/JS/favicon）
-app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "web", "static")), name="static")
+app.mount("/static", StaticFiles(directory=str(get_web_dir() / "static")), name="static")
 
 # Vue3 SPA 构建产物目录（npm run build 后产物在 frontend/dist）
-SPA_DIST_DIR = os.path.join(BASE_DIR, "frontend", "dist")
+SPA_DIST_DIR = str(get_frontend_dist_dir())
 # 挂载 SPA 静态资源（assets 子目录），仅在已构建时挂载
 _spa_assets_dir = os.path.join(SPA_DIST_DIR, "assets")
 if os.path.isdir(_spa_assets_dir):
@@ -417,17 +396,7 @@ async def strategies_list(request: Request):
                 "is_user_strategy": False
             }
             
-            if hasattr(strategy_class, 'params'):
-                try:
-                    for param_name, default_value in strategy_class.params._getpairs().items():
-                        details["parameters"].append({
-                            "name": param_name,
-                            "default": default_value,
-                            "type": type(default_value).__name__
-                        })
-                except (AttributeError, TypeError) as e:
-                    logger.warning(f"获取策略 {name} 参数时出错: {e}")
-                    details["parameters"] = []
+            details["parameters"] = extract_strategy_params(strategy_class, name)
             
             strategy_details.append(details)
         
@@ -655,17 +624,7 @@ async def get_strategy_detail(strategy_name: str):
         if not strategy_class:
             return api_error("策略不存在", 404)
         
-        parameters = []
-        if hasattr(strategy_class, 'params'):
-            try:
-                for param_name, default_value in strategy_class.params._getpairs().items():
-                    parameters.append({
-                        "name": param_name,
-                        "default": default_value,
-                        "type": type(default_value).__name__
-                    })
-            except (AttributeError, TypeError) as e:
-                logger.warning(f"获取策略参数失败: {e}")
+        parameters = extract_strategy_params(strategy_class, strategy_name)
         
         return {
             "name": strategy_name,
