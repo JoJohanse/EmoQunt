@@ -72,7 +72,7 @@ class SentimentAnalyzer:
         # 初始化LLM配置
         self.model = model or DEFAULT_MODEL
         self.base_url = base_url or DEFAULT_BASE_URL
-        self.api_key = api_key or os.environ.get("DASHSCOPE_API_KEY")
+        self.api_key = api_key or os.environ.get("API_KEY")
         self.debug = debug
         
         # 初始化OpenAI客户端

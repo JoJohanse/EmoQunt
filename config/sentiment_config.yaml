@@ -136,10 +136,10 @@ industries:
 
 # LLM配置
 llm_config:
-  model: "Qwen/Qwen3-235B-A22B-Instruct-2507"
-  base_url: "https://api.siliconflow.cn/v1"
+  model: "mimo-v2.5"
+  base_url: "https://token-plan-cn.xiaomimimo.com/v1"
   temperature: 0.75
-  max_tokens: 2048
+  max_tokens: 5120
   timeout: 30
 
 # 缓存配置
