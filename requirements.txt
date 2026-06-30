@@ -119,4 +119,5 @@ webencodings==0.5.1
 xlrd==2.0.2
 xxhash==3.6.0
 yarl==1.22.0
+yfinance==0.2.59
 zstandard==0.25.0

@@ -28,7 +28,7 @@ function sectorColor(sentiment: number): string {
 </script>
 
 <template>
-  <div v-loading="loading">
+  <div v-loading.fullscreen="loading" element-loading-text="正在刷新舆情数据，请稍候...">
     <div class="page-hero">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <div>

@@ -80,6 +80,118 @@ class Stock:
         except Exception:
             return df
 
+    def _fetch_ashare_hist_em(self, start_date: str, end_date: str, adjust_str: str) -> pd.DataFrame:
+        """通过 akshare 东方财富源 (stock_zh_a_hist) 获取 A 股个股日线（回退源1）。
+
+        akshare 官方推荐此接口（数据质量高、访问无限制）。
+        symbol 用纯 6 位代码（不带 sh/sz 前缀），与 stock_zh_a_daily 不同。
+        返回中文列名，这里统一转为小写英文列名，以便复用 get_stock_data 的 rename_map。
+
+        :param start_date: 'YYYYMMDD'
+        :param end_date: 'YYYYMMDD'
+        :param adjust_str: '' 不复权 / 'qfq' 前复权 / 'hfq' 后复权
+        :return: 小写列名 (date/open/high/low/close/volume/amount) DataFrame；失败返回空
+        """
+        try:
+            em_symbol = self.get_code_without_prefix()
+            logger.info(f"akshare 东财源: 获取 {em_symbol} 日线 ({start_date} ~ {end_date}, adjust={adjust_str or 'nfq'})")
+            df = ak.stock_zh_a_hist(
+                symbol=em_symbol,
+                period="daily",
+                start_date=start_date,
+                end_date=end_date,
+                adjust=adjust_str,
+            )
+            if df is None or df.empty:
+                return pd.DataFrame()
+            # 东财源返回中文列名，统一转为小写英文以复用下游 rename_map
+            col_map = {
+                '日期': 'date', '开盘': 'open', '最高': 'high', '最低': 'low',
+                '收盘': 'close', '成交量': 'volume', '成交额': 'amount',
+            }
+            col_map = {k: v for k, v in col_map.items() if k in df.columns}
+            df = df.rename(columns=col_map)
+            return df
+        except Exception as e:
+            logger.warning(f"akshare 东财源获取 {self.stock_code} 失败: {e}")
+            return pd.DataFrame()
+
+    def _fetch_ashare_baostock(self, start_date: str, end_date: str, adjust_str: str) -> pd.DataFrame:
+        """通过 baostock 获取 A 股个股日线（回退源2，独立数据服务器）。
+
+        baostock code 格式 'sh.600000'，日期 'YYYY-MM-DD'，adjustflag 1/2/3（与 akshare 相反）。
+        volume 单位是股（需 /100 转手），数值字段全是字符串（需转 float）。
+
+        :param start_date: 'YYYYMMDD'
+        :param end_date: 'YYYYMMDD'
+        :param adjust_str: '' 不复权 / 'qfq' 前复权 / 'hfq' 后复权
+        :return: 小写列名 (date/open/high/low/close/volume/amount) DataFrame；失败返回空
+        """
+        try:
+            df = _baostock_query(
+                self.stock_code, start_date, end_date, adjust_str,
+                fields="date,open,high,low,close,volume,amount",
+            )
+            if df is None or df.empty:
+                return pd.DataFrame()
+            # baostock volume 单位是股，转为手（与 akshare 一致）
+            for col in ('open', 'high', 'low', 'close', 'volume', 'amount'):
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            if 'volume' in df.columns:
+                df['volume'] = df['volume'] / 100.0
+            return df
+        except Exception as e:
+            logger.warning(f"baostock 获取 {self.stock_code} 失败: {e}")
+            return pd.DataFrame()
+
+    def _fetch_us_stock_yf(self, ticker: str, start_date: str, end_date: str, adjust_str: str) -> pd.DataFrame:
+        """通过 yfinance 获取美股个股日线数据（主数据源）。
+
+        返回小写列名 (date/open/high/low/close/volume) 的 DataFrame，
+        以便与 akshare 返回格式一致，复用 get_stock_data 的列名重命名逻辑。
+
+        :param ticker: 大写美股代码，如 'AAPL'
+        :param start_date: 'YYYYMMDD'
+        :param end_date: 'YYYYMMDD'
+        :param adjust_str: akshare 风格复权标识 ('' 不复权 / 'qfq' 前复权 / 'hfq' 后复权)
+        :return: 小写列名 DataFrame；失败返回空 DataFrame
+        """
+        try:
+            import yfinance as yf
+        except ImportError:
+            logger.warning("yfinance 未安装，跳过 yfinance 数据源")
+            return pd.DataFrame()
+
+        try:
+            yf_start = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:8]}" if start_date else None
+            if end_date:
+                yf_end_dt = pd.to_datetime(end_date, format='%Y%m%d') + pd.Timedelta(days=1)
+                yf_end = yf_end_dt.strftime('%Y-%m-%d')
+            else:
+                yf_end = None
+
+            auto_adjust = adjust_str in ('qfq', 'hfq')
+            logger.info(f"yfinance: 获取 {ticker} 日线 ({yf_start} ~ {yf_end}, auto_adjust={auto_adjust})")
+            df = yf.Ticker(ticker).history(
+                start=yf_start, end=yf_end,
+                interval='1d', auto_adjust=auto_adjust,
+                actions=False, raise_errors=True,
+            )
+
+            if df is None or df.empty:
+                return pd.DataFrame()
+
+            df = df.reset_index()
+            date_col = 'Date' if 'Date' in df.columns else df.columns[0]
+            df[date_col] = pd.to_datetime(df[date_col]).dt.tz_localize(None)
+            df.columns = df.columns.str.lower()
+
+            return df
+        except Exception as e:
+            logger.warning(f"yfinance 获取 {ticker} 失败: {e}")
+            return pd.DataFrame()
+
     def get_stock_name(self):
         """
         先查找本地股票数据文件， 若不存在则使用akshare获取
@@ -148,17 +260,37 @@ class Stock:
                         end_date = datetime.now().strftime('%Y%m%d')
                     print(f"正在获取{self.stock_code}的历史数据（日线），日期范围: {start_date}至{end_date}")
                     if self.market == 'us':
-                        # 美股（新浪源）：stock_us_daily 不支持 start/end 参数，需本地过滤
                         ticker = self.get_code_without_prefix()
-                        stock_data = ak.stock_us_daily(symbol=ticker, adjust=adjust_map[adjust])
-                        stock_data = self._filter_us_daily_by_date(stock_data, start_date, end_date)
+                        # 优先 yfinance（支持 start/end，更可靠），失败回退 akshare 新浪源
+                        try:
+                            stock_data = self._fetch_us_stock_yf(ticker, start_date, end_date, adjust_map[adjust])
+                        except Exception as e:
+                            logger.warning(f"yfinance 个股获取异常，准备回退: {e}")
+                            stock_data = pd.DataFrame()
+                        if stock_data is None or stock_data.empty:
+                            logger.warning("yfinance 返回空数据，回退到 akshare stock_us_daily（新浪源）")
+                            stock_data = ak.stock_us_daily(symbol=ticker, adjust=adjust_map[adjust])
+                            stock_data = self._filter_us_daily_by_date(stock_data, start_date, end_date)
                     else:
-                        stock_data = ak.stock_zh_a_daily(
-                            symbol=self.stock_code,
-                            start_date=start_date,
-                            end_date=end_date,
-                            adjust=adjust_map[adjust]
-                        )
+                        # A股三级回退：新浪源 → 东财源 → baostock
+                        try:
+                            stock_data = ak.stock_zh_a_daily(
+                                symbol=self.stock_code,
+                                start_date=start_date,
+                                end_date=end_date,
+                                adjust=adjust_map[adjust]
+                            )
+                        except Exception as e:
+                            logger.warning(f"akshare 新浪源获取 {self.stock_code} 失败: {e}，回退到东财源")
+                            stock_data = pd.DataFrame()
+
+                        if stock_data is None or stock_data.empty:
+                            logger.warning("新浪源返回空数据，回退到 akshare stock_zh_a_hist（东财源）")
+                            stock_data = self._fetch_ashare_hist_em(start_date, end_date, adjust_map[adjust])
+
+                        if stock_data is None or stock_data.empty:
+                            logger.warning("东财源返回空数据，回退到 baostock")
+                            stock_data = self._fetch_ashare_baostock(start_date, end_date, adjust_map[adjust])
                 elif type == 'minute':
                     # 获取分钟级数据（仅 A 股支持）
                     if self.market == 'us':
@@ -358,6 +490,131 @@ US_INDEX_SYMBOLS = {
     'NASDAQ100': '.NDX',    # 纳斯达克100
 }
 
+# yfinance 美股指数代码（Yahoo Finance 用 ^ 前缀）
+US_INDEX_YF_SYMBOLS = {
+    'SP500': '^GSPC',       # 标普500
+    'NASDAQ': '^IXIC',      # 纳斯达克综合
+    'DOWJONES': '^DJI',     # 道琼斯工业
+    'NASDAQ100': '^NDX',    # 纳斯达克100
+}
+
+
+# ---------------------------------------------------------------------------
+# baostock 会话管理（A 股回退源2）
+# ---------------------------------------------------------------------------
+# baostock adjustflag 与 akshare adjust 字符串的映射（含义相反！）
+# akshare: '' 不复权 / 'qfq' 前复权 / 'hfq' 后复权
+# baostock: '3' 不复权 / '2' 前复权 / '1' 后复权
+BAOSTOCK_ADJUST_MAP = {'nfq': '3', '': '3', 'qfq': '2', 'hfq': '1'}
+
+
+class _BaoStockSession:
+    """baostock 单例会话：自动重登 + 查询计数 + 指数退避重试。
+
+    baostock 单次登录约 200 次查询后随机失败，30 分钟无请求自动断开。
+    本封装在查询失败或计数超限时自动重登，并对每次查询做指数退避重试。
+    """
+
+    def __init__(self):
+        self._logged_in = False
+        self._query_count = 0
+        self._max_per_session = 200
+
+    def _ensure_login(self):
+        import baostock as bs
+        if self._logged_in and self._query_count < self._max_per_session:
+            return
+        if self._logged_in:
+            try:
+                bs.logout()
+            except Exception:
+                pass
+            self._logged_in = False
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()):
+            lg = bs.login()
+        if lg.error_code != '0':
+            raise ConnectionError(f"baostock 登录失败: {lg.error_msg}")
+        self._logged_in = True
+        self._query_count = 0
+        logger.info("baostock 登录成功")
+
+    def query(self, bs_code, fields, start_date, end_date, adjustflag="3"):
+        """带重试的查询。返回 DataFrame（列名来自 rs.fields），失败抛异常。
+
+        :param bs_code: 'sh.600000' / 'sz.000001' / 'sh.000300'（指数）
+        :param fields: 逗号分隔字段串，如 "date,open,high,low,close,volume,amount"
+        :param start_date: 'YYYY-MM-DD'
+        :param end_date: 'YYYY-MM-DD'
+        :param adjustflag: '1' 后复权 / '2' 前复权 / '3' 不复权
+        """
+        import time
+        import baostock as bs
+        last_err = None
+        for attempt in range(3):
+            try:
+                self._ensure_login()
+                import contextlib, io
+                with contextlib.redirect_stdout(io.StringIO()):
+                    rs = bs.query_history_k_data_plus(
+                        bs_code, fields,
+                        start_date=start_date, end_date=end_date,
+                        frequency="d", adjustflag=adjustflag,
+                    )
+                if rs.error_code == '0':
+                    data = []
+                    while rs.next():
+                        data.append(rs.get_row_data())
+                    self._query_count += 1
+                    time.sleep(0.3)
+                    return pd.DataFrame(data, columns=rs.fields)
+                last_err = rs.error_msg
+            except Exception as e:
+                last_err = str(e)
+            time.sleep(2 ** attempt)
+            self._logged_in = False  # 失败 → 下次重登
+        raise RuntimeError(f"baostock 重试失败: {last_err}")
+
+    def logout(self):
+        if not self._logged_in:
+            return
+        try:
+            import baostock as bs
+            bs.logout()
+        except Exception:
+            pass
+        self._logged_in = False
+
+
+_bs_session = _BaoStockSession()
+
+
+def _to_baostock_code(code_with_prefix: str) -> str:
+    """akshare 风格 'sh600000' / 'sz000001' → baostock 风格 'sh.600000' / 'sz.000001'。"""
+    s = str(code_with_prefix)
+    pfx = s[:2].lower()
+    if pfx in ('sh', 'sz', 'bj'):
+        return f"{pfx}.{s[2:]}"
+    return s
+
+
+def _baostock_query(code_with_prefix: str, start_date: str, end_date: str,
+                    adjust_str: str, fields: str = "date,open,high,low,close,volume,amount") -> pd.DataFrame:
+    """baostock 查询封装（个股/指数通用）。
+
+    :param code_with_prefix: 'sh600000' / 'sz000001' / 'sh000300'（指数）
+    :param start_date: 'YYYYMMDD'（自动转为 'YYYY-MM-DD'）
+    :param end_date: 'YYYYMMDD'
+    :param adjust_str: '' / 'qfq' / 'hfq'（akshare 风格，自动映射 baostock adjustflag）
+    :param fields: 逗号分隔字段串
+    :return: DataFrame；失败抛异常（由调用方 try/except）
+    """
+    bs_code = _to_baostock_code(code_with_prefix)
+    bs_start = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:8]}" if start_date else None
+    bs_end = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:8]}" if end_date else None
+    adjustflag = BAOSTOCK_ADJUST_MAP.get(adjust_str, '3')
+    return _bs_session.query(bs_code, fields, bs_start, bs_end, adjustflag=adjustflag)
+
 
 def get_index_data(index_code: str = '000300', start_date: str = '', end_date: str = '',
                    market: str = 'zh_a') -> pd.DataFrame:
@@ -385,13 +642,51 @@ def get_index_data(index_code: str = '000300', start_date: str = '', end_date: s
             symbol = ('sh' if str(index_code).startswith('6') else 'sz') + str(index_code)
 
         print(f"正在获取指数 {index_code} 的日线数据，日期范围: {start_date} 至 {end_date}")
-        df = ak.stock_zh_index_daily(symbol=symbol)
+
+        # A股指数三级回退：新浪源 → 东财源 → baostock
+        # 1) 新浪源（不支持 start/end，需本地过滤）
+        try:
+            df = ak.stock_zh_index_daily(symbol=symbol)
+        except Exception as e:
+            logger.warning(f"akshare 新浪指数源获取 {index_code} 失败: {e}，回退到东财源")
+            df = pd.DataFrame()
+
+        # 2) 东财源（支持 start/end，更精确）
+        if df is None or df.empty:
+            logger.warning("新浪指数源返回空数据，回退到 akshare stock_zh_index_daily_em（东财源）")
+            try:
+                df = ak.stock_zh_index_daily_em(
+                    symbol=symbol,
+                    start_date=start_date or '19900101',
+                    end_date=end_date or '20500101',
+                )
+            except Exception as e:
+                logger.warning(f"akshare 东财指数源获取 {index_code} 失败: {e}，回退到 baostock")
+                df = pd.DataFrame()
+
+        # 3) baostock（独立服务器，指数用不复权）
+        if df is None or df.empty:
+            logger.warning("东财指数源返回空数据，回退到 baostock")
+            try:
+                df = _baostock_query(
+                    symbol, start_date, end_date, adjust_str='',
+                    fields="date,open,high,low,close,volume,amount",
+                )
+                if df is not None and not df.empty:
+                    for col in ('open', 'high', 'low', 'close', 'volume', 'amount'):
+                        if col in df.columns:
+                            df[col] = pd.to_numeric(df[col], errors='coerce')
+                    if 'volume' in df.columns:
+                        df['volume'] = df['volume'] / 100.0  # 股 → 手
+            except Exception as e:
+                logger.warning(f"baostock 指数获取 {index_code} 失败: {e}")
+                df = pd.DataFrame()
 
         if df is None or df.empty:
-            print(f"指数 {index_code} 返回空数据")
+            print(f"指数 {index_code} 所有数据源均返回空数据")
             return pd.DataFrame()
 
-        # stock_zh_index_daily 通常含列: date, open, high, low, close, volume, amount
+        # 统一列名重命名（三条路径都返回小写英文列名）
         rename_map = {
             'date': '时间', 'open': '开盘', 'high': '最高',
             'low': '最低', 'close': '收盘', 'volume': '成交量', 'amount': '成交额',
@@ -399,7 +694,7 @@ def get_index_data(index_code: str = '000300', start_date: str = '', end_date: s
         rename_map = {k: v for k, v in rename_map.items() if k in df.columns}
         df = df.rename(columns=rename_map)
 
-        # 按日期过滤（akshare 的 stock_zh_index_daily 不接受 start/end，需本地过滤）
+        # 本地日期过滤（新浪源不支持 start/end；东财/baostock 已过滤，但统一过滤确保一致）
         if '时间' in df.columns:
             df['时间'] = pd.to_datetime(df['时间'])
             if start_date:
@@ -416,12 +711,63 @@ def get_index_data(index_code: str = '000300', start_date: str = '', end_date: s
         return pd.DataFrame()
 
 
+def _fetch_us_index_yf(index_code: str = 'SP500', start_date: str = '', end_date: str = '') -> pd.DataFrame:
+    """通过 yfinance 获取美股指数日线数据（主数据源）。
+
+    返回小写列名 (date/open/high/low/close/volume) 的 DataFrame，
+    以便与 akshare 返回格式一致，复用 get_us_index_data 的列名重命名逻辑。
+
+    :param index_code: US_INDEX_YF_SYMBOLS 的键（如 'SP500'），也接受 Yahoo 原始代码（如 '^GSPC'）
+    :param start_date: 'YYYYMMDD'
+    :param end_date: 'YYYYMMDD'
+    :return: 小写列名 DataFrame；失败返回空 DataFrame
+    """
+    try:
+        import yfinance as yf
+    except ImportError:
+        logger.warning("yfinance 未安装，跳过 yfinance 指数数据源")
+        return pd.DataFrame()
+
+    try:
+        symbol = US_INDEX_YF_SYMBOLS.get(str(index_code).upper(), index_code)
+        yf_start = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:8]}" if start_date else None
+        if end_date:
+            yf_end_dt = pd.to_datetime(end_date, format='%Y%m%d') + pd.Timedelta(days=1)
+            yf_end = yf_end_dt.strftime('%Y-%m-%d')
+        else:
+            yf_end = None
+
+        logger.info(f"yfinance: 获取指数 {symbol} 日线 ({yf_start} ~ {yf_end})")
+        df = yf.Ticker(symbol).history(
+            start=yf_start, end=yf_end,
+            interval='1d', auto_adjust=False,
+            actions=False, raise_errors=True,
+        )
+
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        df = df.reset_index()
+        date_col = 'Date' if 'Date' in df.columns else df.columns[0]
+        df[date_col] = pd.to_datetime(df[date_col]).dt.tz_localize(None)
+        df.columns = df.columns.str.lower()
+
+        return df
+    except Exception as e:
+        logger.warning(f"yfinance 获取指数 {index_code} 失败: {e}")
+        return pd.DataFrame()
+
+
 def get_us_index_data(index_code: str = 'SP500', start_date: str = '', end_date: str = '') -> pd.DataFrame:
     """
-    获取美股指数日线数据（新浪源），用于美股回测基准。
+    获取美股指数日线数据，用于美股回测基准。
 
-    :param index_code: US_INDEX_SYMBOLS 的键，默认 'SP500'（标普500）。
-                       也接受新浪点前缀代码本身（如 '.INX'）。
+    优先使用 yfinance（Yahoo Finance，免费免 key、支持 start/end），
+    失败回退 akshare 新浪源（index_us_stock_sina，不支持 start/end 需本地过滤）。
+    两条路径均返回统一中文列名（时间/开盘/最高/最低/收盘/成交量/成交额）。
+
+    :param index_code: US_INDEX_SYMBOLS / US_INDEX_YF_SYMBOLS 的键，默认 'SP500'（标普500）。
+                       也接受新浪代码（'.INX'）或 Yahoo 代码（'^GSPC'）。
     :param start_date: 开始日期 'YYYYMMDD'
     :param end_date: 结束日期 'YYYYMMDD'，默认今天
     :return: 与 get_index_data 列名一致的 DataFrame。失败时返回空 DataFrame。
@@ -430,31 +776,42 @@ def get_us_index_data(index_code: str = 'SP500', start_date: str = '', end_date:
         if not end_date:
             end_date = datetime.now().strftime('%Y%m%d')
 
-        # 支持 US_INDEX_SYMBOLS 的键 或 直接的新浪代码（.INX 等）
-        symbol = US_INDEX_SYMBOLS.get(str(index_code).upper(), index_code)
-
         print(f"正在获取美股指数 {index_code} 的日线数据，日期范围: {start_date} 至 {end_date}")
-        df = ak.index_us_stock_sina(symbol=symbol)
+
+        # 优先 yfinance（返回小写列名，已按 start/end 过滤）
+        try:
+            df = _fetch_us_index_yf(index_code, start_date, end_date)
+        except Exception as e:
+            logger.warning(f"yfinance 指数获取异常，准备回退: {e}")
+            df = pd.DataFrame()
 
         if df is None or df.empty:
-            print(f"美股指数 {index_code} 返回空数据")
+            # 回退 akshare 新浪源（不支持 start/end，需本地过滤）
+            logger.warning("yfinance 指数数据为空，回退到 akshare index_us_stock_sina（新浪源）")
+            symbol = US_INDEX_SYMBOLS.get(str(index_code).upper(), index_code)
+            df = ak.index_us_stock_sina(symbol=symbol)
+            if df is None or df.empty:
+                print(f"美股指数 {index_code} 返回空数据")
+                return pd.DataFrame()
+            # 本地日期过滤（小写 date 列）
+            if 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date'])
+                if start_date:
+                    df = df[df['date'] >= pd.to_datetime(start_date)]
+                if end_date:
+                    df = df[df['date'] <= pd.to_datetime(end_date)]
+                df = df.sort_values('date').reset_index(drop=True)
+
+        if df is None or df.empty:
             return pd.DataFrame()
 
+        # 统一列名重命名（两条路径都返回小写列名）
         rename_map = {
             'date': '时间', 'open': '开盘', 'high': '最高',
             'low': '最低', 'close': '收盘', 'volume': '成交量', 'amount': '成交额',
         }
         rename_map = {k: v for k, v in rename_map.items() if k in df.columns}
         df = df.rename(columns=rename_map)
-
-        # 本地日期过滤
-        if '时间' in df.columns:
-            df['时间'] = pd.to_datetime(df['时间'])
-            if start_date:
-                df = df[df['时间'] >= pd.to_datetime(start_date)]
-            if end_date:
-                df = df[df['时间'] <= pd.to_datetime(end_date)]
-            df = df.sort_values('时间').reset_index(drop=True)
 
         print(f"成功获取美股指数数据，数据行数: {len(df)}")
         return df

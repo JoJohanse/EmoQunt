@@ -269,6 +269,7 @@
     }
 
     function editStrategy(name) {
+        showLoading('正在加载策略信息...');
         fetch(`/api/strategies/detail/${name}`)
             .then(res => res.json())
             .then(data => {
@@ -313,7 +314,8 @@
             .catch(err => {
                 console.error(err);
                 alert('获取策略信息失败');
-            });
+            })
+            .finally(() => { hideLoading(); });
     }
 
     function viewStrategy(name) {
@@ -330,6 +332,7 @@
         if (!name) { alert('策略名称不能为空'); return; }
         if (!template) { alert('请选择策略模板'); return; }
 
+        showLoading('正在创建策略...');
         fetch('/api/strategies/create_from_template', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -340,7 +343,8 @@
             if (data.success) { strategyModal.hide(); location.reload(); }
             else { alert(data.error || '创建失败'); }
         })
-        .catch(err => { console.error(err); alert('创建失败'); });
+        .catch(err => { console.error(err); alert('创建失败'); })
+        .finally(() => { hideLoading(); });
     }
 
     function saveStrategy() {
@@ -370,6 +374,7 @@
         if (originalName) { url = `/api/strategies/${originalName}`; method = 'PUT'; }
         else { url = '/api/strategies/create_new'; method = 'POST'; }
 
+        showLoading('正在保存策略...');
         fetch(url, {
             method: method,
             headers: {'Content-Type': 'application/json'},
@@ -380,18 +385,21 @@
             if (data.success) { strategyModal.hide(); location.reload(); }
             else { alert(data.error || '保存失败'); }
         })
-        .catch(err => { console.error(err); alert('保存失败'); });
+        .catch(err => { console.error(err); alert('保存失败'); })
+        .finally(() => { hideLoading(); });
     }
 
     function deleteStrategy(name) {
         if (!confirm(`确定要删除策略 "${name}" 吗？此操作不可恢复。`)) return;
+        showLoading('正在删除策略...');
         fetch(`/api/strategies/${name}`, { method: 'DELETE' })
         .then(res => res.json())
         .then(result => {
             if (result.error) { alert(result.error); }
             else { alert('策略删除成功'); location.reload(); }
         })
-        .catch(err => { console.error(err); alert('删除失败'); });
+        .catch(err => { console.error(err); alert('删除失败'); })
+        .finally(() => { hideLoading(); });
     }
 </script>
 {% endblock %}

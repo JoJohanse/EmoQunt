@@ -191,7 +191,7 @@ const returnsOption = computed(() => {
 </script>
 
 <template>
-  <div>
+  <div v-loading.fullscreen="loading" element-loading-text="正在运行回测，请稍候...">
     <div class="page-hero">
       <h1><el-icon><TrendCharts /></el-icon> 策略回测</h1>
       <p class="subtitle">选择市场、策略与标的，运行回测查看动态绩效图表（Alpha/Beta、回撤、日收益）</p>

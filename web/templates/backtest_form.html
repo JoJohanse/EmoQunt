@@ -167,5 +167,11 @@
     const checked = document.querySelector('input[name="market"]:checked');
     if (checked) applyMarket(checked.value);
 })();
+
+document.getElementById('backtestForm').addEventListener('submit', function() {
+    const btn = this.querySelector('button[type="submit"]');
+    if (btn) { btn.disabled = true; }
+    showLoading('正在运行回测，请稍候...');
+});
 </script>
 {% endblock %}

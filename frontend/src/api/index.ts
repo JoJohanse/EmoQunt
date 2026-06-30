@@ -3,6 +3,7 @@ import type {
   BacktestRequest,
   BacktestResult,
   DailyRecommendData,
+  KlineData,
   SentimentData,
   StrategyDetail,
 } from './types'
@@ -67,6 +68,15 @@ export const strategyApi = {
 export const backtestApi = {
   run(params: BacktestRequest): Promise<BacktestResult> {
     return http.post('/backtest/run', params).then((r) => r.data)
+  },
+}
+
+/** K 线 API（首页看板蜡烛图） */
+export const klineApi = {
+  get(stock_code: string, market: 'zh_a' | 'us' = 'zh_a', days = 180): Promise<KlineData> {
+    return http
+      .get('/kline', { params: { stock_code, market, days } })
+      .then((r) => r.data)
   },
 }
 

@@ -101,3 +101,21 @@ export interface DailyRecommendData {
   top_sectors: SectorScore[]
   recommendations: RecommendedStock[]
 }
+
+/** K 线 OHLCV 数据（首页看板蜡烛图） */
+export interface KlineData {
+  code: string
+  market: Market
+  name: string
+  dates: string[]
+  /** ECharts 蜡烛图格式：[open, close, low, high] */
+  ohlcv: [number, number, number, number][]
+  volumes: number[]
+}
+
+/** 看板可选标的（预设） */
+export interface WatchTarget {
+  code: string
+  market: Market
+  name: string
+}

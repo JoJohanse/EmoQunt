@@ -127,4 +127,23 @@
     </div>
 </div>
 {% endif %}
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const refreshBtn = document.querySelector('a[href="/refresh_sentiment"]');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', function() {
+            showLoading('正在刷新舆情数据...');
+        });
+    }
+    const analyzeForm = document.querySelector('form[action="/analyze_sentiment"]');
+    if (analyzeForm) {
+        analyzeForm.addEventListener('submit', function() {
+            const btn = this.querySelector('button[type="submit"]');
+            if (btn) { btn.disabled = true; }
+            showLoading('正在分析舆情...');
+        });
+    }
+});
+</script>
 {% endblock %}

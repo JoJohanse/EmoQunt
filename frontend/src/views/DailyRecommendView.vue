@@ -33,7 +33,7 @@ function scoreType(score: number): string {
 </script>
 
 <template>
-  <div v-loading="loading">
+  <div v-loading.fullscreen="loading" element-loading-text="正在刷新推荐，请稍候...">
     <div class="page-hero">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <div>

@@ -102,4 +102,15 @@
         </div>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const refreshBtn = document.querySelector('a[href="/refresh_recommend"]');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', function() {
+            showLoading('正在刷新推荐...');
+        });
+    }
+});
+</script>
 {% endblock %}

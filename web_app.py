@@ -550,6 +550,65 @@ async def run_backtest_api(request: Request):
         return JSONResponse({"error": f"回测失败: {e}"}, status_code=500)
 
 
+@app.get("/api/kline")
+async def get_kline_api(
+    stock_code: str,
+    market: str = "zh_a",
+    days: int = 180,
+):
+    """API接口：获取标的 K 线 OHLCV 数据（JSON，供首页看板 ECharts 蜡烛图）"""
+    try:
+        from datetime import datetime, timedelta
+        from src.data import Stock
+        if market not in ("zh_a", "us"):
+            market = "zh_a"
+        days = max(30, min(int(days), 730))
+        end_date = datetime.now().strftime('%Y%m%d')
+        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y%m%d')
+        # 校验股票代码
+        valid, error = validate_stock_code(stock_code, market=market)
+        if not valid:
+            return JSONResponse({"error": error}, status_code=400)
+
+        stock = Stock(stock_code, market=market)
+        df, _ = stock.get_stock_data(
+            start_date=start_date, end_date=end_date,
+            adjust='qfq' if market == 'us' else 'hfq', type='daily',
+        )
+        if df is None or df.empty:
+            return {"code": stock_code, "market": market, "name": "",
+                    "dates": [], "ohlcv": [], "volumes": []}
+        # 中文列名 -> OHLCV
+        col_map = {'时间': 'date', '开盘': 'open', '最高': 'high',
+                   '最低': 'low', '收盘': 'close', '成交量': 'volume'}
+        df = df.rename(columns=col_map)
+        for c in ('open', 'high', 'low', 'close', 'volume'):
+            if c in df.columns:
+                df[c] = df[c].astype(float)
+        # 排序并取最近 days 个交易日
+        df = df.sort_values('date').tail(days).reset_index(drop=True)
+        dates = df['date'].astype(str).tolist()
+        # ECharts 蜡烛图：[open, close, low, high]
+        ohlcv = df[['open', 'close', 'low', 'high']].values.tolist()
+        volumes = df['volume'].tolist() if 'volume' in df.columns else []
+        name = ''
+        try:
+            name = stock.get_stock_name() or ''
+        except Exception:
+            pass
+        return {
+            "code": stock_code,
+            "market": market,
+            "name": name,
+            "dates": dates,
+            "ohlcv": ohlcv,
+            "volumes": volumes,
+        }
+    except Exception as e:
+        logger.error(f"获取K线数据失败: {e}")
+        return JSONResponse({"error": f"获取K线数据失败: {e}"}, status_code=500)
+
+
 @app.get("/api/sentiment/data")
 async def get_sentiment_data_api():
     """API接口：获取舆情数据（JSON，供 Vue3 前端）"""
