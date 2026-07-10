@@ -3,9 +3,9 @@ from .backtest_manager import (
     PerformanceAnalyzer,
     AShareCommInfo,
     USStockCommInfo,
-    run_simple_backtest,
-    calculate_metrics_from_cerebro,
     calculate_strategy_metrics,
+    run_backtest_with_charts,
+    run_backtest_json,
 )
 
 __all__ = [
@@ -13,7 +13,7 @@ __all__ = [
     'PerformanceAnalyzer',
     'AShareCommInfo',
     'USStockCommInfo',
-    'run_simple_backtest',
-    'calculate_metrics_from_cerebro',
     'calculate_strategy_metrics',
+    'run_backtest_with_charts',
+    'run_backtest_json',
 ]

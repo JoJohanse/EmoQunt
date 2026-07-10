@@ -91,3 +91,16 @@ npm run build    # 类型检查 + 生产构建，产物输出到 frontend/dist/
 | `/api/sentiment/data` | GET | 舆情数据 |
 | `/api/daily-recommend` | GET | 每日推荐 |
 | `/api/daily-recommend/refresh` | GET | 刷新推荐 |
+| `/api/kline` | GET | K线 OHLCV（首页看板蜡烛图） |
+| `/api/agent/chat` | POST | AI 助手对话（SSE 流式） |
+| `/api/agent/chat/sync` | POST | AI 助手对话（非流式） |
+
+## AI 投资助手
+
+全局对话面板（`AppLayout` 右侧抽屉，所有页面可用），基于 LangGraph ReAct agent：
+- **工具**：行情查询、运行回测、舆情情绪、个股信号、每日推荐、策略列表（7 个，复用 EmoQunt 数据层）
+- **流式**：SSE 推送 token 增量与工具调用事件，前端 `fetch + ReadableStream` 解析
+- **Markdown 渲染**：`markdown-it`，助手回复支持表格/列表/代码块
+- **LLM 配置**：独立 `AGENT_*` 环境变量（回退到 `API_KEY/LLM_BASE_URL`），与情绪分析分离
+
+文件：`src/api/chat.ts`（SSE 客户端）、`src/stores/chat.ts`（Pinia 会话状态）、`src/components/ChatPanel.vue`（对话面板）。

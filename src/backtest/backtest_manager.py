@@ -24,6 +24,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.Strategy import Strategy, global_strategy_manager
 from src.data.data_manager import Stock
+from src.data.columns import DATE, OPEN, HIGH, LOW, CLOSE, VOLUME
 
 class PerformanceAnalyzer:
     """
@@ -460,11 +461,11 @@ class BacktestRunner:
         data_feed = bt.feeds.PandasData(
             dataname=data,
             name=stock_code,
-            open='开盘',
-            high='最高',
-            low='最低',
-            close='收盘',
-            volume='成交量',
+            open=OPEN,
+            high=HIGH,
+            low=LOW,
+            close=CLOSE,
+            volume=VOLUME,
             openinterest=-1
         )
         
@@ -636,19 +637,7 @@ class BacktestRunner:
                 print(f"{metric}: {value}")
         
         return report
-    
-    def plot_results(self):
-        """
-        绘制回测结果图表
-        """
-        returns = self.get_strategy_returns()
-        if returns.empty:
-            print("无法获取收益率数据，跳过绘图")
-            return
-        
-        analyzer = PerformanceAnalyzer(returns)
-        analyzer.plot_performance()
-    
+
     def run_multiple_strategies(
         self, 
         strategies_config: List[Dict],
@@ -681,26 +670,18 @@ class BacktestRunner:
                 df = pd.read_csv(data_feed)
                 df['date'] = pd.to_datetime(df['date'])
                 df.set_index('date', inplace=True)
-                
+
                 data_feed_bt = bt.feeds.PandasData(
                     dataname=df,
-                    open='开盘',
-                    high='最高',
-                    low='最低',
-                    close='收盘',
-                    volume='成交量',
-                    openinterest=-1
+                    open=OPEN, high=HIGH, low=LOW, close=CLOSE,
+                    volume=VOLUME, openinterest=-1,
                 )
             else:
                 # 假设是DataFrame
                 data_feed_bt = bt.feeds.PandasData(
                     dataname=data_feed,
-                    open='开盘',
-                    high='最高',
-                    low='最低',
-                    close='收盘',
-                    volume='成交量',
-                    openinterest=-1
+                    open=OPEN, high=HIGH, low=LOW, close=CLOSE,
+                    volume=VOLUME, openinterest=-1,
                 )
             
             cerebro.adddata(data_feed_bt)
@@ -727,130 +708,9 @@ class BacktestRunner:
             
             results[strategy_name] = returns
             print(f"{strategy_name} 回测完成，最终资金: {cerebro.broker.getvalue():,.2f}")
-        
+
         return results
-    
-    def rebalance_portfolio(self, rebalance_freq: str = 'M', weights: Dict[str, float] = None):
-        """
-        组合调仓逻辑
-        :param rebalance_freq: 调仓频率 ('D'-日, 'W'-周, 'M'-月, 'Q'-季)
-        :param weights: 权重字典
-        """
-        self.rebalance_frequency = rebalance_freq
-        self.target_weights = weights or {}
-        print(f"设置调仓频率: {rebalance_freq}, 目标权重: {weights}")
-    
-    def add_risk_management(self, max_position_size: float = 0.1, stop_loss_pct: float = 0.05):
-        """
-        添加风险管理
-        :param max_position_size: 最大持仓比例
-        :param stop_loss_pct: 止损比例
-        """
-        self.max_position_size = max_position_size
-        self.stop_loss_pct = stop_loss_pct
-        print(f"设置风险管理: 最大持仓比例 {max_position_size:.1%}, 止损比例 {stop_loss_pct:.1%}")
 
-
-def run_simple_backtest(
-    strategy_name: str,
-    csv_path: str,
-    start_date: str,
-    end_date: str,
-    initial_cash: float = 100000.0,
-    **strategy_params
-):
-    """
-    运行简单的单策略回测
-    :param strategy_name: 策略名称
-    :param csv_path: CSV数据路径
-    :param start_date: 开始日期
-    :param end_date: 结束日期
-    :param initial_cash: 初始资金
-    :param strategy_params: 策略参数
-    :return: 回测结果和绩效报告
-    """
-    runner = BacktestRunner()
-    
-    # 添加数据
-    runner.add_data_from_csv(csv_path)
-    
-    # 设置资金
-    runner.set_initial_capital(initial_cash)
-    
-    # 设置佣金
-    runner.set_commission()
-    
-    # 添加分析器
-    runner.add_analyzers()
-    
-    # 添加策略
-    runner.add_strategy(strategy_name, **strategy_params)
-    
-    # 运行回测
-    results = runner.run_backtest()
-    
-    # 分析绩效
-    report = runner.analyze_performance()
-    
-    # 绘制结果
-    runner.plot_results()
-    
-    return results, report
-
-def calculate_metrics_from_cerebro(cerebro) -> Dict:
-    """
-    从 backtrader 的 cerebro 对象中提取绩效指标
-    :param cerebro: backtrader.Cerebro 对象
-    :return: 绩效指标字典
-    """
-    # 获取策略的交易记录
-    strat = cerebro.runstrats[0][0]  # 获取第一个策略实例
-    
-    # 计算每日净值变化
-    if hasattr(strat, 'analyzers') and len(strat.analyzers) > 0:
-        # 如果策略中有分析器，尝试从中提取数据
-        analyzer_names = []
-        for name, analyzer in strat.analyzers._names.items():
-            analyzer_names.append(name)
-    
-    # 从 broker 获取资产价值历史
-    if hasattr(strat, 'broker'):
-        # 获取资产价值历史
-        value_history = []
-        for i in range(len(strat.broker.getvalue_history())):
-            value_history.append(strat.broker.getvalue_history()[i])
-    
-    # 从策略的 trade_records 获取交易记录
-    if hasattr(strat, 'trade_record_manager') and hasattr(strat.trade_record_manager, 'trade_records'):
-        trade_df = strat.trade_record_manager.transform_to_dataframe()
-        if not trade_df.empty:
-            # 计算基于交易记录的指标
-            total_return = (trade_df['total_amount'] * (1 if trade_df['action'].iloc[0] == 'S' else -1)).sum()
-    
-    # 由于 backtrader 的内部结构较复杂，这里提供一个通用的计算方法
-    # 通常我们会使用 backtrader 的内置分析器
-    try:
-        # 使用 backtrader 的分析器
-        from backtrader import analyzers
-        
-        # 如果 cerebro 中有分析器，提取数据
-        if hasattr(cerebro, '_alines') and cerebro._alines:
-            # 这里需要根据实际的分析器类型来提取数据
-            pass
-        
-        # 一般情况下，我们会重新运行 cerebro 并添加分析器
-        # 这里返回一个示例结构
-        return {
-            '总收益率': 0.0,
-            '年化收益率': 0.0,
-            '夏普比率': 0.0,
-            '最大回撤': 0.0,
-            '胜率': 0.0,
-            '盈亏比': 0.0
-        }
-    except Exception as e:
-        print(f"从 cerebro 提取数据时出错: {e}")
-        return {}
 
 def calculate_strategy_metrics(
     portfolio_values: pd.Series,
@@ -919,60 +779,39 @@ def calculate_strategy_metrics(
         }
 
 
-def run_backtest_with_charts(
+def _run_backtest_core(
     strategy_name: str,
     stock_code: str,
     start_date: str,
     end_date: str,
     initial_capital: float = 100000.0,
     commission_rate: float = 0.0003,
-    output_dir: str = "output",
     benchmark_index: str = "000300",
-    use_ashare_costs: bool = True,
     slippage_rate: float = 0.0005,
-    apply_sentiment_filter: bool = True,
     market: str = "zh_a",
+    apply_sentiment_filter: bool = True,
 ) -> Dict:
-    """
-    运行回测并生成图表。
+    """回测核心流水线（深模块）：装配→数据→策略→回测→指标→基准。
 
-    相对旧实现的改进：
-      1. 修复策略参数被忽略（value/default 键不匹配）——改用 build_param_dict。
-      2. 移除净值曲线的伪造填充/截断，直接用 timereturn 真实日收益率序列。
-      3. 胜率改为按平仓交易（tradeanalyzer.won/lost）计算，而非按盈利日。
-      4. 接入 A 股真实交易成本（佣金+印花税+过户费）与滑点。
-      5. 获取指数基准，计算 Alpha/Beta/信息比率，并绘制基准曲线。
-      6. 若启用情绪过滤，加载历史快照并传入策略（避免未来函数）。
-      7. 支持 market='us' 美股回测（Sina 数据源 + 仅佣金成本 + 标普500 基准）。
+    统一了原 run_backtest_with_charts 与 run_backtest_json 共享的 8 段流水线。
+    两个入口函数变为输出适配器：with_charts 生成 PNG，json 返回时序数组。
 
-    Args:
-        strategy_name: 策略名称
-        stock_code: 股票代码（A股6位数字；美股字母代码如 AAPL）
-        start_date: 开始日期 (YYYY-MM-DD)
-        end_date: 结束日期 (YYYY-MM-DD)
-        initial_capital: 初始资金
-        commission_rate: 佣金费率（use_ashare_costs=True 时作为双边佣金率）
-        output_dir: 输出目录
-        benchmark_index: 基准指数代码，A股默认沪深300(000300)，美股默认标普500(SP500)
-        use_ashare_costs: 是否使用A股真实成本模型（含印花税/过户费）。market='us' 时忽略
-        slippage_rate: 滑点比例
-        apply_sentiment_filter: 是否尝试加载情绪快照并接入策略情绪过滤（美股自动关闭）
-        market: 市场，'zh_a'（A股，默认）或 'us'（美股）
-
-    Returns:
-        包含绩效数据和图表URL的字典（保持旧四键契约，performance_data 扩展新指标）
+    :return: 结构化结果字典，含：
+        - daily_returns (pd.Series), equity (pd.Series), equity_full (pd.Series)
+        - drawdown (pd.Series), benchmark_returns (pd.Series|None)
+        - metrics_raw (dict, 中文 key 数值), alpha/beta/info_ratio (float|None)
+        - market, strategy_name, stock_code
     """
     import logging
-    from src.Strategy.Strategy import create_user_strategy_class, build_param_dict
+    from src.Strategy.Strategy import create_user_strategy_class
     from src.Strategy.strategy_manager import get_user_strategy
     from src.data.data_manager import (
         get_index_data, load_sentiment_snapshots, build_stock_sentiment_series,
     )
-    from src.visualization import StrategyVisualizer
 
     logger = logging.getLogger(__name__)
 
-    # 读取 backtest 配置默认值（之前是死配置，这里真正接入）
+    # 读取 backtest 配置默认值
     try:
         from config.config_loader import get
         slippage_enabled_cfg = get('backtest.slippage_enabled', False)
@@ -981,50 +820,38 @@ def run_backtest_with_charts(
 
     runner = BacktestRunner()
     runner.set_initial_capital(initial_capital)
-    # 成本模型：按市场选择（美股强制仅佣金，忽略 use_ashare_costs）
     if market == 'us':
         runner.set_us_commission(commission_rate=commission_rate)
-    elif use_ashare_costs:
-        runner.set_ashare_commission(commission_rate=commission_rate)
     else:
-        runner.set_commission(commission_rate)
+        runner.set_ashare_commission(commission_rate=commission_rate)
     runner.set_slippage(slippage_perc=slippage_rate, enabled=slippage_enabled_cfg or True)
     runner.add_analyzers()
 
-    # 数据：按市场选择数据源。A 股用后复权(hfq)，美股新浪源仅支持 qfq(前复权)/不复权
     stock = Stock(stock_code, market=market)
     stock_data, _ = stock.get_stock_data(
         start_date=start_date.replace('-', ''),
         end_date=end_date.replace('-', ''),
         adjust='qfq' if market == 'us' else 'hfq',
-        type='daily'
+        type='daily',
     )
-
     if stock_data.empty:
         raise ValueError(f"无法获取股票 {stock_code} 的数据")
 
-    if '时间' in stock_data.columns:
-        stock_data['时间'] = pd.to_datetime(stock_data['时间'])
-        stock_data.set_index('时间', inplace=True)
+    if DATE in stock_data.columns:
+        stock_data[DATE] = pd.to_datetime(stock_data[DATE])
+        stock_data.set_index(DATE, inplace=True)
 
-    data_feed = bt.feeds.PandasData(
-        dataname=stock_data,
-        name=stock_code,
-        open='开盘',
-        high='最高',
-        low='最低',
-        close='收盘',
-        volume='成交量',
-        openinterest=-1
-    )
-    runner.cerebro.adddata(data_feed)
+    runner.cerebro.adddata(bt.feeds.PandasData(
+        dataname=stock_data, name=stock_code,
+        open=OPEN, high=HIGH, low=LOW, close=CLOSE,
+        volume=VOLUME, openinterest=-1,
+    ))
 
     user_config = get_user_strategy(strategy_name)
     if not user_config:
         raise ValueError(f"未找到用户策略: {strategy_name}")
 
-    # Phase 4: 加载情绪快照，构建该股票的行业情绪序列（避免未来函数）
-    # 美股不映射 A 股行业，跳过情绪过滤，回退纯均线策略
+    # 情绪过滤（仅 A 股）
     sentiment_series = None
     sentiment_sector = None
     if apply_sentiment_filter and market != 'us':
@@ -1042,202 +869,7 @@ def run_backtest_with_charts(
             logger.warning(f"加载情绪数据失败，回测将以纯均线策略运行: {e}")
 
     strategy_class = create_user_strategy_class(
-        user_config,
-        sentiment_series=sentiment_series,
-        sentiment_sector=sentiment_sector,
-    )
-
-    # Phase 0/1: 用统一的参数解析（修复 value/default 不匹配）
-    params = build_param_dict(user_config)
-    # 参数已作为类 params 默认值注入（create_user_strategy_class 内 build_param_dict），
-    # 这里不重复传，避免 backtrader "params already defined" 类问题。
-    runner.cerebro.addstrategy(strategy_class)
-
-    results = runner.cerebro.run()
-
-    strat = results[0]
-
-    # Phase 1: 直接用 timereturn 分析器的真实日收益率序列，不再伪造填充净值
-    daily_returns = pd.Series(dtype=float)
-    try:
-        timereturn_analyzer = strat.analyzers.getbyname('timereturn')
-        if timereturn_analyzer:
-            returns_dict = timereturn_analyzer.get_analysis()
-            if returns_dict:
-                daily_returns = pd.Series(returns_dict)
-    except Exception as e:
-        logger.warning(f"获取收益分析器失败: {e}")
-
-    if daily_returns.empty:
-        logger.warning("未取到日收益率序列，绩效指标将为 0")
-        # 兜底：构造一条全 0 的序列，至少让后续流程不崩
-        daily_returns = pd.Series(0.0, index=stock_data.index)
-
-    # 真实净值序列（仅用于绘图与 calculate_strategy_metrics）
-    equity = initial_capital * (1 + daily_returns).cumprod()
-    # 在序列首部补上初始资金，使净值曲线起点正确
-    equity_full = pd.concat([pd.Series([initial_capital], index=[daily_returns.index[0]]), equity])
-    equity_full = equity_full[~equity_full.index.duplicated(keep='last')]
-
-    # Phase 1: 按平仓交易计算真实胜率与盈亏比
-    win_rate_real = None
-    profit_loss_real = None
-    try:
-        ta = strat.analyzers.getbyname('tradeanalyzer')
-        if ta:
-            ta_report = ta.get_analysis()
-            won = ta_report.get('won', {})
-            lost = ta_report.get('lost', {})
-            won_n = won.get('total', 0) if isinstance(won, dict) else 0
-            lost_n = lost.get('total', 0) if isinstance(lost, dict) else 0
-            total_closed = won_n + lost_n
-            if total_closed > 0:
-                win_rate_real = won_n / total_closed
-                won_pnl = won.get('pnl', {}).get('total', 0) if isinstance(won.get('pnl'), dict) else 0
-                lost_pnl = abs(lost.get('pnl', {}).get('total', 0)) if isinstance(lost.get('pnl'), dict) else 0
-                if lost_pnl > 0:
-                    profit_loss_real = won_pnl / lost_pnl
-    except Exception as e:
-        logger.warning(f"从 tradeanalyzer 提取交易级胜率失败，回退到日级胜率: {e}")
-
-    performance_data = calculate_strategy_metrics(
-        equity_full,
-        win_rate_override=win_rate_real,
-        profit_loss_ratio_override=profit_loss_real,
-    )
-
-    # Phase 3: 基准与 Alpha/Beta/信息比率（按市场选择基准指数源）
-    benchmark_returns = None
-    alpha = beta = info_ratio = None
-    try:
-        bench_df = get_index_data(
-            benchmark_index,
-            start_date=start_date.replace('-', ''),
-            end_date=end_date.replace('-', ''),
-            market=market,
-        )
-        if bench_df is not None and not bench_df.empty and '收盘' in bench_df.columns:
-            bench_df = bench_df.set_index('时间')
-            bench_close = pd.to_numeric(bench_df['收盘'], errors='coerce').dropna()
-            benchmark_returns = bench_close.pct_change().dropna()
-            # 对齐到策略日收益率
-            aligned = pd.concat([daily_returns, benchmark_returns], axis=1).dropna()
-            if len(aligned) >= 2:
-                analyzer = PerformanceAnalyzer(
-                    aligned.iloc[:, 0], aligned.iloc[:, 1]
-                )
-                alpha, beta = analyzer.calculate_alpha_beta()
-                info_ratio = analyzer.calculate_information_ratio()
-    except Exception as e:
-        logger.warning(f"获取基准/计算Alpha/Beta失败: {e}")
-
-    formatted_performance = {
-        "总收益率": f"{performance_data.get('总收益率', 0):.2%}",
-        "年化收益率": f"{performance_data.get('年化收益率', 0):.2%}",
-        "夏普比率": round(performance_data.get('夏普比率', 0), 2),
-        "最大回撤": f"{performance_data.get('最大回撤', 0):.2%}",
-        "胜率": f"{performance_data.get('胜率', 0):.2%}",
-        "盈亏比": round(performance_data.get('盈亏比', 0), 2),
-    }
-    if alpha is not None and beta is not None:
-        formatted_performance["Alpha"] = f"{alpha:.2%}"
-        formatted_performance["Beta"] = round(beta, 2)
-    if info_ratio is not None:
-        formatted_performance["信息比率"] = round(info_ratio, 2)
-
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    strategy_dir = os.path.join(output_dir, f"{strategy_name}_{stock_code}", timestamp)
-    os.makedirs(strategy_dir, exist_ok=True)
-
-    visualizer = StrategyVisualizer()
-
-    equity_path = os.path.join(strategy_dir, f"equity_curve_{strategy_name}_{stock_code}_{timestamp}.png")
-    equity_fig = visualizer.plot_cumulative_returns(
-        daily_returns, benchmark_returns, title=f"{strategy_name} 收益曲线"
-    )
-    equity_fig.savefig(equity_path)
-    plt.close(equity_fig)
-
-    drawdown_path = os.path.join(strategy_dir, f"drawdown_curve_{strategy_name}_{stock_code}_{timestamp}.png")
-    drawdown_fig = visualizer.plot_drawdown(daily_returns, title=f"{strategy_name} 回撤曲线")
-    drawdown_fig.savefig(drawdown_path)
-    plt.close(drawdown_fig)
-
-    dashboard_path = os.path.join(strategy_dir, f"performance_dashboard_{strategy_name}_{stock_code}_{timestamp}.png")
-    dashboard_fig = visualizer.plot_performance_dashboard(daily_returns, benchmark_returns)
-    dashboard_fig.savefig(dashboard_path)
-    plt.close(dashboard_fig)
-
-    return {
-        "performance_data": formatted_performance,
-        "equity_chart_url": f"/output/{strategy_name}_{stock_code}/{timestamp}/{os.path.basename(equity_path)}",
-        "drawdown_chart_url": f"/output/{strategy_name}_{stock_code}/{timestamp}/{os.path.basename(drawdown_path)}",
-        "dashboard_url": f"/output/{strategy_name}_{stock_code}/{timestamp}/{os.path.basename(dashboard_path)}"
-    }
-
-
-def run_backtest_json(
-    strategy_name: str,
-    stock_code: str,
-    start_date: str,
-    end_date: str,
-    initial_capital: float = 100000.0,
-    commission_rate: float = 0.0003,
-    benchmark_index: str = "000300",
-    market: str = "zh_a",
-    slippage_rate: float = 0.0005,
-) -> Dict:
-    """
-    运行回测并返回 JSON 可序列化的时序数据（供 Vue3 前端 ECharts 动态绘制）。
-
-    与 run_backtest_with_charts 的区别：不生成 matplotlib PNG，而是返回原始
-    净值/回撤/日收益率/基准序列，由前端动态渲染。指标以数值（非格式化字符串）返回。
-
-    Args 同 run_backtest_with_charts（去掉 output_dir/sentiment 等图表相关参数）。
-    :return: { strategy_name, stock_code, market, metrics, dates, equity_curve,
-               benchmark_curve, drawdown, daily_returns }
-    """
-    import logging
-    from src.Strategy.Strategy import create_user_strategy_class, build_param_dict
-    from src.Strategy.strategy_manager import get_user_strategy
-    from src.data.data_manager import get_index_data
-
-    logger = logging.getLogger(__name__)
-
-    runner = BacktestRunner()
-    runner.set_initial_capital(initial_capital)
-    if market == 'us':
-        runner.set_us_commission(commission_rate=commission_rate)
-    else:
-        runner.set_ashare_commission(commission_rate=commission_rate)
-    runner.set_slippage(slippage_perc=slippage_rate, enabled=True)
-    runner.add_analyzers()
-
-    stock = Stock(stock_code, market=market)
-    stock_data, _ = stock.get_stock_data(
-        start_date=start_date.replace('-', ''),
-        end_date=end_date.replace('-', ''),
-        adjust='qfq' if market == 'us' else 'hfq',
-        type='daily',
-    )
-    if stock_data.empty:
-        raise ValueError(f"无法获取股票 {stock_code} 的数据")
-
-    if '时间' in stock_data.columns:
-        stock_data['时间'] = pd.to_datetime(stock_data['时间'])
-        stock_data.set_index('时间', inplace=True)
-
-    runner.cerebro.adddata(bt.feeds.PandasData(
-        dataname=stock_data, name=stock_code,
-        open='开盘', high='最高', low='最低', close='收盘',
-        volume='成交量', openinterest=-1,
-    ))
-
-    user_config = get_user_strategy(strategy_name)
-    if not user_config:
-        raise ValueError(f"未找到用户策略: {strategy_name}")
-    strategy_class = create_user_strategy_class(
-        user_config, sentiment_series=None, sentiment_sector=None
+        user_config, sentiment_series=sentiment_series, sentiment_sector=sentiment_sector,
     )
     runner.cerebro.addstrategy(strategy_class)
 
@@ -1258,6 +890,8 @@ def run_backtest_json(
         daily_returns = pd.Series(0.0, index=stock_data.index)
 
     equity = initial_capital * (1 + daily_returns).cumprod()
+    equity_full = pd.concat([pd.Series([initial_capital], index=[daily_returns.index[0]]), equity])
+    equity_full = equity_full[~equity_full.index.duplicated(keep='last')]
 
     # 回撤序列
     running_max = equity.expanding().max()
@@ -1283,16 +917,13 @@ def run_backtest_json(
     except Exception as e:
         logger.warning(f"tradeanalyzer 提取失败: {e}")
 
-    # 净值序列（含初始资金起点）
-    equity_full = pd.concat([pd.Series([initial_capital], index=[daily_returns.index[0]]), equity])
-    equity_full = equity_full[~equity_full.index.duplicated(keep='last')]
-
     metrics_raw = calculate_strategy_metrics(
         equity_full, win_rate_override=win_rate_real,
         profit_loss_ratio_override=profit_loss_real,
     )
 
-    # 基准净值序列 + Alpha/Beta
+    # 基准 + Alpha/Beta
+    benchmark_returns = None
     benchmark_curve = None
     alpha = beta = info_ratio = None
     try:
@@ -1306,21 +937,134 @@ def run_backtest_json(
             bench_df = bench_df.set_index('时间')
             bench_close = pd.to_numeric(bench_df['收盘'], errors='coerce').dropna()
             bench_ret = bench_close.pct_change().dropna()
-            bench_equity = 1.0 * (1 + bench_ret).cumprod()
-            # 对齐到策略日期
+            benchmark_returns = bench_ret
             aligned = pd.concat([daily_returns, bench_ret], axis=1).dropna()
             if len(aligned) >= 2:
                 analyzer = PerformanceAnalyzer(aligned.iloc[:, 0], aligned.iloc[:, 1])
                 alpha, beta = analyzer.calculate_alpha_beta()
                 info_ratio = analyzer.calculate_information_ratio()
-            # 基准净值序列对齐到策略日期（ffill 后 bfill 补首部 NaN）
+            bench_equity = 1.0 * (1 + bench_ret).cumprod()
             bench_eq_aligned = bench_equity.reindex(daily_returns.index).ffill().bfill()
             benchmark_curve = bench_eq_aligned.tolist()
     except Exception as e:
-        logger.warning(f"获取基准/Alpha/Beta失败: {e}")
+        logger.warning(f"获取基准/计算Alpha/Beta失败: {e}")
+
+    return {
+        "strategy_name": strategy_name,
+        "stock_code": stock_code,
+        "market": market,
+        "daily_returns": daily_returns,
+        "equity": equity,
+        "equity_full": equity_full,
+        "drawdown": drawdown,
+        "benchmark_returns": benchmark_returns,
+        "benchmark_curve": benchmark_curve,
+        "metrics_raw": metrics_raw,
+        "alpha": alpha,
+        "beta": beta,
+        "info_ratio": info_ratio,
+    }
+
+
+def run_backtest_with_charts(
+    strategy_name: str,
+    stock_code: str,
+    start_date: str,
+    end_date: str,
+    initial_capital: float = 100000.0,
+    commission_rate: float = 0.0003,
+    output_dir: str = "output",
+    benchmark_index: str = "000300",
+    use_ashare_costs: bool = True,
+    slippage_rate: float = 0.0005,
+    apply_sentiment_filter: bool = True,
+    market: str = "zh_a",
+) -> Dict:
+    """运行回测并生成 matplotlib PNG 图表（Jinja2 前端用）。
+
+    输出适配器：调用 _run_backtest_core，把结果格式化为图表 URL 契约。
+    """
+    from src.visualization import StrategyVisualizer
+
+    core = _run_backtest_core(
+        strategy_name=strategy_name, stock_code=stock_code,
+        start_date=start_date, end_date=end_date,
+        initial_capital=initial_capital, commission_rate=commission_rate,
+        benchmark_index=benchmark_index, slippage_rate=slippage_rate,
+        market=market, apply_sentiment_filter=apply_sentiment_filter,
+    )
+
+    m = core["metrics_raw"]
+    formatted_performance = {
+        "总收益率": f"{m.get('总收益率', 0):.2%}",
+        "年化收益率": f"{m.get('年化收益率', 0):.2%}",
+        "夏普比率": round(m.get('夏普比率', 0), 2),
+        "最大回撤": f"{m.get('最大回撤', 0):.2%}",
+        "胜率": f"{m.get('胜率', 0):.2%}",
+        "盈亏比": round(m.get('盈亏比', 0), 2),
+    }
+    if core["alpha"] is not None and core["beta"] is not None:
+        formatted_performance["Alpha"] = f"{core['alpha']:.2%}"
+        formatted_performance["Beta"] = round(core["beta"], 2)
+    if core["info_ratio"] is not None:
+        formatted_performance["信息比率"] = round(core["info_ratio"], 2)
+
+    daily_returns = core["daily_returns"]
+    benchmark_returns = core["benchmark_returns"]
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    strategy_dir = os.path.join(output_dir, f"{strategy_name}_{stock_code}", timestamp)
+    os.makedirs(strategy_dir, exist_ok=True)
+
+    visualizer = StrategyVisualizer()
+    equity_path = os.path.join(strategy_dir, f"equity_curve_{strategy_name}_{stock_code}_{timestamp}.png")
+    equity_fig = visualizer.plot_cumulative_returns(
+        daily_returns, benchmark_returns, title=f"{strategy_name} 收益曲线")
+    equity_fig.savefig(equity_path)
+    plt.close(equity_fig)
+
+    drawdown_path = os.path.join(strategy_dir, f"drawdown_curve_{strategy_name}_{stock_code}_{timestamp}.png")
+    drawdown_fig = visualizer.plot_drawdown(daily_returns, title=f"{strategy_name} 回撤曲线")
+    drawdown_fig.savefig(drawdown_path)
+    plt.close(drawdown_fig)
+
+    dashboard_path = os.path.join(strategy_dir, f"performance_dashboard_{strategy_name}_{stock_code}_{timestamp}.png")
+    dashboard_fig = visualizer.plot_performance_dashboard(daily_returns, benchmark_returns)
+    dashboard_fig.savefig(dashboard_path)
+    plt.close(dashboard_fig)
+
+    return {
+        "performance_data": formatted_performance,
+        "equity_chart_url": f"/output/{strategy_name}_{stock_code}/{timestamp}/{os.path.basename(equity_path)}",
+        "drawdown_chart_url": f"/output/{strategy_name}_{stock_code}/{timestamp}/{os.path.basename(drawdown_path)}",
+        "dashboard_url": f"/output/{strategy_name}_{stock_code}/{timestamp}/{os.path.basename(dashboard_path)}",
+    }
+
+
+def run_backtest_json(
+    strategy_name: str,
+    stock_code: str,
+    start_date: str,
+    end_date: str,
+    initial_capital: float = 100000.0,
+    commission_rate: float = 0.0003,
+    benchmark_index: str = "000300",
+    market: str = "zh_a",
+    slippage_rate: float = 0.0005,
+) -> Dict:
+    """运行回测并返回 JSON 可序列化时序数据（Vue3 前端 ECharts 用）。
+
+    输出适配器：调用 _run_backtest_core，把结果序列化为前端可消费的数组。
+    """
+    core = _run_backtest_core(
+        strategy_name=strategy_name, stock_code=stock_code,
+        start_date=start_date, end_date=end_date,
+        initial_capital=initial_capital, commission_rate=commission_rate,
+        benchmark_index=benchmark_index, slippage_rate=slippage_rate,
+        market=market, apply_sentiment_filter=False,  # JSON 路径不用情绪过滤（与原行为一致）
+    )
 
     def _safe(v, nd=6):
-        """JSON 安全化：NaN/inf 转为 0。"""
         try:
             f = float(v)
             if not np.isfinite(f):
@@ -1329,22 +1073,27 @@ def run_backtest_json(
         except (TypeError, ValueError):
             return 0.0
 
+    m = core["metrics_raw"]
     metrics = {
-        "总收益率": _safe(metrics_raw.get("总收益率", 0), 6),
-        "年化收益率": _safe(metrics_raw.get("年化收益率", 0), 6),
-        "夏普比率": _safe(metrics_raw.get("夏普比率", 0), 4),
-        "最大回撤": _safe(metrics_raw.get("最大回撤", 0), 6),
-        "胜率": _safe(metrics_raw.get("胜率", 0), 6),
-        "盈亏比": _safe(metrics_raw.get("盈亏比", 0), 4),
+        "总收益率": _safe(m.get("总收益率", 0), 6),
+        "年化收益率": _safe(m.get("年化收益率", 0), 6),
+        "夏普比率": _safe(m.get("夏普比率", 0), 4),
+        "最大回撤": _safe(m.get("最大回撤", 0), 6),
+        "胜率": _safe(m.get("胜率", 0), 6),
+        "盈亏比": _safe(m.get("盈亏比", 0), 4),
     }
-    if alpha is not None:
-        metrics["Alpha"] = _safe(alpha, 6)
-    if beta is not None:
-        metrics["Beta"] = _safe(beta, 4)
-    if info_ratio is not None:
-        metrics["信息比率"] = _safe(info_ratio, 4)
+    if core["alpha"] is not None:
+        metrics["Alpha"] = _safe(core["alpha"], 6)
+    if core["beta"] is not None:
+        metrics["Beta"] = _safe(core["beta"], 4)
+    if core["info_ratio"] is not None:
+        metrics["信息比率"] = _safe(core["info_ratio"], 4)
 
+    daily_returns = core["daily_returns"]
+    equity = core["equity"]
+    drawdown = core["drawdown"]
     dates = [d.strftime('%Y-%m-%d') for d in daily_returns.index]
+    benchmark_curve = core["benchmark_curve"]
 
     return {
         "strategy_name": strategy_name,

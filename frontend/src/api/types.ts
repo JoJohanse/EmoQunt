@@ -119,3 +119,32 @@ export interface WatchTarget {
   market: Market
   name: string
 }
+
+// ===== AI 投资助手 =====
+
+/** 对话消息 */
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  /** 工具调用记录（仅 assistant 消息，可选） */
+  toolCalls?: ToolCallEvent[]
+  /** 是否正在流式输出 */
+  streaming?: boolean
+  /** 错误信息 */
+  error?: string
+}
+
+/** 工具调用事件（SSE 推送） */
+export interface ToolCallEvent {
+  name: string
+  args: string
+  result: string
+}
+
+/** SSE 事件类型 */
+export type SseEvent =
+  | { type: 'token'; content: string }
+  | { type: 'tool'; name: string; args: string; result: string }
+  | { type: 'done' }
+  | { type: 'error'; content: string }
+

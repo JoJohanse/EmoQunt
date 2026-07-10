@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { useRoute } from 'vue-router'
 import { computed } from 'vue'
+import { useChatStore } from '@/stores/chat'
+import ChatPanel from '@/components/ChatPanel.vue'
 
 const route = useRoute()
 const activeIndex = computed(() => route.path)
+const chatStore = useChatStore()
 </script>
 
 <template>
@@ -37,6 +40,16 @@ const activeIndex = computed(() => route.path)
             <el-icon><Star /></el-icon>每日推荐
           </el-menu-item>
         </el-menu>
+        <!-- AI 助手触发按钮 -->
+        <el-button
+          class="ai-btn"
+          type="primary"
+          round
+          size="small"
+          @click="chatStore.toggleDrawer()"
+        >
+          <el-icon><ChatDotRound /></el-icon> AI 助手
+        </el-button>
       </div>
     </el-header>
     <el-main class="app-main">
@@ -45,6 +58,17 @@ const activeIndex = computed(() => route.path)
     <el-footer class="app-footer">
       <span><el-icon><TrendCharts /></el-icon> EmoQunt 量化系统 · 让量化投资更简单</span>
     </el-footer>
+
+    <!-- 全局 AI 助手抽屉（所有页面可用） -->
+    <el-drawer
+      v-model="chatStore.drawerOpen"
+      title="AI 投资助手"
+      direction="rtl"
+      size="420px"
+      :with-header="true"
+    >
+      <ChatPanel />
+    </el-drawer>
   </el-container>
 </template>
 
@@ -93,6 +117,17 @@ const activeIndex = computed(() => route.path)
   color: #fff;
   background: rgba(255, 255, 255, 0.12) !important;
   border-bottom: 2px solid #fff;
+}
+.ai-btn {
+  margin-left: 12px;
+  flex-shrink: 0;
+  font-weight: 600;
+}
+/* 抽屉内 ChatPanel 占满高度 */
+:deep(.el-drawer__body) {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
 }
 .app-main {
   max-width: 1280px;

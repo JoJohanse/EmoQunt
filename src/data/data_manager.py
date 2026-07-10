@@ -318,28 +318,11 @@ class Stock:
             # 处理数据：删除可能存在的不需要的'index'列
             if 'index' in stock_data.columns:
                 stock_data = stock_data.drop('index', axis=1)
-            
-            # 初始化默认的重命名映射
-            rename_map = {
-                'open': '开盘',
-                'high': '最高',
-                'low': '最低',
-                'close': '收盘',
-                'volume': '成交量'
-            }
-            
-            # 根据实际列名调整重命名映射
-            if 'date' in stock_data.columns:
-                rename_map['date'] = '时间'
-                rename_map['amount'] = '成交额'
-                rename_map['turnover'] = '换手率'
-                rename_map['outstanding_share'] = '流通股数'
-            elif 'day' in stock_data.columns:
-                rename_map['day'] = '时间'
-            
-            # 只保留存在于stock_data.columns中的映射键
-            rename_map = {k: v for k, v in rename_map.items() if k in stock_data.columns}
-            
+
+            # 统一列名重命名（英文→中文），引用唯一来源
+            from src.data.columns import EN_TO_ZH
+            rename_map = {k: v for k, v in EN_TO_ZH.items() if k in stock_data.columns}
+
             # 重命名列
             stock_data = stock_data.rename(columns=rename_map)
             return stock_data, file_name
@@ -687,11 +670,8 @@ def get_index_data(index_code: str = '000300', start_date: str = '', end_date: s
             return pd.DataFrame()
 
         # 统一列名重命名（三条路径都返回小写英文列名）
-        rename_map = {
-            'date': '时间', 'open': '开盘', 'high': '最高',
-            'low': '最低', 'close': '收盘', 'volume': '成交量', 'amount': '成交额',
-        }
-        rename_map = {k: v for k, v in rename_map.items() if k in df.columns}
+        from src.data.columns import EN_TO_ZH
+        rename_map = {k: v for k, v in EN_TO_ZH.items() if k in df.columns}
         df = df.rename(columns=rename_map)
 
         # 本地日期过滤（新浪源不支持 start/end；东财/baostock 已过滤，但统一过滤确保一致）
@@ -806,11 +786,8 @@ def get_us_index_data(index_code: str = 'SP500', start_date: str = '', end_date:
             return pd.DataFrame()
 
         # 统一列名重命名（两条路径都返回小写列名）
-        rename_map = {
-            'date': '时间', 'open': '开盘', 'high': '最高',
-            'low': '最低', 'close': '收盘', 'volume': '成交量', 'amount': '成交额',
-        }
-        rename_map = {k: v for k, v in rename_map.items() if k in df.columns}
+        from src.data.columns import EN_TO_ZH
+        rename_map = {k: v for k, v in EN_TO_ZH.items() if k in df.columns}
         df = df.rename(columns=rename_map)
 
         print(f"成功获取美股指数数据，数据行数: {len(df)}")
