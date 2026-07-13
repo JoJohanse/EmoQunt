@@ -29,3 +29,4 @@ frontend/dist/
 .eslintcache
 logs/web_app.log
 .slim/
+.zcode/

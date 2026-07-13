@@ -7,21 +7,8 @@ import csv
 import json
 import logging
 import sys
-import io
-import contextlib
 
 logger = logging.getLogger(__name__)
-
-bs_logger = logging.getLogger('baostock')
-bs_logger.setLevel(logging.WARNING)
-
-with contextlib.redirect_stdout(io.StringIO()):
-    try:
-        import baostock as bs
-        BAOSTOCK_AVAILABLE = True
-    except ImportError:
-        BAOSTOCK_AVAILABLE = False
-        logger.warning("baostock 未安装，请运行: pip install baostock")
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CSV_PATH = os.path.join(BASE_DIR, "stock_data", "沪深300", "沪深300成分股列表.csv")
@@ -217,80 +204,40 @@ def get_stock_data(stock_code: str, days: int = 30) -> Optional[pd.DataFrame]:
             else:
                 logger.info(f"股票 {stock_code} 缓存数据过期，需要重新获取")
     
-    if not BAOSTOCK_AVAILABLE:
-        logger.warning("baostock 未安装")
-        return None
-    
+    # 复用 src.data.data_manager 的 A 股回退链
+    # (Tushare → akshare 新浪 → akshare 东财 → baostock)，避免本模块直接登 baostock 造成阻塞。
     try:
+        from src.data.data_manager import Stock
         code = stock_code.split('.')[0]
-        if stock_code.endswith('.SH'):
-            bs_code = f"sh.{code}"
-        elif stock_code.endswith('.SZ'):
-            bs_code = f"sz.{code}"
+        stock = Stock(code, market='zh_a')
+        # 取 days×2 个日历日的数据，确保覆盖足够交易日（评分需 ~30 个交易日）
+        end_date = datetime.now().strftime('%Y%m%d')
+        start_date = (datetime.now() - timedelta(days=int(days * 2))).strftime('%Y%m%d')
+        df, _ = stock.get_stock_data(start_date=start_date, end_date=end_date,
+                                     adjust='qfq', type='daily')
+        if df is None or df.empty:
+            logger.warning(f"未获取到股票 {stock_code} 的数据（所有数据源均失败）")
+            return None
+
+        # 适配列契约：data_manager 返回 时间 为普通列，本模块的评分函数依赖 DatetimeIndex 升序
+        if '时间' in df.columns:
+            df['时间'] = pd.to_datetime(df['时间'])
+            df = df.set_index('时间').sort_index()
         else:
-            bs_code = f"sh.{code}"
-        
-        with contextlib.redirect_stdout(io.StringIO()):
-            lg = bs.login()
-            if lg.error_code != '0':
-                logger.warning(f"baostock 登录失败: {lg.error_msg}")
-                return None
-                
-            rs = bs.query_history_k_data_plus(
-                bs_code,
-                "date,code,open,high,low,close,volume,amount",
-                start_date=(datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d"),
-                end_date=datetime.now().strftime("%Y-%m-%d"),
-                frequency="d",
-                adjustflag="2"
-            )
-            
-            data_list = []
-            while (rs.error_code == '0') and rs.next():
-                data_list.append(rs.get_row_data())
-            
-            bs.logout()
-        
-        if not data_list:
-            logger.warning(f"未获取到股票 {stock_code} 的数据")
-            return None
-        
-        df = pd.DataFrame(data_list, columns=rs.fields)
-        
-        date_col = None
-        for col in df.columns:
-            if 'date' in col.lower():
-                date_col = col
-                break
-        
-        if date_col is None:
-            logger.warning(f"未找到日期列，字段: {df.columns.tolist()}")
-            return None
-        
-        col_mapping = {
-            'open': '开盘', 'high': '最高', 'low': '最低', 
-            'close': '收盘', 'volume': '成交量', 'amount': '成交额'
-        }
-        
-        rename_dict = {}
-        for old_col, new_col in col_mapping.items():
-            if old_col in df.columns:
-                rename_dict[old_col] = new_col
-        
-        df.rename(columns=rename_dict, inplace=True)
-        
-        df[date_col] = pd.to_datetime(df[date_col])
-        df.set_index(date_col, inplace=True)
-        df = df.sort_index()
-        
+            # 无时间列时，按现有顺序作为索引兜底
+            df = df.sort_index()
+
         for col in ['开盘', '最高', '最低', '收盘', '成交量', '成交额']:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
-        
+
+        # 注：成交量单位差异（akshare 源为"手"，旧 baostock 为"股"）不影响评分，
+        # 因为 calculate_volume_score 只用比值（5日/20日均量比），全局缩放因子抵消。
+
         STOCK_DATA_CACHE[stock_code] = df
         save_stock_data_to_cache(stock_code, df)
-        return df.tail(days)
-        
+        return df.tail(days) if len(df) >= days else df
+
     except Exception as e:
         logger.warning(f"获取股票 {stock_code} 数据失败: {e}")
         return None

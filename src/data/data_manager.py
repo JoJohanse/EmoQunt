@@ -5,9 +5,13 @@ import os
 import traceback
 import logging
 from src.utils.paths import PROJECT_ROOT, ensure_dir
+from src.utils.env import get_env
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+# Tushare Pro token（可选 A 股数据源；留空则该层静默跳过，回退到免费链）
+_TUSHARE_TOKEN = get_env("TUSHARE_TOKEN", "")
 
 class Stock:
     def __init__(self, stock_code, market='zh_a'):
@@ -114,6 +118,55 @@ class Stock:
             return df
         except Exception as e:
             logger.warning(f"akshare 东财源获取 {self.stock_code} 失败: {e}")
+            return pd.DataFrame()
+
+    def _fetch_ashare_tushare(self, start_date: str, end_date: str, adjust_str: str) -> pd.DataFrame:
+        """通过 Tushare Pro 获取 A 股个股日线（可选首选源，需 TUSHARE_TOKEN）。
+
+        无 token 或 tushare 未安装时静默跳过（返回空 DataFrame），由调用方回退到免费链。
+        Tushare ts_code 格式 '600938.SH'；volume 单位为手（与 akshare 一致，无需换算）；
+        amount 单位为千元（需 ×1000 转为元，与 akshare 对齐）。
+
+        :param start_date: 'YYYYMMDD'
+        :param end_date: 'YYYYMMDD'
+        :param adjust_str: '' 不复权 / 'qfq' 前复权 / 'hfq' 后复权
+        :return: 小写列名 (date/open/high/low/close/volume/amount) DataFrame；失败/无 token 返回空
+        """
+        if not _TUSHARE_TOKEN:
+            return pd.DataFrame()
+        try:
+            import tushare as ts
+        except ImportError:
+            logger.warning("tushare 未安装，跳过 Tushare 源（pip install tushare）")
+            return pd.DataFrame()
+        try:
+            # sh600938 / sz000001 → 600938.SH / 000001.SZ
+            bare = self.get_code_without_prefix()
+            ts_code = f"{bare}.SH" if self.stock_code.startswith('sh') else f"{bare}.SZ"
+            ts.set_token(_TUSHARE_TOKEN)
+            pro = ts.pro_api()
+            adj = adjust_str if adjust_str in ('qfq', 'hfq') else None
+            if adj:
+                # 复权需用 pro_bar（pro.daily 仅返回不复权）
+                df = ts.pro_bar(ts_code=ts_code, start_date=start_date, end_date=end_date, adj=adj)
+            else:
+                df = pro.daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
+            if df is None or df.empty:
+                return pd.DataFrame()
+            # Tushare 列：trade_date(YYYYMMDD)/open/high/low/close/vol(手)/amount(千元)/...
+            # 归一化到下游统一的小写英文列名
+            col_map = {'trade_date': 'date', 'vol': 'volume'}
+            col_map = {k: v for k, v in col_map.items() if k in df.columns}
+            df = df.rename(columns=col_map)
+            # amount: 千元 → 元（与 akshare 单位对齐）
+            if 'amount' in df.columns:
+                df['amount'] = pd.to_numeric(df['amount'], errors='coerce') * 1000.0
+            for col in ('open', 'high', 'low', 'close', 'volume'):
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            return df
+        except Exception as e:
+            logger.warning(f"Tushare 获取 {self.stock_code} 失败: {e}")
             return pd.DataFrame()
 
     def _fetch_ashare_baostock(self, start_date: str, end_date: str, adjust_str: str) -> pd.DataFrame:
@@ -272,17 +325,23 @@ class Stock:
                             stock_data = ak.stock_us_daily(symbol=ticker, adjust=adjust_map[adjust])
                             stock_data = self._filter_us_daily_by_date(stock_data, start_date, end_date)
                     else:
-                        # A股三级回退：新浪源 → 东财源 → baostock
-                        try:
-                            stock_data = ak.stock_zh_a_daily(
-                                symbol=self.stock_code,
-                                start_date=start_date,
-                                end_date=end_date,
-                                adjust=adjust_map[adjust]
-                            )
-                        except Exception as e:
-                            logger.warning(f"akshare 新浪源获取 {self.stock_code} 失败: {e}，回退到东财源")
+                        # A股回退链：Tushare(可选首选) → 新浪源 → 东财源 → baostock
+                        if _TUSHARE_TOKEN:
+                            stock_data = self._fetch_ashare_tushare(start_date, end_date, adjust_map[adjust])
+                        else:
                             stock_data = pd.DataFrame()
+
+                        if stock_data is None or stock_data.empty:
+                            try:
+                                stock_data = ak.stock_zh_a_daily(
+                                    symbol=self.stock_code,
+                                    start_date=start_date,
+                                    end_date=end_date,
+                                    adjust=adjust_map[adjust]
+                                )
+                            except Exception as e:
+                                logger.warning(f"akshare 新浪源获取 {self.stock_code} 失败: {e}，回退到东财源")
+                                stock_data = pd.DataFrame()
 
                         if stock_data is None or stock_data.empty:
                             logger.warning("新浪源返回空数据，回退到 akshare stock_zh_a_hist（东财源）")
@@ -626,13 +685,37 @@ def get_index_data(index_code: str = '000300', start_date: str = '', end_date: s
 
         print(f"正在获取指数 {index_code} 的日线数据，日期范围: {start_date} 至 {end_date}")
 
-        # A股指数三级回退：新浪源 → 东财源 → baostock
+        # A股指数回退链：Tushare(可选首选) → 新浪源 → 东财源 → baostock
+        # 0) Tushare Pro（需 token，支持 start/end）
+        df = pd.DataFrame()
+        if _TUSHARE_TOKEN:
+            try:
+                import tushare as ts
+                ts.set_token(_TUSHARE_TOKEN)
+                pro = ts.pro_api()
+                # sh000300 → 000300.SH
+                idx_ts_code = f"{symbol[2:]}.{symbol[:2].upper()}"
+                raw = pro.index_daily(ts_code=idx_ts_code, start_date=start_date, end_date=end_date)
+                if raw is not None and not raw.empty:
+                    col_map = {'trade_date': 'date', 'vol': 'volume'}
+                    col_map = {k: v for k, v in col_map.items() if k in raw.columns}
+                    df = raw.rename(columns=col_map)
+                    for col in ('open', 'high', 'low', 'close', 'volume', 'amount'):
+                        if col in df.columns:
+                            df[col] = pd.to_numeric(df[col], errors='coerce')
+                    if 'amount' in df.columns:
+                        df['amount'] = df['amount'] * 1000.0  # 千元 → 元
+            except Exception as e:
+                logger.warning(f"Tushare 指数获取 {index_code} 失败: {e}，回退到免费链")
+                df = pd.DataFrame()
+
         # 1) 新浪源（不支持 start/end，需本地过滤）
-        try:
-            df = ak.stock_zh_index_daily(symbol=symbol)
-        except Exception as e:
-            logger.warning(f"akshare 新浪指数源获取 {index_code} 失败: {e}，回退到东财源")
-            df = pd.DataFrame()
+        if df is None or df.empty:
+            try:
+                df = ak.stock_zh_index_daily(symbol=symbol)
+            except Exception as e:
+                logger.warning(f"akshare 新浪指数源获取 {index_code} 失败: {e}，回退到东财源")
+                df = pd.DataFrame()
 
         # 2) 东财源（支持 start/end，更精确）
         if df is None or df.empty:
