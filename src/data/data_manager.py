@@ -311,6 +311,22 @@ class Stock:
                     if end_date is None:
                         # 使用当前日期作为结束日期
                         end_date = datetime.now().strftime('%Y%m%d')
+
+                    # ---- DB 缓存层（Redis→PostgreSQL）----
+                    # 先查缓存，命中且非空则直接返回，跳过网络。
+                    # 失败静默降级（连不上 DB 时回退到下面的网络回退链）。
+                    try:
+                        from src.data import db as _db
+                        _cached = _db.get_cached_range(
+                            code_without_prefix, self.market, adjust,
+                            start_date, end_date,
+                        )
+                        if _cached is not None and not _cached.empty:
+                            logger.info(f"DB 缓存命中 {self.stock_code} ({self.market}/{adjust}): {len(_cached)} 行")
+                            return _cached, file_name
+                    except Exception as _e:
+                        logger.debug(f"DB 缓存查询失败，回退网络链: {_e}")
+
                     print(f"正在获取{self.stock_code}的历史数据（日线），日期范围: {start_date}至{end_date}")
                     if self.market == 'us':
                         ticker = self.get_code_without_prefix()
@@ -384,6 +400,18 @@ class Stock:
 
             # 重命名列
             stock_data = stock_data.rename(columns=rename_map)
+
+            # ---- 回填 DB 缓存层（PostgreSQL upsert + Redis）----
+            # 仅日线数据写缓存（分钟级数据量大且本模块不持久化）；失败静默。
+            if type == 'daily':
+                try:
+                    from src.data import db as _db
+                    _db.save_daily(
+                        stock_data, code_without_prefix, self.market, adjust,
+                    )
+                except Exception as _e:
+                    logger.debug(f"DB 缓存回填失败（不影响主流程）: {_e}")
+
             return stock_data, file_name
         except Exception as e:
             print(f"获取股票历史数据失败: {e}")
@@ -555,12 +583,17 @@ class _BaoStockSession:
 
     baostock 单次登录约 200 次查询后随机失败，30 分钟无请求自动断开。
     本封装在查询失败或计数超限时自动重登，并对每次查询做指数退避重试。
+
+    线程安全：共享 socket + login 状态非线程安全，用全局锁串行化所有查询。
+    baostock 仅是最终回退源，串行化它对并发主链（akshare 系）几乎无影响。
     """
 
     def __init__(self):
+        import threading
         self._logged_in = False
         self._query_count = 0
         self._max_per_session = 200
+        self._lock = threading.Lock()
 
     def _ensure_login(self):
         import baostock as bs
@@ -584,38 +617,41 @@ class _BaoStockSession:
     def query(self, bs_code, fields, start_date, end_date, adjustflag="3"):
         """带重试的查询。返回 DataFrame（列名来自 rs.fields），失败抛异常。
 
+        整个查询（含 login 状态变更 + socket 读写）持锁串行化，保证多线程安全。
+
         :param bs_code: 'sh.600000' / 'sz.000001' / 'sh.000300'（指数）
         :param fields: 逗号分隔字段串，如 "date,open,high,low,close,volume,amount"
         :param start_date: 'YYYY-MM-DD'
         :param end_date: 'YYYY-MM-DD'
         :param adjustflag: '1' 后复权 / '2' 前复权 / '3' 不复权
         """
-        import time
-        import baostock as bs
-        last_err = None
-        for attempt in range(3):
-            try:
-                self._ensure_login()
-                import contextlib, io
-                with contextlib.redirect_stdout(io.StringIO()):
-                    rs = bs.query_history_k_data_plus(
-                        bs_code, fields,
-                        start_date=start_date, end_date=end_date,
-                        frequency="d", adjustflag=adjustflag,
-                    )
-                if rs.error_code == '0':
-                    data = []
-                    while rs.next():
-                        data.append(rs.get_row_data())
-                    self._query_count += 1
-                    time.sleep(0.3)
-                    return pd.DataFrame(data, columns=rs.fields)
-                last_err = rs.error_msg
-            except Exception as e:
-                last_err = str(e)
-            time.sleep(2 ** attempt)
-            self._logged_in = False  # 失败 → 下次重登
-        raise RuntimeError(f"baostock 重试失败: {last_err}")
+        with self._lock:
+            import time
+            import baostock as bs
+            last_err = None
+            for attempt in range(3):
+                try:
+                    self._ensure_login()
+                    import contextlib, io
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        rs = bs.query_history_k_data_plus(
+                            bs_code, fields,
+                            start_date=start_date, end_date=end_date,
+                            frequency="d", adjustflag=adjustflag,
+                        )
+                    if rs.error_code == '0':
+                        data = []
+                        while rs.next():
+                            data.append(rs.get_row_data())
+                        self._query_count += 1
+                        time.sleep(0.3)
+                        return pd.DataFrame(data, columns=rs.fields)
+                    last_err = rs.error_msg
+                except Exception as e:
+                    last_err = str(e)
+                time.sleep(2 ** attempt)
+                self._logged_in = False  # 失败 → 下次重登
+            raise RuntimeError(f"baostock 重试失败: {last_err}")
 
     def logout(self):
         if not self._logged_in:
@@ -682,6 +718,19 @@ def get_index_data(index_code: str = '000300', start_date: str = '', end_date: s
         if symbol is None:
             # 兜底：6 开头归上交所，0/3 开头归深交所
             symbol = ('sh' if str(index_code).startswith('6') else 'sz') + str(index_code)
+
+        # ---- DB 缓存层（指数）----
+        # 命中则直接返回，跳过网络回退链；失败静默降级。
+        try:
+            from src.data import db as _db
+            _cached = _db.get_cached_range(
+                str(index_code), market, 'nfq', start_date, end_date, is_index=True,
+            )
+            if _cached is not None and not _cached.empty:
+                logger.info(f"DB 缓存命中 指数 {index_code}: {len(_cached)} 行")
+                return _cached
+        except Exception as _e:
+            logger.debug(f"DB 缓存查询失败（指数），回退网络链: {_e}")
 
         print(f"正在获取指数 {index_code} 的日线数据，日期范围: {start_date} 至 {end_date}")
 
@@ -766,6 +815,13 @@ def get_index_data(index_code: str = '000300', start_date: str = '', end_date: s
                 df = df[df['时间'] <= pd.to_datetime(end_date)]
             df = df.sort_values('时间').reset_index(drop=True)
 
+        # ---- 回填 DB 缓存层（指数）----
+        try:
+            from src.data import db as _db
+            _db.save_daily(df, str(index_code), market, 'nfq', is_index=True)
+        except Exception as _e:
+            logger.debug(f"DB 缓存回填失败（指数，不影响主流程）: {_e}")
+
         print(f"成功获取指数数据，数据行数: {len(df)}")
         return df
     except Exception as e:
@@ -839,6 +895,18 @@ def get_us_index_data(index_code: str = 'SP500', start_date: str = '', end_date:
         if not end_date:
             end_date = datetime.now().strftime('%Y%m%d')
 
+        # ---- DB 缓存层（美股指数）----
+        try:
+            from src.data import db as _db
+            _cached = _db.get_cached_range(
+                str(index_code), 'us', 'nfq', start_date, end_date, is_index=True,
+            )
+            if _cached is not None and not _cached.empty:
+                logger.info(f"DB 缓存命中 美股指数 {index_code}: {len(_cached)} 行")
+                return _cached
+        except Exception as _e:
+            logger.debug(f"DB 缓存查询失败（美股指数），回退网络链: {_e}")
+
         print(f"正在获取美股指数 {index_code} 的日线数据，日期范围: {start_date} 至 {end_date}")
 
         # 优先 yfinance（返回小写列名，已按 start/end 过滤）
@@ -872,6 +940,13 @@ def get_us_index_data(index_code: str = 'SP500', start_date: str = '', end_date:
         from src.data.columns import EN_TO_ZH
         rename_map = {k: v for k, v in EN_TO_ZH.items() if k in df.columns}
         df = df.rename(columns=rename_map)
+
+        # ---- 回填 DB 缓存层（美股指数）----
+        try:
+            from src.data import db as _db
+            _db.save_daily(df, str(index_code), 'us', 'nfq', is_index=True)
+        except Exception as _e:
+            logger.debug(f"DB 缓存回填失败（美股指数，不影响主流程）: {_e}")
 
         print(f"成功获取美股指数数据，数据行数: {len(df)}")
         return df

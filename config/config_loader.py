@@ -74,7 +74,11 @@ class ConfigLoader:
                 'cache_enabled': True,
                 'cache_duration_days': 7,
                 'default_benchmark_zh_a': '000300',
-                'default_benchmark_us': 'SP500'
+                'default_benchmark_us': 'SP500',
+                'fetch_concurrency': 8,
+                'db_cache_enabled': True,
+                'redis_cache_enabled': True,
+                'redis_ttl_seconds': 86400
             },
             'strategy': {
                 'min_order_size': 100,

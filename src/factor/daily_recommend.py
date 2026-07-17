@@ -2,11 +2,13 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
+from concurrent.futures import ThreadPoolExecutor
 import os
 import csv
 import json
 import logging
 import sys
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,17 @@ KDJ_PERIOD = DATA_CONFIG.get('kdj_period', 9)
 ATR_PERIOD = DATA_CONFIG.get('atr_period', 14)
 
 STOCK_DATA_CACHE = {}
+
+# 缓存写入锁（多线程并发 populate STOCK_DATA_CACHE 时避免 dict 写竞争；
+# 读路径无锁 fast-path，命中即返回，CPython GIL 下读 dict 安全）
+_STOCK_DATA_CACHE_LOCK = threading.Lock()
+
+# 并发拉取股票数据的工作线程数（默认 8，可由 QDT_DATA_FETCH_CONCURRENCY 覆盖）
+try:
+    _FETCH_CONCURRENCY = int(os.environ.get('QDT_DATA_FETCH_CONCURRENCY', '8'))
+except (TypeError, ValueError):
+    _FETCH_CONCURRENCY = 8
+_FETCH_CONCURRENCY = max(1, min(_FETCH_CONCURRENCY, 32))
 
 def ensure_cache_dir():
     if not os.path.exists(CACHE_DIR):
@@ -199,7 +212,8 @@ def get_stock_data(stock_code: str, days: int = 30) -> Optional[pd.DataFrame]:
             date_diff = (today - latest_date).days
             logger.info(f"股票 {stock_code} 缓存数据最新日期: {latest_date}, 今天: {today}")
             if date_diff <= 1:
-                STOCK_DATA_CACHE[stock_code] = cached_df
+                with _STOCK_DATA_CACHE_LOCK:
+                    STOCK_DATA_CACHE[stock_code] = cached_df
                 return cached_df.tail(days) if len(cached_df) >= days else cached_df
             else:
                 logger.info(f"股票 {stock_code} 缓存数据过期，需要重新获取")
@@ -234,8 +248,9 @@ def get_stock_data(stock_code: str, days: int = 30) -> Optional[pd.DataFrame]:
         # 注：成交量单位差异（akshare 源为"手"，旧 baostock 为"股"）不影响评分，
         # 因为 calculate_volume_score 只用比值（5日/20日均量比），全局缩放因子抵消。
 
-        STOCK_DATA_CACHE[stock_code] = df
-        save_stock_data_to_cache(stock_code, df)
+        with _STOCK_DATA_CACHE_LOCK:
+            STOCK_DATA_CACHE[stock_code] = df
+            save_stock_data_to_cache(stock_code, df)
         return df.tail(days) if len(df) >= days else df
 
     except Exception as e:
@@ -692,17 +707,21 @@ def generate_daily_recommend(n: int = 10) -> Dict:
             })
     
     logger.info(f"候选股票总数: {len(all_candidates)}")
-    
-    scored_stocks = []
-    for candidate in all_candidates:
-        score_result = calculate_stock_score(
-            candidate["code"],
-            candidate["name"],
-            candidate["sector"],
-            candidate["sector_sentiment"]
-        )
-        scored_stocks.append(score_result)
-    
+
+    # 并发拉取+评分：候选股的网络 fetch（DB 缓存未命中时）是主要耗时，
+    # 用线程池并行化。ex.map 按提交顺序返回，保证结果顺序稳定。
+    def _score_one(c):
+        try:
+            return calculate_stock_score(c["code"], c["name"], c["sector"], c["sector_sentiment"])
+        except Exception as e:
+            logger.warning(f"评分 {c.get('code')} 失败（已隔离）: {e}")
+            return None
+
+    with ThreadPoolExecutor(max_workers=_FETCH_CONCURRENCY) as ex:
+        scored_stocks = list(ex.map(_score_one, all_candidates))
+    # 过滤掉个别失败（None），不影响其余候选
+    scored_stocks = [s for s in scored_stocks if s is not None]
+
     scored_stocks.sort(key=lambda x: x["score"], reverse=True)
     
     top_n = scored_stocks[:n]

@@ -25,6 +25,18 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 
+@pytest.fixture(autouse=True)
+def _disable_db_cache(monkeypatch):
+    """禁用 DB/Redis 缓存层（本文件专门测网络回退链，不应被缓存命中短路）。
+
+    若不禁用，Docker 起着时 get_stock_data 会命中 PG 缓存提前返回，
+    网络源 mock 不会被调用，破坏回退链断言。
+    """
+    import src.data.db as _db
+    monkeypatch.setattr(_db, 'DB_CACHE_ENABLED', False)
+    monkeypatch.setattr(_db, 'REDIS_CACHE_ENABLED', False)
+
+
 # ---------------------------------------------------------------------------
 # 辅助函数
 # ---------------------------------------------------------------------------

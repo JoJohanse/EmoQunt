@@ -61,6 +61,12 @@ def _preload_strategies():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _preload_strategies()
+    # 数据缓存层连通性日志（PostgreSQL + Redis；连不上不影响启动，自动降级）
+    try:
+        from src.data.db import healthcheck as _db_healthcheck
+        logger.info(f"数据缓存层状态: {_db_healthcheck()}")
+    except Exception as e:
+        logger.warning(f"数据缓存层状态检查失败（已降级）: {e}")
     yield
 
 
@@ -627,6 +633,20 @@ async def get_sentiment_api():
         logger.error(f"获取舆情分析结果时出错: {e}")
         from datetime import datetime
         return {"error": "获取舆情数据失败", "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+
+@app.get("/api/health")
+async def health_api():
+    """健康检查：返回数据缓存层（PostgreSQL + Redis）连通性，便于运维确认状态。
+
+    任一层连不上不影响主流程（data_manager 自动降级到 CSV + 网络回退链）。
+    """
+    try:
+        from src.data.db import healthcheck as _db_healthcheck
+        return {"status": "ok", "caches": _db_healthcheck()}
+    except Exception as e:
+        logger.error(f"健康检查失败: {e}")
+        return JSONResponse({"status": "error", "error": str(e)}, status_code=500)
 
 
 @app.get("/api/daily-recommend")

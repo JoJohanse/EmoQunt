@@ -1,0 +1,45 @@
+# EmoQunt 本地数据基础设施
+# 启动：docker compose up -d
+# 停止：docker compose down（保留数据）
+# 清空数据：docker compose down -v
+#
+# 提供：
+#   - PostgreSQL 16：持久化全历史 OHLCV（src/data/db.py 自动建表）
+#   - Redis 7：热查询缓存（DataFrame 序列化为 parquet bytes，LRU 256MB）
+#
+# 连接参数从 .env 读取（POSTGRES_* / REDIS_*）。应用层 (web_app.py) 仍在
+# 本地 python 进程跑，仅数据缓存走这两个容器。
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: emoqunt-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-emoqunt}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-emoqunt_local}
+      POSTGRES_DB: ${POSTGRES_DB:-emoqunt}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-emoqunt} -d ${POSTGRES_DB:-emoqunt}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  cache:
+    image: redis:7-alpine
+    container_name: emoqunt-cache
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

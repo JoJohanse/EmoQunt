@@ -21,6 +21,14 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+
+@pytest.fixture(autouse=True)
+def _disable_db_cache(monkeypatch):
+    """禁用 DB/Redis 缓存层（与缓存状态解耦，避免 Docker 起着时影响断言）。"""
+    import src.data.db as _db
+    monkeypatch.setattr(_db, 'DB_CACHE_ENABLED', False)
+    monkeypatch.setattr(_db, 'REDIS_CACHE_ENABLED', False)
+
 from src.data.data_manager import (
     Stock,
     load_sentiment_snapshots,
