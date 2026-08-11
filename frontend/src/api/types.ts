@@ -46,6 +46,37 @@ export interface BacktestMetrics {
   Alpha?: number
   Beta?: number
   信息比率?: number
+  // 完整绩效报告新增（可选）
+  年化波动率?: number
+  卡玛比率?: number
+  下行标准差?: number
+  'VaR (95%)'?: number
+  'CVaR (95%)'?: number
+  交易次数?: number
+  盈利交易数?: number
+  亏损交易数?: number
+  平均盈利?: number
+  平均亏损?: number
+  最大回撤开始时间?: string
+  最大回撤结束时间?: string
+}
+
+/** 风险分析报告（RiskManager 事后分析） */
+export interface RiskReport {
+  portfolio_value: number
+  current_drawdown: number
+  max_drawdown_limit: number
+  volatility: number
+  sharpe_ratio: number
+  blacklist_count: number
+  var_analysis: {
+    historical_var: number
+    parametric_var: number
+    cvar: number
+    confidence_level: number
+  }
+  stress_test: Record<string, number>
+  risk_limits: Record<string, number>
 }
 
 /** 回测响应（JSON） */
@@ -54,6 +85,7 @@ export interface BacktestResult {
   stock_code: string
   market: Market
   metrics: BacktestMetrics
+  risk_report?: RiskReport
   // 时序数据，用于前端 ECharts 动态绘制
   dates: string[] // ISO 日期
   equity_curve: number[] // 策略净值
@@ -118,6 +150,90 @@ export interface WatchTarget {
   code: string
   market: Market
   name: string
+}
+
+// ===== 策略对比 =====
+
+/** 对比请求 */
+export interface CompareRequest {
+  strategy_names: string[]
+  stock_code: string
+  start_date: string
+  end_date: string
+  market: Market
+  initial_capital: number
+  commission_rate: number
+}
+
+/** 单个策略的对比序列 */
+export interface CompareSeries {
+  name: string
+  equity_curve: number[]
+  metrics: {
+    总收益率: number
+    年化收益率: number
+    夏普比率: number
+    最大回撤: number
+    胜率: number
+    盈亏比: number
+    Alpha?: number | null
+    Beta?: number | null
+  }
+}
+
+/** 对比结果 */
+export interface CompareResult {
+  dates: string[]
+  common_start?: string | null
+  common_end?: string | null
+  series: CompareSeries[]
+  errors?: { name: string; error: string }[]
+  stock_code: string
+  market: Market
+  error?: string
+}
+
+// ===== 因子分析 =====
+
+/** 因子类型 */
+export type FactorType = 'momentum' | 'rsi' | 'volatility' | 'volume_ratio'
+
+/** 因子分析请求 */
+export interface FactorAnalysisRequest {
+  factor_type: FactorType
+  start_date: string
+  end_date: string
+  universe?: string
+  n_quantiles?: number
+  forward_period?: number
+}
+
+/** 因子分析结果 */
+export interface FactorAnalysisResult {
+  factor_type: string
+  ic_stats: {
+    ic_mean: number
+    rank_ic_mean: number
+    ic_ir: number
+    rank_ic_ir: number
+    ic_win_rate: number
+    rank_ic_win_rate: number
+    ic_positive_rate: number
+  }
+  ic_series: { date: string; ic: number; rank_ic: number }[]
+  quantile_stats: {
+    quantile: string
+    mean_return: number
+    sharpe_ratio: number
+    win_rate: number
+  }[]
+  quantile_cumreturns: { date: string; values: number[] }[]
+  monotonicity: {
+    monotonic: boolean
+    monotonicity_ratio: number
+  }
+  universe_size: number
+  error?: string
 }
 
 // ===== AI 投资助手 =====

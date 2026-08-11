@@ -70,6 +70,8 @@ const metricCards = computed(() => {
   const m = result.value.metrics
   const fmtPct = (v: number) => (v * 100).toFixed(2) + '%'
   const fmtNum = (v: number) => v.toFixed(2)
+  const opt = (key: string, label: string, fmt: (v: number) => string, type: (v: number) => 'success' | 'danger' | 'neutral', group: string) =>
+    m[key] !== undefined ? [{ label, value: fmt(m[key] as number), type: type(m[key] as number), group }] : []
   return [
     { label: '总收益率', value: fmtPct(m.总收益率), type: m.总收益率 >= 0 ? 'success' : 'danger', group: 'return' },
     { label: '年化收益率', value: fmtPct(m.年化收益率), type: m.年化收益率 >= 0 ? 'success' : 'danger', group: 'return' },
@@ -80,7 +82,24 @@ const metricCards = computed(() => {
     ...(m.Alpha !== undefined ? [{ label: 'Alpha', value: fmtPct(m.Alpha), type: m.Alpha >= 0 ? 'success' : 'danger', group: 'benchmark' }] : []),
     ...(m.Beta !== undefined ? [{ label: 'Beta', value: fmtNum(m.Beta), type: 'neutral', group: 'benchmark' }] : []),
     ...(m.信息比率 !== undefined ? [{ label: '信息比率', value: fmtNum(m.信息比率), type: m.信息比率 >= 0 ? 'success' : 'danger', group: 'benchmark' }] : []),
+    // 完整绩效报告新增指标（可选）
+    ...opt('年化波动率', '年化波动率', fmtPct, (v) => (v <= 0.25 ? 'success' : 'danger'), 'risk'),
+    ...opt('卡玛比率', '卡玛比率', fmtNum, (v) => (v >= 1 ? 'success' : 'danger'), 'return'),
+    ...opt('下行标准差', '下行标准差', fmtPct, () => 'neutral', 'risk'),
+    ...opt('VaR (95%)', 'VaR(95%)', fmtNum, () => 'danger', 'risk'),
+    ...opt('CVaR (95%)', 'CVaR(95%)', fmtNum, () => 'danger', 'risk'),
+    ...opt('交易次数', '交易次数', fmtNum, () => 'neutral', 'return'),
+    ...opt('盈利交易数', '盈利交易', fmtNum, () => 'success', 'return'),
+    ...opt('亏损交易数', '亏损交易', fmtNum, () => 'danger', 'return'),
   ]
+})
+
+// 风险报告（VaR/压力测试）——独立面板
+const riskReport = computed(() => result.value?.risk_report ?? null)
+const stressRows = computed(() => {
+  const s = riskReport.value?.stress_test
+  if (!s) return []
+  return Object.entries(s).map(([k, v]) => ({ scenario: k, value: v as number }))
 })
 
 // 收益曲线 ECharts 配置（动态，可缩放）
@@ -280,6 +299,59 @@ const returnsOption = computed(() => {
       <el-card shadow="never" class="chart-card">
         <v-chart class="chart" :option="returnsOption" autoresize />
       </el-card>
+
+      <!-- 风险分析面板（激活 RiskManager）-->
+      <template v-if="riskReport">
+        <div class="section-title"><el-icon><Warning /></el-icon> 风险分析</div>
+        <el-card shadow="never" class="risk-card">
+          <el-row :gutter="12">
+            <el-col :xs="12" :sm="8" :md="6">
+              <div class="risk-item">
+                <div class="risk-label">历史 VaR (95%)</div>
+                <div class="risk-value v-danger">{{ currencyLabel }} {{ riskReport.var_analysis.historical_var.toFixed(2) }}</div>
+              </div>
+            </el-col>
+            <el-col :xs="12" :sm="8" :md="6">
+              <div class="risk-item">
+                <div class="risk-label">参数 VaR (95%)</div>
+                <div class="risk-value v-danger">{{ currencyLabel }} {{ riskReport.var_analysis.parametric_var.toFixed(2) }}</div>
+              </div>
+            </el-col>
+            <el-col :xs="12" :sm="8" :md="6">
+              <div class="risk-item">
+                <div class="risk-label">CVaR (95%)</div>
+                <div class="risk-value v-danger">{{ currencyLabel }} {{ riskReport.var_analysis.cvar.toFixed(2) }}</div>
+              </div>
+            </el-col>
+            <el-col :xs="12" :sm="8" :md="6">
+              <div class="risk-item">
+                <div class="risk-label">年化波动率</div>
+                <div class="risk-value">{{ (riskReport.volatility * 100).toFixed(2) }}%</div>
+              </div>
+            </el-col>
+            <el-col :xs="12" :sm="8" :md="6">
+              <div class="risk-item">
+                <div class="risk-label">当前回撤</div>
+                <div class="risk-value v-danger">{{ (riskReport.current_drawdown * 100).toFixed(2) }}%</div>
+              </div>
+            </el-col>
+            <el-col :xs="12" :sm="8" :md="6">
+              <div class="risk-item">
+                <div class="risk-label">回撤上限</div>
+                <div class="risk-value">{{ (riskReport.max_drawdown_limit * 100).toFixed(1) }}%</div>
+              </div>
+            </el-col>
+          </el-row>
+
+          <div class="stress-title">压力测试场景（基准 VaR：{{ currencyLabel }} {{ stressRows.length ? stressRows[0].value.toFixed(2) : '0.00' }}）</div>
+          <el-table :data="stressRows" stripe size="small" style="width: 100%">
+            <el-table-column prop="scenario" label="场景" />
+            <el-table-column label="VaR（元）">
+              <template #default="{ row }">{{ row.value.toFixed(2) }}</template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+      </template>
     </template>
 
     <el-empty v-else-if="!loading" description="运行回测后在此查看动态绩效图表" />
@@ -329,5 +401,33 @@ const returnsOption = computed(() => {
 .chart {
   height: 380px;
   width: 100%;
+}
+.risk-card {
+  border-radius: var(--radius);
+  margin-bottom: 1.25rem;
+  border-top: 3px solid var(--danger);
+}
+.risk-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+  margin-bottom: 12px;
+}
+.risk-label {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  margin-bottom: 4px;
+}
+.risk-value {
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+.stress-title {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
 }
 </style>

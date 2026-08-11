@@ -33,6 +33,18 @@ const router = createRouter({
       component: () => import('@/views/DailyRecommendView.vue'),
       meta: { title: '每日推荐' },
     },
+    {
+      path: '/strategy-compare',
+      name: 'strategy-compare',
+      component: () => import('@/views/StrategyCompareView.vue'),
+      meta: { title: '策略对比' },
+    },
+    {
+      path: '/factor-analysis',
+      name: 'factor-analysis',
+      component: () => import('@/views/FactorAnalysisView.vue'),
+      meta: { title: '因子分析' },
+    },
   ],
 })
 

@@ -39,6 +39,12 @@ const chatStore = useChatStore()
           <el-menu-item index="/daily-recommend">
             <el-icon><Star /></el-icon>每日推荐
           </el-menu-item>
+          <el-menu-item index="/strategy-compare">
+            <el-icon><DataLine /></el-icon>策略对比
+          </el-menu-item>
+          <el-menu-item index="/factor-analysis">
+            <el-icon><DataAnalysis /></el-icon>因子分析
+          </el-menu-item>
         </el-menu>
         <!-- AI 助手触发按钮 -->
         <el-button

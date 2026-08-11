@@ -2,7 +2,11 @@ import axios from 'axios'
 import type {
   BacktestRequest,
   BacktestResult,
+  CompareRequest,
+  CompareResult,
   DailyRecommendData,
+  FactorAnalysisRequest,
+  FactorAnalysisResult,
   KlineData,
   SentimentData,
   StrategyDetail,
@@ -68,6 +72,20 @@ export const strategyApi = {
 export const backtestApi = {
   run(params: BacktestRequest): Promise<BacktestResult> {
     return http.post('/backtest/run', params).then((r) => r.data)
+  },
+}
+
+/** 策略对比 API */
+export const compareApi = {
+  run(params: CompareRequest): Promise<CompareResult> {
+    return http.post('/strategies/compare', params).then((r) => r.data)
+  },
+}
+
+/** 因子分析 API */
+export const factorApi = {
+  analyze(params: FactorAnalysisRequest): Promise<FactorAnalysisResult> {
+    return http.post('/factor/analyze', params).then((r) => r.data)
   },
 }
 
