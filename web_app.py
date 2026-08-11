@@ -596,9 +596,73 @@ async def run_backtest_api(request: Request):
         return JSONResponse({"error": f"回测失败: {e}"}, status_code=500)
 
 
+@app.post("/api/strategies/compare")
+async def compare_strategies_api(request: Request):
+    """策略对比：在同一标的上运行多个策略，返回对齐净值曲线 + 指标表（Vue3）。"""
+    try:
+        payload = await request.json()
+        names = payload.get("strategy_names") or []
+        if not isinstance(names, list) or not names:
+            return JSONResponse({"error": "strategy_names 必须是非空数组"}, status_code=400)
+        names = [sanitize_string(str(n), 50) for n in names][:5]
+        stock_code = sanitize_string(str(payload.get("stock_code", "")), 10)
+        market = payload.get("market", "zh_a")
+        if market not in ("zh_a", "us"):
+            market = "zh_a"
+        start_date = str(payload.get("start_date", ""))
+        end_date = str(payload.get("end_date", ""))
+        initial_capital = float(payload.get("initial_capital", 100000.0))
+        commission_rate = float(payload.get("commission_rate", 0.0003))
+
+        valid, error = validate_stock_code(stock_code, market=market)
+        if not valid:
+            return JSONResponse({"error": error}, status_code=400)
+        valid, error = validate_date_range(start_date, end_date)
+        if not valid:
+            return JSONResponse({"error": error}, status_code=400)
+
+        from src.services.strategy_compare import compare_strategies
+        return compare_strategies(
+            strategy_names=names, stock_code=stock_code,
+            start_date=start_date, end_date=end_date,
+            market=market, initial_capital=initial_capital,
+            commission_rate=commission_rate,
+        )
+    except Exception as e:
+        logger.error(f"策略对比API失败: {e}")
+        return JSONResponse({"error": f"策略对比失败: {e}"}, status_code=500)
+
+
+@app.post("/api/factor/analyze")
+async def analyze_factor_api(request: Request):
+    """因子分析：在 HS300 上构建因子面板，返回 IC/分层/单调性（对标 Qlib）。"""
+    try:
+        payload = await request.json()
+        factor_type = str(payload.get("factor_type", "momentum"))
+        if factor_type not in ("momentum", "rsi", "volatility", "volume_ratio"):
+            return JSONResponse(
+                {"error": "factor_type 必须是 momentum/rsi/volatility/volume_ratio"}, status_code=400)
+        start_date = str(payload.get("start_date", ""))
+        end_date = str(payload.get("end_date", ""))
+        valid, error = validate_date_range(start_date, end_date)
+        if not valid:
+            return JSONResponse({"error": error}, status_code=400)
+        universe = str(payload.get("universe", "hs300"))
+        n_quantiles = int(payload.get("n_quantiles", 5))
+        forward_period = int(payload.get("forward_period", 5))
+
+        from src.services.factor import analyze_factor
+        return analyze_factor(
+            factor_type=factor_type, start_date=start_date, end_date=end_date,
+            universe=universe, n_quantiles=n_quantiles, forward_period=forward_period,
+        )
+    except Exception as e:
+        logger.error(f"因子分析API失败: {e}")
+        return JSONResponse({"error": f"因子分析失败: {e}"}, status_code=500)
+
+
 @app.get("/api/kline")
 async def get_kline_api(stock_code: str, market: str = "zh_a", days: int = 180):
-    """K线 OHLCV 数据（供首页看板蜡烛图）"""
     try:
         valid, error = validate_stock_code(stock_code, market=market)
         if not valid:
