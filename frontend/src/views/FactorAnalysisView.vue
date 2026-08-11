@@ -183,13 +183,13 @@ const icCards = computed(() => {
         <el-table :data="result.quantile_stats" stripe style="width: 100%">
           <el-table-column prop="quantile" label="分层" />
           <el-table-column label="平均收益">
-            <template #default="{ row }">{{ (row.mean_return * 100).toFixed(4) }}%</template>
+            <template #default="{ row }">{{ row.mean_return == null ? '—' : (row.mean_return * 100).toFixed(4) + '%' }}</template>
           </el-table-column>
           <el-table-column label="夏普">
-            <template #default="{ row }">{{ row.sharpe_ratio?.toFixed(4) ?? '—' }}</template>
+            <template #default="{ row }">{{ row.sharpe_ratio == null ? '—' : row.sharpe_ratio.toFixed(4) }}</template>
           </el-table-column>
           <el-table-column label="胜率">
-            <template #default="{ row }">{{ (row.win_rate * 100).toFixed(2) }}%</template>
+            <template #default="{ row }">{{ row.win_rate == null ? '—' : (row.win_rate * 100).toFixed(2) + '%' }}</template>
           </el-table-column>
         </el-table>
       </el-card>

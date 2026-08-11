@@ -9,21 +9,14 @@ from __future__ import annotations
 import logging
 from typing import Dict, List
 
-import numpy as np
 import pandas as pd
+
+from src.utils.serialize import safe_float
 
 logger = logging.getLogger(__name__)
 
 # 单次对比的最多策略数（防止过载；每个策略都是一次完整回测）
 MAX_STRATEGIES = 5
-
-
-def _safe_float(v, nd=4) -> float:
-    try:
-        f = float(v)
-        return 0.0 if not np.isfinite(f) else round(f, nd)
-    except (TypeError, ValueError):
-        return 0.0
 
 
 def compare_strategies(
@@ -75,19 +68,17 @@ def compare_strategies(
             results.append({
                 "name": name,
                 "dates": dates,
-                "equity_curve": [_safe_float(v, 2) for v in equity.tolist()],
+                "equity_curve": [safe_float(v, 2) for v in equity.tolist()],
                 "metrics": {
-                    "总收益率": _safe_float(m.get("总收益率", 0), 6),
-                    "年化收益率": _safe_float(m.get("年化收益率", 0), 6),
-                    "夏普比率": _safe_float(m.get("夏普比率", 0), 4),
-                    "最大回撤": _safe_float(m.get("最大回撤", 0), 6),
-                    "胜率": _safe_float(m.get("胜率", 0), 6),
-                    "盈亏比": _safe_float(m.get("盈亏比", 0), 4),
-                    "Alpha": _safe_float(core.get("alpha"), 6) if core.get("alpha") is not None else None,
-                    "Beta": _safe_float(core.get("beta"), 4) if core.get("beta") is not None else None,
+                    "总收益率": safe_float(m.get("总收益率", 0), 6),
+                    "年化收益率": safe_float(m.get("年化收益率", 0), 6),
+                    "夏普比率": safe_float(m.get("夏普比率", 0), 4),
+                    "最大回撤": safe_float(m.get("最大回撤", 0), 6),
+                    "胜率": safe_float(m.get("胜率", 0), 6),
+                    "盈亏比": safe_float(m.get("盈亏比", 0), 4),
+                    "Alpha": safe_float(core.get("alpha"), 6) if core.get("alpha") is not None else None,
+                    "Beta": safe_float(core.get("beta"), 4) if core.get("beta") is not None else None,
                 },
-                "alpha_raw": core.get("alpha"),
-                "beta_raw": core.get("beta"),
             })
         except Exception as e:
             logger.warning(f"策略 {name} 回测失败（对比中跳过）: {e}")
@@ -96,28 +87,32 @@ def compare_strategies(
     if not results:
         return {"error": "所有策略均回测失败", "details": errors}
 
-    # 对齐到公共日期区间（各策略回测区间可能因数据略有差异）
-    # 以最长 dates 序列为基准，其它按日期 reindex（ffill 兜底）
-    base = max(results, key=lambda r: len(r["dates"]))
-    base_dates = base["dates"]
-    base_idx = pd.to_datetime(base_dates)
+    # 对齐到【公共日期交集】——只保留所有策略都有真实净值的交易日，
+    # 不用并集+ffill/bfill（那会凭空捏造某策略未交易的日期的净值）。
+    common_idx = pd.to_datetime(results[0]["dates"])
+    for r in results[1:]:
+        common_idx = common_idx.intersection(pd.to_datetime(r["dates"]))
+    common_idx = common_idx.sort_values()
+    common_dates = [d.strftime("%Y-%m-%d") for d in common_idx]
+
+    if not common_dates:
+        return {"error": "各策略无公共交易日，无法对齐", "details": errors}
 
     aligned_series = []
     for r in results:
         eq = pd.Series(r["equity_curve"], index=pd.to_datetime(r["dates"]))
-        eq = eq.reindex(base_idx).ffill().bfill()
-        # 清理 metrics 里的临时键
-        metrics = {k: v for k, v in r["metrics"].items()}
+        # common_idx ⊆ 该策略的日期，reindex 后无 NaN（均为真实净值）
+        eq = eq.reindex(common_idx)
         aligned_series.append({
             "name": r["name"],
-            "equity_curve": [_safe_float(v, 2) for v in eq.tolist()],
-            "metrics": metrics,
+            "equity_curve": [safe_float(v, 2) for v in eq.tolist()],
+            "metrics": r["metrics"],
         })
 
     return {
-        "dates": base_dates,
-        "common_start": base_dates[0] if base_dates else None,
-        "common_end": base_dates[-1] if base_dates else None,
+        "dates": common_dates,
+        "common_start": common_dates[0],
+        "common_end": common_dates[-1],
         "series": aligned_series,
         "errors": errors,
         "stock_code": stock_code,

@@ -158,5 +158,68 @@ class TestRiskReportComputes:
         assert stress["市场冲击_var"] >= stress["baseline_var"]
 
 
+class TestEnrichmentWiring:
+    """_build_enrichment_reports（_run_backtest_core 抽出的 enrichment wiring）端到端测试。
+
+    不跑完整 cerebro 回测，直接喂合成 daily_returns/equity/strat，验证：
+    - PerformanceAnalyzer.generate_report 被调用并产出完整键
+    - RiskManager.generate_risk_report + stress_test 被调用
+    - 真实交易级胜负注入（strat.analyzers.tradeanalyzer）覆盖默认胜率
+    - strat=None 时降级正常
+    """
+
+    def _fake_strat(self, won_total=6, lost_total=4):
+        """构造带 tradeanalyzer 的假 strat（用 MagicMock）。"""
+        from unittest.mock import MagicMock
+        ta = MagicMock()
+        ta.get_analysis.return_value = {
+            'won': {'total': won_total, 'pnl': {'total': 6000.0}},
+            'lost': {'total': lost_total, 'pnl': {'total': -3000.0}},
+        }
+        strat = MagicMock()
+        strat.analyzers.getbyname.return_value = ta
+        return strat
+
+    def test_wiring_produces_both_reports(self):
+        from src.backtest.backtest_manager import _build_enrichment_reports
+        daily_ret, equity = _synth_equity()
+        pr, rr = _build_enrichment_reports(
+            daily_ret, equity, self._fake_strat(), 100000.0,
+        )
+        # 完整绩效报告
+        assert pr is not None
+        for k in ("年化波动率", "卡玛比率", "下行标准差", "VaR (95%)", "CVaR (95%)",
+                  "交易次数", "胜率"):
+            assert k in pr, f"performance_report 缺键: {k}"
+        # 真实交易级胜率注入（6/(6+4)=0.6，非日线正收益启发式）
+        assert pr["胜率"] == pytest.approx(0.6, rel=1e-6)
+        # 风险报告 + 3 压力场景
+        assert rr is not None
+        assert "var_analysis" in rr and "stress_test" in rr
+        assert "市场冲击_var" in rr["stress_test"]
+        assert "波动放大_var" in rr["stress_test"]
+        assert "流动性枯竭_var" in rr["stress_test"]
+
+    def test_wiring_strat_none_degrades_gracefully(self):
+        """strat=None（无 tradeanalyzer）时应降级到默认胜率，不崩。"""
+        from src.backtest.backtest_manager import _build_enrichment_reports
+        daily_ret, equity = _synth_equity()
+        pr, rr = _build_enrichment_reports(daily_ret, equity, None, 100000.0)
+        assert pr is not None
+        assert "年化波动率" in pr
+        assert rr is not None
+
+    def test_wiring_reuses_perf_analyzer(self):
+        """传入已构造的 perf_analyzer 应被复用（不再新建无基准实例）。"""
+        from src.backtest.backtest_manager import _build_enrichment_reports, PerformanceAnalyzer
+        daily_ret, equity = _synth_equity()
+        pa = PerformanceAnalyzer(daily_ret.dropna())
+        # spy generate_report 调用
+        import unittest.mock as mock
+        with mock.patch.object(pa, 'generate_report', wraps=pa.generate_report) as spy:
+            _build_enrichment_reports(daily_ret, equity, None, 100000.0, perf_analyzer=pa)
+            assert spy.called, "应复用传入的 perf_analyzer"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

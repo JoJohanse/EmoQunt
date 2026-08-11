@@ -663,6 +663,7 @@ async def analyze_factor_api(request: Request):
 
 @app.get("/api/kline")
 async def get_kline_api(stock_code: str, market: str = "zh_a", days: int = 180):
+    """K线 OHLCV 数据（供首页看板蜡烛图）"""
     try:
         valid, error = validate_stock_code(stock_code, market=market)
         if not valid:
