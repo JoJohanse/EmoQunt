@@ -212,27 +212,32 @@ export interface FactorAnalysisRequest {
 export interface FactorAnalysisResult {
   factor_type: string
   ic_stats: {
-    ic_mean: number
-    rank_ic_mean: number
-    ic_ir: number
-    rank_ic_ir: number
-    ic_win_rate: number
-    rank_ic_win_rate: number
-    ic_positive_rate: number
+    ic_mean: number | null
+    rank_ic_mean: number | null
+    ic_ir: number | null
+    rank_ic_ir: number | null
+    ic_win_rate: number | null
+    rank_ic_win_rate: number | null
+    ic_positive_rate: number | null
   }
-  ic_series: { date: string; ic: number; rank_ic: number }[]
+  ic_series: { date: string; ic: number | null; rank_ic: number | null }[]
   quantile_stats: {
     quantile: string
-    mean_return: number
-    sharpe_ratio: number
-    win_rate: number
+    mean_return: number | null
+    sharpe_ratio: number | null
+    win_rate: number | null
   }[]
-  quantile_cumreturns: { date: string; values: number[] }[]
+  quantile_cumreturns: { date: string; values: (number | null)[] }[]
+  quantile_labels: string[]
   monotonicity: {
     monotonic: boolean
-    monotonicity_ratio: number
+    monotonicity_ratio: number | null
   }
   universe_size: number
+  /** 成功取数的股票数（可能小于 universe_size） */
+  fetched_count?: number
+  /** 有效数据的日期范围 */
+  date_range?: { start: string; end: string }
   error?: string
 }
 

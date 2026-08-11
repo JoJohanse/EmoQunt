@@ -63,6 +63,38 @@ class TestCompareStrategies:
         # 顺序与输入一致
         assert [s["name"] for s in out["series"]] == names
 
+    def test_reindex_uses_date_intersection_not_union(self):
+        """各策略日期不一致时应取【交集】而非最长并集+ffill（修复凭空捏造净值）。
+
+        long 策略覆盖 40 天 [01-02, 02-26)，short 策略只覆盖 20 天且日期不同
+        （从 02-01 起）。交集应 < 任一单策略长度，且 > 0。
+        """
+        from src.services.strategy_compare import compare_strategies
+
+        def _offset_core(**kw):
+            name = kw["strategy_name"]
+            if name == "long":
+                return _fake_core(name, n=40)  # 从 2024-01-02 起
+            # short: 从 2024-02-01 起，20 天（与 long 前段不重叠）
+            dates = pd.date_range("2024-02-01", periods=20, freq="B")
+            rng = np.random.default_rng(7)
+            daily_ret = pd.Series(rng.normal(0.0008, 0.01, 20), index=dates)
+            equity = (1 + daily_ret).cumprod() * 100000
+            return {
+                "equity": equity,
+                "metrics_raw": {"总收益率": 0.05, "年化收益率": 0.1, "夏普比率": 1.0,
+                                "最大回撤": -0.04, "胜率": 0.5, "盈亏比": 1.2},
+                "alpha": None, "beta": None,
+            }
+
+        with patch("src.backtest.backtest_manager._run_backtest_core", side_effect=_offset_core):
+            out = compare_strategies(
+                strategy_names=["long", "short"], stock_code="000001",
+                start_date="2024-01-01", end_date="2024-03-01", market="zh_a",
+            )
+        # 交集应 < long 的 40 天（不是并集 60 天，也不是 long 的全长）
+        assert 0 < len(out["dates"]) < 40
+
     def test_one_failure_isolated(self):
         """一个策略抛异常应被隔离到 errors，其余正常返回。"""
         from src.services.strategy_compare import compare_strategies

@@ -779,6 +779,65 @@ def calculate_strategy_metrics(
         }
 
 
+def _build_enrichment_reports(daily_returns, equity, strat, initial_capital, perf_analyzer=None):
+    """生成完整绩效报告 + 事后风险报告（激活 PerformanceAnalyzer / RiskManager）。
+
+    从 _run_backtest_core 抽出，便于单独测试 wiring（无需跑完整 cerebro 回测）。
+
+    :param daily_returns: pd.Series，日收益率
+    :param equity: pd.Series，净值曲线（iloc[-1] 为期末组合价值）
+    :param strat: backtrader Strategy 实例（取 tradeanalyzer 真实交易级胜负），可为 None
+    :param initial_capital: 初始资金
+    :param perf_analyzer: 已构造的 PerformanceAnalyzer（带基准时复用）；None 则用无基准实例
+    :return: (performance_report, risk_report) 两个 dict（或 None 表示该层失败）
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    performance_report = None
+    risk_report = None
+    try:
+        from src.risk import RiskManager
+        # 完整绩效报告（含波动率/卡玛/下行差/VaR/CVaR/交易统计）
+        pa = perf_analyzer or PerformanceAnalyzer(daily_returns.dropna())
+        try:
+            # 注入真实交易级胜负，使胜率/盈亏比准确（generate_report 默认用日线正收益日启发式）
+            if strat is not None:
+                ta = strat.analyzers.getbyname('tradeanalyzer')
+            else:
+                ta = None
+            if ta:
+                rep = ta.get_analysis()
+                won = rep.get('won', {})
+                lost = rep.get('lost', {})
+                wn = won.get('total', 0) if isinstance(won, dict) else 0
+                ln = lost.get('total', 0) if isinstance(lost, dict) else 0
+                pa_report = pa.generate_report()
+                if wn + ln > 0:
+                    pa_report['胜率'] = pa.calculate_win_rate(wn, ln)
+                performance_report = pa_report
+            else:
+                performance_report = pa.generate_report()
+        except Exception as e:
+            logger.warning(f"生成完整绩效报告失败（降级）: {e}")
+            performance_report = pa.generate_report()
+
+        # 事后风险报告：VaR/CVaR/波动率/夏普/当前回撤/压力测试
+        rm = RiskManager(initial_capital=initial_capital)
+        rm.update_portfolio_value(float(equity.iloc[-1]))
+        rr = rm.generate_risk_report(float(equity.iloc[-1]), daily_returns.dropna())
+        # 三个标准压力场景（市场冲击 / 波动放大 / 流动性枯竭）
+        stress = rm.stress_test(daily_returns.dropna(), stress_scenarios=[
+            {'name': '市场冲击', 'shock': -0.20},
+            {'name': '波动放大', 'vol_multiplier': 1.5},
+            {'name': '流动性枯竭', 'liquidity_shock': 0.3},
+        ])
+        rr['stress_test'] = stress
+        risk_report = rr
+    except Exception as e:
+        logger.warning(f"生成风险报告失败（不影响主流程）: {e}")
+    return performance_report, risk_report
+
+
 def _run_backtest_core(
     strategy_name: str,
     stock_code: str,
@@ -952,49 +1011,9 @@ def _run_backtest_core(
         logger.warning(f"获取基准/计算Alpha/Beta失败: {e}")
 
     # ---- 完整绩效报告 + 风险报告（激活休眠的 PerformanceAnalyzer / RiskManager）----
-    performance_report = None
-    risk_report = None
-    try:
-        from src.risk import RiskManager
-        # 完整绩效报告（含波动率/卡玛/下行差/VaR/CVaR/交易统计）。
-        # 若已有带基准的 perf_analyzer 则复用；否则用无基准实例（Alpha/Beta 会缺，但其它指标齐全）。
-        pa = perf_analyzer or PerformanceAnalyzer(daily_returns.dropna())
-        # 注入真实交易级胜负，使胜率/盈亏比准确（generate_report 默认用日线正收益日启发式）
-        try:
-            ta = strat.analyzers.getbyname('tradeanalyzer')
-            if ta:
-                rep = ta.get_analysis()
-                won = rep.get('won', {})
-                lost = rep.get('lost', {})
-                wn = won.get('total', 0) if isinstance(won, dict) else 0
-                ln = lost.get('total', 0) if isinstance(lost, dict) else 0
-                if wn + ln > 0:
-                    # calculate_win_rate 支持 won/lost 位置参数（见 line 118）
-                    pa_report = pa.generate_report()
-                    pa_report['胜率'] = pa.calculate_win_rate(wn, ln)
-                    performance_report = pa_report
-                else:
-                    performance_report = pa.generate_report()
-            else:
-                performance_report = pa.generate_report()
-        except Exception as e:
-            logger.warning(f"生成完整绩效报告失败（降级）: {e}")
-            performance_report = pa.generate_report()
-
-        # 事后风险报告：VaR/CVaR/波动率/夏普/当前回撤/压力测试
-        rm = RiskManager(initial_capital=initial_capital)
-        rm.update_portfolio_value(float(equity.iloc[-1]))
-        rr = rm.generate_risk_report(float(equity.iloc[-1]), daily_returns.dropna())
-        # 三个标准压力场景（市场冲击 / 波动放大 / 流动性枯竭）
-        stress = rm.stress_test(daily_returns.dropna(), stress_scenarios=[
-            {'name': '市场冲击', 'shock': -0.20},
-            {'name': '波动放大', 'vol_multiplier': 1.5},
-            {'name': '流动性枯竭', 'liquidity_shock': 0.3},
-        ])
-        rr['stress_test'] = stress
-        risk_report = rr
-    except Exception as e:
-        logger.warning(f"生成风险报告失败（不影响主流程）: {e}")
+    performance_report, risk_report = _build_enrichment_reports(
+        daily_returns, equity, strat, initial_capital, perf_analyzer=perf_analyzer,
+    )
 
     return {
         "strategy_name": strategy_name,
@@ -1123,10 +1142,13 @@ def run_backtest_json(
             return 0.0
 
     def _safe_any(v, nd=6):
-        """序列化任意指标值：数值→_safe，datetime→ISO str，其它→原值。"""
-        from datetime import datetime as _dt
-        if isinstance(v, _dt):
-            return v.strftime('%Y-%m-%d')
+        """序列化任意指标值：数值→_safe，datetime/Timestamp→ISO str，其它→原值。
+
+        注意 pd.Timestamp 不是 datetime 的子类，需单独判断；
+        PerformanceAnalyzer 的最大回撤起止时间可能是 Timestamp。
+        """
+        if isinstance(v, (datetime, pd.Timestamp)):
+            return pd.Timestamp(v).strftime('%Y-%m-%d')
         if isinstance(v, (int, float, np.floating, np.integer)):
             return _safe(v, nd)
         return v

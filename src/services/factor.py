@@ -10,8 +10,9 @@
 from __future__ import annotations
 
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import numpy as np
 import pandas as pd
@@ -20,7 +21,6 @@ logger = logging.getLogger(__name__)
 
 # 并发取数线程数（复用 daily_recommend 的并发模式）
 try:
-    import os
     _FETCH_CONCURRENCY = max(1, min(int(os.environ.get("QDT_DATA_FETCH_CONCURRENCY", "8")), 32))
 except (TypeError, ValueError):
     _FETCH_CONCURRENCY = 8
@@ -124,7 +124,9 @@ def _build_panels(
         return pd.DataFrame(), pd.DataFrame(), fetched
 
     factor_panel = pd.DataFrame(factor_series_dict)
-    fwd_panel = pd.DataFrame(fwd_dict) if (fwd_dict := fwd_ret_dict) else pd.DataFrame()
+    fwd_panel = pd.DataFrame(fwd_ret_dict)
+    if fwd_panel.empty:
+        return pd.DataFrame(), pd.DataFrame(), fetched
 
     # 对齐到公共日期 + 公共股票（取交集）
     common_codes = sorted(set(factor_panel.columns) & set(fwd_panel.columns))
@@ -136,13 +138,6 @@ def _build_panels(
     factor_panel = factor_panel.loc[common_idx]
     fwd_panel = fwd_panel.loc[common_idx]
     return factor_panel, fwd_panel, fetched
-
-
-def _series_to_json(s: pd.Series) -> List[Dict]:
-    """pd.Series → [{date, value}, ...]（dropna）。"""
-    s = s.dropna()
-    return [{"date": d.strftime("%Y-%m-%d"), "value": float(v) if np.isfinite(v) else None}
-            for d, v in s.items()]
 
 
 def analyze_factor(
@@ -194,28 +189,30 @@ def analyze_factor(
         return {"error": f"因子分析计算失败: {e}"}
 
     # ---- 序列化（FactorAnalyzer 返回嵌套 dict + Series/DataFrame）----
-    def _f(v, nd=6):
+    def round_or_none(v, ndigits=6):
+        """数值四舍五入；NaN/inf/非数值返回 None（区别于 utils.serialize.safe_float
+        返回 0.0 —— 因子分析中缺失值用 None 比 0.0 更准确，0 会误导为"无预测力")。"""
         try:
             fv = float(v)
-            return round(fv, nd) if np.isfinite(fv) else None
+            return round(fv, ndigits) if np.isfinite(fv) else None
         except (TypeError, ValueError):
             return None
 
     ic_stats_out = {
-        "ic_mean": _f(ic_stats.get("ic_mean")),
-        "rank_ic_mean": _f(ic_stats.get("rank_ic_mean")),
-        "ic_ir": _f(ic_stats.get("ic_ir")),
-        "rank_ic_ir": _f(ic_stats.get("rank_ic_ir")),
-        "ic_win_rate": _f(ic_stats.get("ic_win_rate")),
-        "rank_ic_win_rate": _f(ic_stats.get("rank_ic_win_rate")),
-        "ic_positive_rate": _f(ic_stats.get("ic_positive_rate")),
+        "ic_mean": round_or_none(ic_stats.get("ic_mean")),
+        "rank_ic_mean": round_or_none(ic_stats.get("rank_ic_mean")),
+        "ic_ir": round_or_none(ic_stats.get("ic_ir")),
+        "rank_ic_ir": round_or_none(ic_stats.get("rank_ic_ir")),
+        "ic_win_rate": round_or_none(ic_stats.get("ic_win_rate")),
+        "rank_ic_win_rate": round_or_none(ic_stats.get("rank_ic_win_rate")),
+        "ic_positive_rate": round_or_none(ic_stats.get("ic_positive_rate")),
     }
 
     # IC 时序（对齐 ic / rank_ic）
     ic_df = pd.DataFrame({"ic": ic_series, "rank_ic": rank_ic_series}).dropna()
     ic_series_out = [
         {"date": d.strftime("%Y-%m-%d"),
-         "ic": _f(row["ic"]), "rank_ic": _f(row["rank_ic"])}
+         "ic": round_or_none(row["ic"]), "rank_ic": round_or_none(row["rank_ic"])}
         for d, row in ic_df.iterrows()
     ]
 
@@ -226,9 +223,9 @@ def analyze_factor(
         s = quantile_stats[q] or {}
         quant_rows.append({
             "quantile": q,
-            "mean_return": _f(s.get("mean_return")),
-            "sharpe_ratio": _f(s.get("sharpe_ratio")),
-            "win_rate": _f(s.get("win_rate")),
+            "mean_return": round_or_none(s.get("mean_return")),
+            "sharpe_ratio": round_or_none(s.get("sharpe_ratio")),
+            "win_rate": round_or_none(s.get("win_rate")),
         })
 
     # 分层累计收益（quantile_returns DataFrame → 每组 cumprod）
@@ -240,7 +237,7 @@ def analyze_factor(
         for d, row in cum.iterrows():
             quant_cum_out.append({
                 "date": d.strftime("%Y-%m-%d"),
-                "values": [_f(v, 4) for v in row[quant_cols].tolist()],
+                "values": [round_or_none(v, 4) for v in row[quant_cols].tolist()],
             })
         # 附列名（前端需要）
         quant_cum_meta = quant_cols
@@ -256,7 +253,7 @@ def analyze_factor(
         "quantile_labels": quant_cum_meta,
         "monotonicity": {
             "monotonic": bool(mono.get("monotonic", False)),
-            "monotonicity_ratio": _f(mono.get("monotonicity_ratio")),
+            "monotonicity_ratio": round_or_none(mono.get("monotonicity_ratio")),
         },
         "universe_size": len(factor_panel.columns),
         "fetched_count": fetched,
