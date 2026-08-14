@@ -83,6 +83,21 @@ ensure_dir(output_dir)
 app.mount("/output", StaticFiles(directory=output_dir), name="output")
 app.mount("/static", StaticFiles(directory=str(get_web_dir() / "static")), name="static")
 
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """全站安全响应头（nosniff / 禁止内嵌 iframe / 收敛 Referrer 与浏览器权限）。
+
+    不加 CSP：模板与 SPA 依赖 CDN 资源 + 内联脚本，严格 CSP 会直接破坏页面，
+    详见 docs/research/setup-security-benchmark.md。
+    """
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    return response
+
 SPA_DIST_DIR = str(get_frontend_dist_dir())
 _spa_assets_dir = os.path.join(SPA_DIST_DIR, "assets")
 if os.path.isdir(_spa_assets_dir):
@@ -154,9 +169,26 @@ def _handle_error(request: Request, error: Exception, operation: str = "操作")
 # ===========================================================================
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
+    from src.services.system import needs_setup_guide
     return templates.TemplateResponse("index.html", {
         "request": request, "strategies": _get_cached_strategies(),
         "title": "量化策略回测系统", "nav_active": "home",
+        "show_setup_banner": needs_setup_guide(),
+    })
+
+
+@app.get("/setup", response_class=HTMLResponse)
+def setup_guide_page(request: Request):
+    """初次安装引导页：环境自检 + 分步安装 + 常用命令说明。
+
+    plain def：内部探测 PostgreSQL/Redis（短超时），走 FastAPI 线程池避免阻塞事件循环。
+    """
+    from src.services.system import get_setup_status
+    status = get_setup_status()
+    return templates.TemplateResponse("setup.html", {
+        "request": request, "title": "安装引导", "nav_active": "setup",
+        "checks": status["checks"], "needs_setup": status["needs_setup"],
+        "generated_at": status["generated_at"],
     })
 
 
@@ -260,9 +292,13 @@ def sentiment_analysis(request: Request):
         return _handle_error(request, e, "舆情分析页面加载")
 
 
-@app.get("/refresh_sentiment", response_class=HTMLResponse)
+@app.post("/refresh_sentiment", response_class=HTMLResponse)
 def refresh_sentiment_page(request: Request):
-    """强制刷新舆情分析缓存（HTML）"""
+    """强制刷新舆情分析缓存（HTML）。
+
+    POST-only：刷新会触发爬取与缓存写入等副作用，GET 形式易被跨站
+    <img>/<a> 触发（CSRF），见 OWASP 对状态变更 GET 的建议。
+    """
     try:
         from src.services.sentiment import refresh_sentiment
         data = refresh_sentiment()
@@ -289,9 +325,9 @@ def daily_recommend_page(request: Request):
         return _handle_error(request, e, "每日推荐页面加载")
 
 
-@app.get("/refresh_recommend", response_class=HTMLResponse)
+@app.post("/refresh_recommend", response_class=HTMLResponse)
 def refresh_recommend_page(request: Request):
-    """刷新每日推荐（HTML）"""
+    """刷新每日推荐（HTML）。POST-only，理由同 /refresh_sentiment。"""
     try:
         from src.services.recommend import refresh_recommendation
         data = refresh_recommendation()
@@ -594,8 +630,9 @@ async def run_backtest_api(request: Request):
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
-        logger.error(f"回测API失败: {e}")
-        return JSONResponse({"error": f"回测失败: {e}"}, status_code=500)
+        # 500 不回显异常细节（可能泄露内部路径/依赖），完整堆栈只进日志
+        logger.error(f"回测API失败: {e}", exc_info=True)
+        return JSONResponse({"error": "回测失败，请稍后重试"}, status_code=500)
 
 
 @app.post("/api/strategies/compare")
@@ -632,8 +669,8 @@ async def compare_strategies_api(request: Request):
             commission_rate=commission_rate,
         )
     except Exception as e:
-        logger.error(f"策略对比API失败: {e}")
-        return JSONResponse({"error": f"策略对比失败: {e}"}, status_code=500)
+        logger.error(f"策略对比API失败: {e}", exc_info=True)
+        return JSONResponse({"error": "策略对比失败，请稍后重试"}, status_code=500)
 
 
 @app.post("/api/factor/analyze")
@@ -661,8 +698,8 @@ async def analyze_factor_api(request: Request):
             universe=universe, n_quantiles=n_quantiles, forward_period=forward_period,
         )
     except Exception as e:
-        logger.error(f"因子分析API失败: {e}")
-        return JSONResponse({"error": f"因子分析失败: {e}"}, status_code=500)
+        logger.error(f"因子分析API失败: {e}", exc_info=True)
+        return JSONResponse({"error": "因子分析失败，请稍后重试"}, status_code=500)
 
 
 @app.get("/api/kline")
@@ -675,8 +712,8 @@ def get_kline_api(stock_code: str, market: str = "zh_a", days: int = 180):
         from src.services.kline import get_kline
         return get_kline(stock_code, market, days)
     except Exception as e:
-        logger.error(f"获取K线数据失败: {e}")
-        return JSONResponse({"error": f"获取K线数据失败: {e}"}, status_code=500)
+        logger.error(f"获取K线数据失败: {e}", exc_info=True)
+        return JSONResponse({"error": "获取K线数据失败，请稍后重试"}, status_code=500)
 
 
 @app.get("/api/sentiment/data")
@@ -686,8 +723,8 @@ def get_sentiment_data_api():
         from src.services.sentiment import get_sentiment_data
         return get_sentiment_data()
     except Exception as e:
-        logger.error(f"获取舆情数据失败: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        logger.error(f"获取舆情数据失败: {e}", exc_info=True)
+        return JSONResponse({"error": "获取舆情数据失败，请稍后重试"}, status_code=500)
 
 
 @app.get("/api/sentiment")
@@ -702,6 +739,16 @@ def get_sentiment_api():
         logger.error(f"获取舆情分析结果时出错: {e}")
         from datetime import datetime
         return {"error": "获取舆情数据失败", "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+
+@app.get("/api/system/setup-status")
+def get_setup_status_api():
+    """安装引导自检（JSON，供 SPA / 外部脚本）。
+
+    plain def：含 PostgreSQL/Redis 短超时探测，走线程池避免阻塞事件循环。
+    """
+    from src.services.system import get_setup_status
+    return get_setup_status()
 
 
 @app.get("/api/health")
@@ -769,7 +816,10 @@ async def agent_chat(request: Request):
         except Exception as e:
             logger.exception("Agent SSE 失败")
             import json as _json
-            yield 'data: ' + _json.dumps({"type": "error", "content": str(e)}, ensure_ascii=False) + '\n\n'
+            # SSE 错误通道同样不回显异常细节，只给用户可理解的提示
+            yield 'data: ' + _json.dumps(
+                {"type": "error", "content": "AI 助手服务异常，请稍后重试"},
+                ensure_ascii=False) + '\n\n'
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -787,9 +837,32 @@ async def agent_chat_sync(request: Request):
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, status_code=503)
     except Exception as e:
-        logger.error(f"Agent 同步对话失败: {e}")
-        return JSONResponse({"error": f"对话失败: {e}"}, status_code=500)
+        logger.error(f"Agent 同步对话失败: {e}", exc_info=True)
+        return JSONResponse({"error": "对话失败，请稍后重试"}, status_code=500)
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    import argparse
+    from src.utils.env import get_env, get_env_int
+
+    parser = argparse.ArgumentParser(
+        prog="web_app.py",
+        description="EmoQunt Web 服务：FastAPI 后端 + 两个前端（/ Jinja2，/spa/ Vue3 SPA）",
+    )
+    parser.add_argument(
+        "--host", default=get_env("QDT_WEB_HOST", "127.0.0.1"),
+        help="监听地址，默认 127.0.0.1（仅本机可访问）。改为 0.0.0.0 会暴露到局域网，"
+             "请确认信任网络环境。可用环境变量 QDT_WEB_HOST 持久覆盖")
+    parser.add_argument(
+        "--port", type=int, default=get_env_int("QDT_WEB_PORT", 8000),
+        help="监听端口，默认 8000。可用环境变量 QDT_WEB_PORT 持久覆盖")
+    parser.add_argument(
+        "--check-env", action="store_true",
+        help="只运行安装自检（Python/.env/Key/前端构建/缓存层），打印结果后退出，不启动服务")
+    args = parser.parse_args()
+
+    if args.check_env:
+        from src.services.system import run_setup_check_cli
+        raise SystemExit(run_setup_check_cli())
+
+    uvicorn.run(app, host=args.host, port=args.port)

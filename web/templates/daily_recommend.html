@@ -6,9 +6,11 @@
 <div class="card app-card">
     <div class="card-header bg-brand d-flex justify-content-between align-items-center">
         <h4 class="mb-0"><i class="fas fa-star me-2"></i>每日股票推荐</h4>
-        <a href="/refresh_recommend" class="btn btn-light btn-sm">
-            <i class="fas fa-rotate me-1"></i> 刷新推荐
-        </a>
+        <form action="/refresh_recommend" method="post" class="d-inline">
+            <button type="submit" class="btn btn-light btn-sm">
+                <i class="fas fa-rotate me-1"></i> 刷新推荐
+            </button>
+        </form>
     </div>
     <div class="card-body">
         <div class="alert alert-info d-flex align-items-center py-2">
@@ -105,7 +107,7 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    const refreshBtn = document.querySelector('a[href="/refresh_recommend"]');
+    const refreshBtn = document.querySelector('form[action="/refresh_recommend"] button');
     if (refreshBtn) {
         refreshBtn.addEventListener('click', function() {
             showLoading('正在刷新推荐...');

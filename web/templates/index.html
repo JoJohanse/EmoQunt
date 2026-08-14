@@ -3,6 +3,14 @@
 {% block title %}{{ title }}{% endblock %}
 
 {% block content %}
+{% if show_setup_banner %}
+<div class="alert alert-warning d-flex align-items-center justify-content-between flex-wrap gap-2" role="alert">
+    <span><i class="fas fa-triangle-exclamation me-2"></i>检测到系统尚未完成初始配置（缺少 <code>.env</code> 或 LLM API Key）。</span>
+    <a href="/setup" class="btn btn-sm btn-warning text-dark fw-semibold">
+        <i class="fas fa-screwdriver-wrench me-1"></i>查看安装引导
+    </a>
+</div>
+{% endif %}
 <div class="hero-gradient">
     <h1><i class="fas fa-chart-line me-2"></i>欢迎使用 EmoQunt 量化系统</h1>
     <p>结合情绪因子的智能量化策略回测平台 · 让数据驱动你的投资决策</p>

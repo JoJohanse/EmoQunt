@@ -30,3 +30,5 @@ frontend/dist/
 logs/web_app.log
 .slim/
 .zcode/
+stock_data/us/
+gui-test-screenshots/

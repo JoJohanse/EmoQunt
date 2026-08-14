@@ -10,9 +10,11 @@
             {% if update_time %}数据更新时间：{{ update_time }} · {% endif %}热门新闻：{{ news_count }} 条
         </p>
     </div>
-    <a href="/refresh_sentiment" class="btn btn-outline-secondary">
-        <i class="fas fa-rotate me-1"></i> 刷新数据
-    </a>
+    <form action="/refresh_sentiment" method="post">
+        <button type="submit" class="btn btn-outline-secondary">
+            <i class="fas fa-rotate me-1"></i> 刷新数据
+        </button>
+    </form>
 </div>
 
 <!-- 个股情绪分析入口表单（打通孤立的 /analyze_sentiment 路由） -->
@@ -130,7 +132,7 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    const refreshBtn = document.querySelector('a[href="/refresh_sentiment"]');
+    const refreshBtn = document.querySelector('form[action="/refresh_sentiment"] button');
     if (refreshBtn) {
         refreshBtn.addEventListener('click', function() {
             showLoading('正在刷新舆情数据...');

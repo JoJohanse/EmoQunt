@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} · EmoQunt{% endblock %}
+
+{% block content %}
+<div class="page-hero d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+        <h1><i class="fas fa-screwdriver-wrench text-brand me-2"></i>安装引导 · 环境自检</h1>
+        <p class="subtitle mb-0">检测时间：{{ generated_at }} · 初次使用请按下方步骤完成安装，再回到这里确认全部通过</p>
+    </div>
+    <a href="/setup" class="btn btn-brand"><i class="fas fa-rotate me-1"></i> 重新检测</a>
+</div>
+
+{% if needs_setup %}
+<div class="alert alert-warning d-flex align-items-center gap-2" role="alert">
+    <i class="fas fa-triangle-exclamation"></i>
+    <span>存在需要处理的检查项（见下表 <span class="badge bg-danger">失败</span> / <span class="badge bg-warning text-dark">警告</span>），按「修复建议」处理后重新检测。</span>
+</div>
+{% else %}
+<div class="alert alert-success d-flex align-items-center gap-2" role="alert">
+    <i class="fas fa-circle-check"></i>
+    <span>环境自检全部通过，可以直接 <a href="/backtest">开始回测</a>。</span>
+</div>
+{% endif %}
+
+<!-- 环境自检结果 -->
+<div class="card app-card mb-4">
+    <div class="card-header"><i class="fas fa-list-check me-1 text-brand"></i> 环境自检结果</div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th style="width:90px">状态</th>
+                        <th style="width:220px">检查项</th>
+                        <th style="width:280px">当前值</th>
+                        <th>说明 / 修复建议</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for check in checks %}
+                    <tr>
+                        <td>
+                            {% if check.status == 'ok' %}
+                            <span class="badge bg-success"><i class="fas fa-check me-1"></i>正常</span>
+                            {% elif check.status == 'warn' %}
+                            <span class="badge bg-warning text-dark"><i class="fas fa-triangle-exclamation me-1"></i>警告</span>
+                            {% elif check.status == 'fail' %}
+                            <span class="badge bg-danger"><i class="fas fa-xmark me-1"></i>失败</span>
+                            {% else %}
+                            <span class="badge bg-secondary"><i class="fas fa-minus me-1"></i>可选</span>
+                            {% endif %}
+                        </td>
+                        <td class="fw-semibold">{{ check.label }}</td>
+                        <td class="text-muted">{{ check.detail }}</td>
+                        <td>
+                            {% if check.status == 'ok' %}
+                            <span class="text-muted">—</span>
+                            {% else %}
+                            {{ check.hint }}
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 分步安装引导 -->
+<div class="section-title"><i class="fas fa-road"></i> 初次安装步骤</div>
+<div class="row g-4 mb-4">
+    <div class="col-md-6 col-xl-3">
+        <div class="card app-card h-100">
+            <div class="card-body">
+                <div class="feature-icon brand mb-3">1</div>
+                <h6 class="fw-bold">准备环境与依赖</h6>
+                <p class="text-muted small mb-2">Python 3.11+（推荐 conda 环境 <code>qdt</code>），安装依赖：</p>
+                <pre class="mb-0"><code>conda create -n qdt python=3.11
+conda activate qdt
+pip install -r requirements.txt</code></pre>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 col-xl-3">
+        <div class="card app-card h-100">
+            <div class="card-body">
+                <div class="feature-icon warning mb-3">2</div>
+                <h6 class="fw-bold">配置 .env</h6>
+                <p class="text-muted small mb-2">复制模板并填入 LLM API Key（舆情分析/AI 助手用）：</p>
+                <pre class="mb-0"><code>copy .env.example .env
+# Linux/Mac: cp .env.example .env
+# 编辑 .env 填入 API_KEY=sk-...</code></pre>
+                <p class="text-muted small mb-0 mt-2">不配置 Key 时回测功能完全可用，仅舆情类功能不可用。</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 col-xl-3">
+        <div class="card app-card h-100">
+            <div class="card-body">
+                <div class="feature-icon success mb-3">3</div>
+                <h6 class="fw-bold">自检并启动</h6>
+                <p class="text-muted small mb-2">先自检确认无失败项，再启动服务：</p>
+                <pre class="mb-0"><code>python web_app.py --check-env
+python web_app.py</code></pre>
+                <p class="text-muted small mb-0 mt-2">启动后访问 <a href="/">http://127.0.0.1:8000</a>。</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 col-xl-3">
+        <div class="card app-card h-100">
+            <div class="card-body">
+                <div class="feature-icon info mb-3">4</div>
+                <h6 class="fw-bold">可选增强</h6>
+                <ul class="text-muted small mb-0 ps-3">
+                    <li>构建 Vue3 SPA：<code>cd frontend && npm install && npm run build</code></li>
+                    <li>本地缓存层：<code>docker compose up -d</code>（PostgreSQL + Redis）</li>
+                    <li>Tushare 数据主源：.env 中设置 <code>TUSHARE_TOKEN</code></li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 常用命令说明 -->
+<div class="card app-card mb-4">
+    <div class="card-header"><i class="fas fa-terminal me-1 text-brand"></i> 常用命令说明</div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-striped align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th style="width:45%">命令</th>
+                        <th>说明</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>python web_app.py</code></td>
+                        <td>启动 Web 服务（默认 <code>127.0.0.1:8000</code>，仅本机访问）</td>
+                    </tr>
+                    <tr>
+                        <td><code>python web_app.py --check-env</code></td>
+                        <td>安装自检（Python / .env / Key / 前端构建 / 缓存层），存在失败项时退出码为 1</td>
+                    </tr>
+                    <tr>
+                        <td><code>python web_app.py --host 0.0.0.0 --port 8000</code></td>
+                        <td>监听所有网卡（局域网可访问）。<span class="text-danger">注意暴露风险</span>，也可用环境变量 <code>QDT_WEB_HOST</code> / <code>QDT_WEB_PORT</code> 持久覆盖</td>
+                    </tr>
+                    <tr>
+                        <td><code>pytest test/test_backtest.py -v</code></td>
+                        <td>运行回测模块测试（其它套件：<code>test_us_data_sources</code> / <code>test_ashare_data_sources</code> / <code>test_trendradar_notify</code>）</td>
+                    </tr>
+                    <tr>
+                        <td><code>cd frontend && npm install && npm run build</code></td>
+                        <td>构建 Vue3 SPA 到 <code>frontend/dist/</code>（构建后 <code>/spa/*</code> 可用；类型错误会中断构建）</td>
+                    </tr>
+                    <tr>
+                        <td><code>cd frontend && npm run dev</code></td>
+                        <td>SPA 开发服务器（<code>http://localhost:5173/spa/</code>，自动代理 <code>/api</code> 到后端）</td>
+                    </tr>
+                    <tr>
+                        <td><code>docker compose up -d</code></td>
+                        <td>启动本地数据缓存层（PostgreSQL 16 + Redis 7，端口仅绑定 127.0.0.1）</td>
+                    </tr>
+                    <tr>
+                        <td><code>python -m src.data.db healthcheck</code></td>
+                        <td>检查数据缓存层连通性（也可访问 <code>/api/health</code>）</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 环境变量参考 -->
+<div class="card app-card mb-4">
+    <div class="card-header"><i class="fas fa-key me-1 text-brand"></i> 关键环境变量（.env）</div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th style="width:230px">变量</th>
+                        <th style="width:80px">必填</th>
+                        <th>说明</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><code>API_KEY</code> / <code>LLM_BASE_URL</code> / <code>LLM_MODEL</code></td><td>推荐</td><td>舆情分析的 OpenAI 兼容 LLM 配置</td></tr>
+                    <tr><td><code>AGENT_API_KEY</code> / <code>AGENT_BASE_URL</code></td><td>可选</td><td>AI 投资助手独立配置，留空回退上方 API_KEY / LLM_BASE_URL</td></tr>
+                    <tr><td><code>TUSHARE_TOKEN</code></td><td>可选</td><td>Tushare Pro token，配置后成为 A 股数据主源（免费源自动兜底）</td></tr>
+                    <tr><td><code>POSTGRES_*</code> / <code>REDIS_*</code></td><td>可选</td><td>docker compose 启动的本地缓存层连接参数</td></tr>
+                    <tr><td><code>REDIS_PASSWORD</code></td><td>可选</td><td>设置后 Redis 启用 requirepass，应用自动携带密码</td></tr>
+                    <tr><td><code>QDT_DB_CACHE_ENABLED</code> / <code>QDT_REDIS_CACHE_ENABLED</code></td><td>可选</td><td>设为 <code>false</code> 关闭对应缓存层（自动降级到 CSV + 网络数据源）</td></tr>
+                    <tr><td><code>QDT_WEB_HOST</code> / <code>QDT_WEB_PORT</code></td><td>可选</td><td>覆盖服务监听地址/端口（等价于 <code>--host</code> / <code>--port</code>）</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <p class="text-muted small mb-0 mt-2"><i class="fas fa-shield-halved me-1"></i>完整清单见 <code>.env.example</code>；<code>.env</code> 已被 .gitignore 忽略，请勿提交真实密钥。</p>
+    </div>
+</div>
+
+<!-- 安全说明 -->
+<div class="card app-card">
+    <div class="card-header"><i class="fas fa-shield-halved me-1 text-brand"></i> 安全说明</div>
+    <div class="card-body">
+        <ul class="mb-0 ps-3">
+            <li class="mb-2">服务默认只监听 <code>127.0.0.1</code>（仅本机访问）。需要局域网访问时用 <code>--host 0.0.0.0</code> 显式开启，并自行确保网络可信——本项目接口<strong>没有内置鉴权</strong>。</li>
+            <li class="mb-2">所有 API Key 只保存在本地 <code>.env</code>（已 gitignore），不会出现在前端页面或接口响应中。</li>
+            <li class="mb-2">docker compose 的 PostgreSQL / Redis 端口仅绑定 <code>127.0.0.1</code>，不会暴露到局域网；Redis 可通过 <code>REDIS_PASSWORD</code> 启用密码。</li>
+            <li>全站响应带 <code>X-Content-Type-Options</code> / <code>X-Frame-Options</code> / <code>Referrer-Policy</code> 安全头；接口 500 错误不回显内部异常细节。</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}
