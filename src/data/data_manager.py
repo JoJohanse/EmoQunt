@@ -250,22 +250,25 @@ class Stock:
         先查找本地股票数据文件， 若不存在则使用akshare获取
         """
         try:
-            # 检查本地股票数据文件是否存在
-            file_path = os.path.join(self.stock_data_dir,'stocks.csv')
+            file_path = os.path.join(self.stock_data_dir, 'stocks.csv')
             if os.path.exists(file_path):
                 # 读取本地股票数据文件
                 name_list = pd.read_csv(file_path)
-                # 查找匹配的股票名称
-                stock_name = name_list[name_list['code'] == self.stock_code]
-                if not stock_name.empty:
-                    return stock_name.iloc[0]['name']
-                else:
-                    return None
             else:
                 # 使用akshare获取股票代码和名称的映射
-                stock_code_name = ak.stock_info_a_code_name()
-                # 保存到本地文件
-                stock_code_name.to_csv(file_path, index=False)
+                name_list = ak.stock_info_a_code_name()
+                # 保存到本地文件（目录可能尚未创建，先确保存在）
+                os.makedirs(self.stock_data_dir, exist_ok=True)
+                name_list.to_csv(file_path, index=False)
+            # 映射表中 A 股代码为不带前缀的 6 位数字；CSV 回读可能被解析成 int（丢失前导0），统一按字符串比较
+            code = str(self.get_code_without_prefix()) if self.market == 'zh_a' else str(self.stock_code)
+            codes = name_list['code'].astype(str)
+            if self.market == 'zh_a':
+                codes = codes.str.zfill(6)
+            stock_name = name_list[codes == code]
+            if not stock_name.empty:
+                return stock_name.iloc[0]['name']
+            return None
         except Exception as e:
             print(f"获取股票名称失败: {e}")
             return None

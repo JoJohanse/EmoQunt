@@ -168,6 +168,53 @@
     if (checked) applyMarket(checked.value);
 })();
 
+// 本地记忆上次填写的回测参数（localStorage；URL/服务端预选值优先，不对抗 ?strategy_name=/?market= 跳转）
+(function() {
+    const KEY = 'emoqunt:backtest_form';
+    const FIELDS = ['stock_code', 'initial_capital', 'start_date', 'end_date', 'commission_rate'];
+    const params = new URLSearchParams(window.location.search);
+    const hasPreselect = params.has('strategy_name') || params.has('market');
+
+    // 恢复：仅当本次不是从策略页等入口带参跳转时，才回填市场/策略；其余字段总是回填
+    try {
+        const saved = JSON.parse(localStorage.getItem(KEY) || 'null');
+        if (saved) {
+            if (!hasPreselect && (saved.market === 'us' || saved.market === 'zh_a')) {
+                const radio = document.getElementById(saved.market === 'us' ? 'market_us' : 'market_zh');
+                if (radio && !radio.checked) {
+                    radio.checked = true;
+                    radio.dispatchEvent(new Event('change'));
+                }
+            }
+            if (!hasPreselect) {
+                const sel = document.getElementById('strategy_name');
+                if (sel && saved.strategy_name && Array.from(sel.options).some(function(o) { return o.value === saved.strategy_name; })) {
+                    sel.value = saved.strategy_name;
+                }
+            }
+            FIELDS.forEach(function(f) {
+                const el = document.getElementById(f);
+                if (el && saved[f] !== undefined && saved[f] !== '') el.value = saved[f];
+            });
+        }
+    } catch (e) { /* 本地数据损坏时忽略 */ }
+
+    // 提交时保存
+    document.getElementById('backtestForm').addEventListener('submit', function() {
+        try {
+            const checkedRadio = document.querySelector('input[name="market"]:checked');
+            const data = { market: checkedRadio ? checkedRadio.value : 'zh_a' };
+            FIELDS.forEach(function(f) {
+                const el = document.getElementById(f);
+                if (el) data[f] = el.value;
+            });
+            const sel = document.getElementById('strategy_name');
+            if (sel && sel.value) data.strategy_name = sel.value;
+            localStorage.setItem(KEY, JSON.stringify(data));
+        } catch (e) { /* 存储不可用时静默降级 */ }
+    });
+})();
+
 document.getElementById('backtestForm').addEventListener('submit', function() {
     const btn = this.querySelector('button[type="submit"]');
     if (btn) { btn.disabled = true; }
