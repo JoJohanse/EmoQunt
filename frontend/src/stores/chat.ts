@@ -3,7 +3,9 @@ import { ref } from 'vue'
 import type { ChatMessage, SseEvent } from '@/api/types'
 import { chatStream } from '@/api/chat'
 
-export const useChatStore = defineStore('chat', () => {
+export const useChatStore = defineStore(
+  'chat',
+  () => {
   const messages = ref<ChatMessage[]>([
     {
       role: 'assistant',
@@ -30,6 +32,10 @@ export const useChatStore = defineStore('chat', () => {
 
     // 追加用户消息
     messages.value.push({ role: 'user', content: trimmed })
+    // 对话记录上限 100 条，超出时截掉最旧的消息（本地持久化体积可控）
+    if (messages.value.length > 100) {
+      messages.value = messages.value.slice(-100)
+    }
     // 占位 assistant 消息（流式填充）
     const assistantMsg: ChatMessage = {
       role: 'assistant',
@@ -83,4 +89,17 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   return { messages, loading, drawerOpen, toggleDrawer, openDrawer, send, cancel, clear }
+}, {
+  // 本地持久化：对话记录刷新后保留（只存消息；恢复时清理流式标记并截断上限）
+  persist: {
+    pick: ['messages'],
+    revive: (state: Record<string, any>) => {
+      const msgs = Array.isArray(state.messages) ? state.messages : []
+      const trimmed = msgs.slice(-100)
+      for (const m of trimmed) {
+        m.streaming = false
+      }
+      return { messages: trimmed }
+    },
+  },
 })

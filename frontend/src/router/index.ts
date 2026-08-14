@@ -1,7 +1,9 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
+// SPA 由 FastAPI 托管在 /spa/* 前缀下（dev 时 Vite 的 SPA fallback 同样支持 /spa/ 路径），
+// 因此 router base 固定为 /spa/；构建产物的静态资源仍走绝对路径 /assets/...，不受影响。
 const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
+  history: createWebHistory('/spa/'),
   routes: [
     {
       path: '/',

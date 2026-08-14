@@ -7,6 +7,7 @@ Web界面 - 量化策略回测系统
 两个前端（Jinja2 @ / 和 Vue3 SPA @ /spa/*）共享同一组 service 接口。
 """
 from fastapi import FastAPI, Request, Form
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -174,7 +175,7 @@ async def backtest_form(request: Request):
 
 
 @app.post("/run_backtest", response_class=HTMLResponse)
-async def run_backtest(
+def run_backtest(
     request: Request,
     strategy_name: str = Form(...),
     initial_capital: float = Form(100000.0),
@@ -245,7 +246,7 @@ async def strategies_list(request: Request):
 
 
 @app.get("/sentiment", response_class=HTMLResponse)
-async def sentiment_analysis(request: Request):
+def sentiment_analysis(request: Request):
     """舆情分析页面（HTML）"""
     try:
         from src.services.sentiment import get_sentiment_data
@@ -260,7 +261,7 @@ async def sentiment_analysis(request: Request):
 
 
 @app.get("/refresh_sentiment", response_class=HTMLResponse)
-async def refresh_sentiment_page(request: Request):
+def refresh_sentiment_page(request: Request):
     """强制刷新舆情分析缓存（HTML）"""
     try:
         from src.services.sentiment import refresh_sentiment
@@ -276,7 +277,7 @@ async def refresh_sentiment_page(request: Request):
 
 
 @app.get("/daily_recommend", response_class=HTMLResponse)
-async def daily_recommend_page(request: Request):
+def daily_recommend_page(request: Request):
     """每日推荐页面（HTML）"""
     try:
         from src.services.recommend import get_recommendation
@@ -289,7 +290,7 @@ async def daily_recommend_page(request: Request):
 
 
 @app.get("/refresh_recommend", response_class=HTMLResponse)
-async def refresh_recommend_page(request: Request):
+def refresh_recommend_page(request: Request):
     """刷新每日推荐（HTML）"""
     try:
         from src.services.recommend import refresh_recommendation
@@ -302,7 +303,7 @@ async def refresh_recommend_page(request: Request):
 
 
 @app.post("/analyze_sentiment", response_class=HTMLResponse)
-async def analyze_sentiment(request: Request, strategy: str = Form(...), stock_code: str = Form("000001")):
+def analyze_sentiment(request: Request, strategy: str = Form(...), stock_code: str = Form("000001")):
     """执行个股舆情分析并显示结果（HTML）"""
     strategy = sanitize_string(strategy, 50)
     stock_code = sanitize_string(stock_code, 10)
@@ -583,7 +584,8 @@ async def run_backtest_api(request: Request):
 
         from src.backtest.backtest_manager import run_backtest_json
         benchmark_index = "SP500" if market == "us" else "000300"
-        return run_backtest_json(
+        return await run_in_threadpool(
+            run_backtest_json,
             strategy_name=strategy_name, stock_code=stock_code,
             start_date=start_date, end_date=end_date,
             initial_capital=initial_capital, commission_rate=commission_rate,
@@ -622,7 +624,8 @@ async def compare_strategies_api(request: Request):
             return JSONResponse({"error": error}, status_code=400)
 
         from src.services.strategy_compare import compare_strategies
-        return compare_strategies(
+        return await run_in_threadpool(
+            compare_strategies,
             strategy_names=names, stock_code=stock_code,
             start_date=start_date, end_date=end_date,
             market=market, initial_capital=initial_capital,
@@ -652,7 +655,8 @@ async def analyze_factor_api(request: Request):
         forward_period = int(payload.get("forward_period", 5))
 
         from src.services.factor import analyze_factor
-        return analyze_factor(
+        return await run_in_threadpool(
+            analyze_factor,
             factor_type=factor_type, start_date=start_date, end_date=end_date,
             universe=universe, n_quantiles=n_quantiles, forward_period=forward_period,
         )
@@ -662,7 +666,7 @@ async def analyze_factor_api(request: Request):
 
 
 @app.get("/api/kline")
-async def get_kline_api(stock_code: str, market: str = "zh_a", days: int = 180):
+def get_kline_api(stock_code: str, market: str = "zh_a", days: int = 180):
     """K线 OHLCV 数据（供首页看板蜡烛图）"""
     try:
         valid, error = validate_stock_code(stock_code, market=market)
@@ -676,7 +680,7 @@ async def get_kline_api(stock_code: str, market: str = "zh_a", days: int = 180):
 
 
 @app.get("/api/sentiment/data")
-async def get_sentiment_data_api():
+def get_sentiment_data_api():
     """舆情数据（JSON，供 Vue3）"""
     try:
         from src.services.sentiment import get_sentiment_data
@@ -687,7 +691,7 @@ async def get_sentiment_data_api():
 
 
 @app.get("/api/sentiment")
-async def get_sentiment_api():
+def get_sentiment_api():
     """舆情分析结果（旧 JSON 接口，含行业详情）"""
     try:
         from src.services.sentiment import get_sentiment_data
@@ -715,7 +719,7 @@ async def health_api():
 
 
 @app.get("/api/daily-recommend")
-async def get_daily_recommend_api():
+def get_daily_recommend_api():
     """每日推荐（JSON，供 Vue3）"""
     try:
         from src.services.recommend import get_recommendation
@@ -726,7 +730,7 @@ async def get_daily_recommend_api():
 
 
 @app.get("/api/daily-recommend/refresh")
-async def refresh_daily_recommend_api():
+def refresh_daily_recommend_api():
     """刷新每日推荐（JSON）"""
     try:
         from src.services.recommend import refresh_recommendation
@@ -779,7 +783,7 @@ async def agent_chat_sync(request: Request):
         if not messages:
             return JSONResponse({"error": "消息不能为空"}, status_code=400)
         from src.agent import run_agent
-        return {"reply": run_agent(messages)}
+        return {"reply": await run_in_threadpool(run_agent, messages)}
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, status_code=503)
     except Exception as e:

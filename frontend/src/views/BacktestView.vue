@@ -1,9 +1,14 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { backtestApi, strategyApi } from '@/api'
-import type { BacktestRequest, BacktestResult, Market, StrategyDetail } from '@/api/types'
+import type { BacktestMetrics, BacktestRequest, BacktestResult, Market, StrategyDetail } from '@/api/types'
+import { useBacktestHistoryStore } from '@/stores/backtestHistory'
 import { VChart } from '@/composables/useECharts'
+
+const route = useRoute()
+const historyStore = useBacktestHistoryStore()
 
 const strategies = ref<StrategyDetail[]>([])
 const loading = ref(false)
@@ -18,6 +23,19 @@ const form = ref<BacktestRequest>({
   commission_rate: 0.0003,
   market: 'zh_a',
 })
+
+// 恢复上次填写的表单（本地持久化）；首页"重跑"通过 historyId 覆盖
+if (historyStore.lastForm) {
+  form.value = { ...historyStore.lastForm }
+}
+const historyId = route.query.historyId as string | undefined
+if (historyId) {
+  const rec = historyStore.records.find((r) => r.id === historyId)
+  if (rec) {
+    form.value = { ...rec.params }
+    ElMessage.info(`已回填历史回测参数：${rec.strategyName} · ${rec.stockCode}`)
+  }
+}
 
 // 加载策略列表
 ;(async () => {
@@ -56,6 +74,8 @@ async function runBacktest() {
   result.value = null
   try {
     result.value = await backtestApi.run(form.value)
+    // 记录回测历史并记忆表单（localStorage，首页"最近回测"展示）
+    historyStore.add(form.value, result.value)
     ElMessage.success('回测完成')
   } catch (e: any) {
     ElMessage.error('回测失败：' + e.message)
@@ -70,7 +90,7 @@ const metricCards = computed(() => {
   const m = result.value.metrics
   const fmtPct = (v: number) => (v * 100).toFixed(2) + '%'
   const fmtNum = (v: number) => v.toFixed(2)
-  const opt = (key: string, label: string, fmt: (v: number) => string, type: (v: number) => 'success' | 'danger' | 'neutral', group: string) =>
+  const opt = (key: keyof BacktestMetrics, label: string, fmt: (v: number) => string, type: (v: number) => 'success' | 'danger' | 'neutral', group: string) =>
     m[key] !== undefined ? [{ label, value: fmt(m[key] as number), type: type(m[key] as number), group }] : []
   return [
     { label: '总收益率', value: fmtPct(m.总收益率), type: m.总收益率 >= 0 ? 'success' : 'danger', group: 'return' },

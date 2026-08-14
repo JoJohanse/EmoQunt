@@ -16,9 +16,8 @@ Guidance for OpenCode agents working in this repo. EmoQunt is a sentiment-driven
 - Heavy deps: `torch`, `transformers`, `modelscope` are in `requirements.txt` (used by LLM/model layer) — installs are large.
 
 ### Frontend (Vue3 SPA, `frontend/`)
-- Dev server: `npm run dev` (Vite on `:5173`, proxies `/api` → `127.0.0.1:8000`)
-- Build (served by FastAPI in prod): `npm run build` — runs `vue-tsc -b && vite build`, so **type errors fail the build**
-- Type-check only: `npm run type-check`
+- Dev server: `npm run dev` (Vite on `:5173`, proxies `/api` → `127.0.0.1:8000`). The SPA router base is fixed to **`/spa/`** (`frontend/src/router/index.ts`), so in dev open `http://localhost:5173/spa/` — the bare `/` shows an empty `<main>` (no route matches).
+- Build (served by FastAPI in prod): `npm run build` — runs `vue-tsc -b && vite build`, so **type errors fail the build**. Note `vue-tsc -b` is stricter than `npm run type-check` (`--noEmit` skips project references).
 - Build output `frontend/dist/` is auto-served by `web_app.py` at `/assets` + `/spa/*` fallback; if unbuilt, `/spa/*` returns 503.
 
 ## Architecture & wiring (non-obvious)
@@ -38,6 +37,9 @@ Guidance for OpenCode agents working in this repo. EmoQunt is a sentiment-driven
 - **`nes_data/trendradar/main.py` is NOT a normal importable module** (no proper package layout). `trendradar.py` *is* importable as `from nes_data.trendradar.trendradar import ...`. Tests load `main.py` via `importlib.util.spec_from_file_location`. Don't `import nes_data.trendradar.main`.
 - **Sentiment filter is look-ahead-safe**: backtests use only the snapshot dated on or before the backtest day, from `nes_data/sentiment_results/{YYYYMMDD}.json`. Don't introduce future-snapshot access.
 - **Both frontends consume the same `/api/*` endpoints.** Jinja2 routes render server-side (`web/templates/`, `base.html` inheritance, `web/static/css/app.css` design tokens); the Vue3 SPA (`frontend/src/`) calls `/api` via axios and is mounted under `/spa/*`.
+- **Data-heavy HTTP handlers must NOT block the event loop** (`web_app.py`): kline/sentiment/recommend/analyze/HTML-data handlers are plain `def` (FastAPI runs them in its threadpool); JSON-body POSTs (`/api/backtest/run`, `/api/strategies/compare`, `/api/factor/analyze`, `/api/agent/chat/sync`) stay `async def` but wrap the blocking service call in `await run_in_threadpool(...)`. Reverting these to `async def` + direct sync calls freezes the whole server for the duration of one slow akshare fetch (symptom: SPA chunk requests time out, navigation appears dead). The SSE `/api/agent/chat` is a true async generator — leave it.
+- **SPA local persistence layer**: `frontend/src/stores/persist.ts` is a zero-dependency Pinia plugin (opt-in via `defineStore(id, setupFn, { persist: true | { key?, pick?, revive? } })`), persisting state to `localStorage` under the `emoqunt:` prefix with silent try/catch degradation. Persisted stores: `ui` (theme/sidebar collapse), `watchlist` (自选股 + last chart target), `backtestHistory` (回测摘要 + 上次表单, max 20 records), `chat` (messages, capped at 100, `streaming` flags stripped on revive). The Jinja2 backtest form remembers last inputs via inline script in `web/templates/backtest_form.html` (key `emoqunt:backtest_form`; URL/query preselection wins over localStorage).
+- **Homepage/nav UX benchmarks**: research on similar open-source projects (FreqUI/OpenBB/Ghostfolio/QUANTAXIS/admin templates) and the decisions taken from it live in `docs/research/homepage-ui-benchmark.md`.
 
 ## Testing quirks
 
