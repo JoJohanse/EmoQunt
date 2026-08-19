@@ -13,6 +13,12 @@
 
 启用开关：QDT_DB_CACHE_ENABLED / QDT_REDIS_CACHE_ENABLED（默认 true）。
 
+持久化加固：
+- PG 轻度连接池化：可选 psycopg_pool.ConnectionPool(min_size=1,max_size=5,open=False)，
+  未安装则回退单连接；提供幂等 init_pool()/close_pool() 供 lifespan 统一开关。
+- Redis 支持 REDIS_PASSWORD 可选密码。
+- TTL 分层：当日 300s / 历史 7d ±10% jitter。
+
 CLI：
     python -m src.data.db init        # 手动建表/索引（幂等）
     python -m src.data.db healthcheck # 打印连通性
@@ -20,6 +26,9 @@ CLI：
 from __future__ import annotations
 
 import logging
+import random
+import time
+from contextlib import contextmanager
 from io import BytesIO
 from typing import Optional
 
@@ -34,10 +43,17 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 DB_CACHE_ENABLED = get_env_bool("QDT_DB_CACHE_ENABLED", default=True)
 REDIS_CACHE_ENABLED = get_env_bool("QDT_REDIS_CACHE_ENABLED", default=True)
-REDIS_TTL_SECONDS = get_env_int("QDT_REDIS_TTL_SECONDS", default=86400)  # 1 天
+# TTL：若 QDT_REDIS_TTL_SECONDS 被显式配置则作为固定 TTL，否则按分层动态（当日 300s / 历史 7d±jitter）
+_redis_ttl_env_raw = get_env("QDT_REDIS_TTL_SECONDS", "")
+REDIS_TTL_SECONDS = get_env_int("QDT_REDIS_TTL_SECONDS", default=86400)
+
+# TTL 分层常量
+_TTL_TODAY = 300
+_TTL_HISTORY = 604800  # 7d
 
 # 单例连接（懒加载，首次调用才连，避免 import 副作用）
-_pg_pool = None  # psycopg 连接（autocommit）
+_pg_pool = None  # psycopg 连接 或 psycopg_pool.ConnectionPool
+_pg_is_pool = False
 _redis_client = None
 _init_done = False
 
@@ -59,19 +75,101 @@ def _pg_dsn() -> str:
     return f"host={host} port={port} dbname={db} user={user} password={pwd}"
 
 
+def _ensure_pg_initialized() -> None:
+    """尝试初始化 PG 连接池（可选 psycopg_pool），未安装或失败则静默回退。
+
+    幂等：已初始化或熔断期内直接返回。仅在 pool 可用时创建 pool，
+    否则交由 _get_pg 懒创建单连接。
+    """
+    global _pg_pool, _pg_is_pool, _pg_unavailable_until
+    if not DB_CACHE_ENABLED:
+        return
+    if _pg_pool is not None or _pg_is_pool:
+        return
+    if time.monotonic() < _pg_unavailable_until:
+        return
+    pool = None
+    try:
+        from psycopg_pool import ConnectionPool  # type: ignore
+
+        pool = ConnectionPool(
+            _pg_dsn(), min_size=1, max_size=5, open=False, timeout=3,
+            kwargs={"autocommit": True, "connect_timeout": 3},
+        )
+        pool.open(wait=True, timeout=3)
+        # 建表（幂等）
+        with pool.connection() as conn:
+            _ensure_schema(conn)
+        _pg_pool = pool
+        _pg_is_pool = True
+        logger.info("PostgreSQL 连接池已初始化 (psycopg_pool)")
+        return
+    except ImportError:
+        # 未安装 psycopg_pool，回退单连接
+        if pool is not None:
+            try:
+                pool.close()
+            except Exception:
+                pass
+        return
+    except Exception as e:
+        logger.warning(f"PostgreSQL 连接池初始化失败，回退单连接: {e}")
+        if pool is not None:
+            try:
+                pool.close()
+            except Exception:
+                pass
+        # 池初始化失败也进入短熔断，避免高频重试池创建
+        _pg_unavailable_until = time.monotonic() + _UNAVAILABLE_RETRY_SECONDS
+        return
+
+
+@contextmanager
+def _pg_conn():
+    """提供 PG 连接的上下文管理器，兼容 pool 与单连接两种模式。
+
+    - pool 模式：with pool.connection() as conn:
+    - 单连接模式：yield 单例连接（不关闭）
+    失败时 yield None。
+    """
+    if not DB_CACHE_ENABLED:
+        yield None
+        return
+    # 懒初始化池（优先）
+    if _pg_pool is None and not _pg_is_pool and time.monotonic() >= _pg_unavailable_until:
+        try:
+            _ensure_pg_initialized()
+        except Exception:
+            pass
+    if _pg_is_pool and _pg_pool is not None:
+        try:
+            with _pg_pool.connection() as conn:  # type: ignore[attr-defined]
+                yield conn
+            return
+        except Exception as e:
+            logger.debug(f"PG pool 获取连接失败: {e}")
+            yield None
+            return
+    # 单连接模式
+    conn = _get_pg()
+    yield conn
+
+
 def _get_pg():
     """获取 psycopg 连接单例；不可用返回 None。
 
     连接失败后做"熔断"：30 秒内不再重试，避免 DB 未启动时每次调用都
     等待 connect_timeout（默认 ~21s on Windows）拖垮高频路径。
+    pool 模式下此函数不创建连接，返回 None 由 _pg_conn 处理。
     """
-    global _pg_pool, _pg_unavailable_until
+    global _pg_pool, _pg_unavailable_until, _pg_is_pool
     if not DB_CACHE_ENABLED:
+        return None
+    if _pg_is_pool and _pg_pool is not None:
         return None
     if _pg_pool is not None:
         return _pg_pool
-    import time as _time
-    if _time.monotonic() < _pg_unavailable_until:
+    if time.monotonic() < _pg_unavailable_until:
         return None  # 熔断期内直接跳过
     try:
         import psycopg
@@ -83,7 +181,7 @@ def _get_pg():
     except Exception as e:
         logger.warning(f"PostgreSQL 连接失败，缓存层降级到 CSV/网络（30s 内不再重试）: {e}")
         _pg_pool = None
-        _pg_unavailable_until = _time.monotonic() + _UNAVAILABLE_RETRY_SECONDS
+        _pg_unavailable_until = time.monotonic() + _UNAVAILABLE_RETRY_SECONDS
     return _pg_pool
 
 
@@ -91,21 +189,24 @@ def _get_redis():
     """获取 Redis 客户端单例；不可用返回 None。
 
     同 _get_pg 的熔断策略：失败后 30s 内不再重试。
+    支持 REDIS_PASSWORD 可选密码。
     """
     global _redis_client, _redis_unavailable_until
     if not REDIS_CACHE_ENABLED:
         return None
     if _redis_client is not None:
         return _redis_client
-    import time as _time
-    if _time.monotonic() < _redis_unavailable_until:
+    if time.monotonic() < _redis_unavailable_until:
         return None
     try:
         import redis
         host = get_env("REDIS_HOST", "127.0.0.1")
         port = int(get_env("REDIS_PORT", "6379"))
+        pwd = get_env("REDIS_PASSWORD", "")
+        if pwd is not None and str(pwd).strip() == "":
+            pwd = None
         _redis_client = redis.Redis(
-            host=host, port=port, socket_connect_timeout=2,
+            host=host, port=port, password=pwd, socket_connect_timeout=2,
             socket_timeout=2, decode_responses=False,
         )
         _redis_client.ping()
@@ -113,8 +214,56 @@ def _get_redis():
     except Exception as e:
         logger.warning(f"Redis 连接失败，热缓存降级（30s 内不再重试）: {e}")
         _redis_client = None
-        _redis_unavailable_until = _time.monotonic() + _UNAVAILABLE_RETRY_SECONDS
+        _redis_unavailable_until = time.monotonic() + _UNAVAILABLE_RETRY_SECONDS
     return _redis_client
+
+
+def init_pool() -> None:
+    """幂等初始化 PG 与 Redis 连接（供 web_app lifespan 调用）。失败静默降级。"""
+    if DB_CACHE_ENABLED:
+        try:
+            _ensure_pg_initialized()
+            if not _pg_is_pool:
+                _get_pg()
+        except Exception as e:
+            logger.debug(f"init_pool PG 失败: {e}")
+    if REDIS_CACHE_ENABLED:
+        try:
+            _get_redis()
+        except Exception as e:
+            logger.debug(f"init_pool Redis 失败: {e}")
+
+
+def close_pool() -> None:
+    """幂等关闭 PG 与 Redis 连接并重置熔断标记。"""
+    global _pg_pool, _pg_is_pool, _pg_unavailable_until, _init_done
+    global _redis_client, _redis_unavailable_until
+    # PG
+    try:
+        if _pg_pool is not None:
+            try:
+                _pg_pool.close()
+            except Exception:
+                pass
+    except Exception as e:
+        logger.debug(f"PG close 失败: {e}")
+    finally:
+        _pg_pool = None
+        _pg_is_pool = False
+        _pg_unavailable_until = 0.0
+        _init_done = False
+    # Redis
+    try:
+        if _redis_client is not None:
+            try:
+                _redis_client.close()
+            except Exception:
+                pass
+    except Exception as e:
+        logger.debug(f"Redis close 失败: {e}")
+    finally:
+        _redis_client = None
+        _redis_unavailable_until = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +353,31 @@ def _df_from_bytes(data: bytes) -> pd.DataFrame:
 def _redis_key(code: str, market: str, adjust: str, start: str, end: str) -> str:
     return f"stock:{market}:{adjust}:{code}:{start or '_'}:{end or '_'}"
 
+def _redis_latest_key(code: str, market: str, adjust: str) -> str:
+    """按 code 全量的 latest 键，替代空窗口键，避免陈旧窗口误命中。"""
+    return f"stock:{market}:{adjust}:{code}:latest"
+
+
+def _redis_ttl_for(dates_max) -> int:
+    """根据数据最大日期动态计算 Redis TTL。
+
+    - 若 QDT_REDIS_TTL_SECONDS 被显式配置则固定返回该值（便于运维覆盖）
+    - 否则：若 end 日期是今天 → 300s（当日数据易变）
+      否则 → 7d ±10% jitter（历史数据稳定，长 TTL + 抖动防雪崩）
+    """
+    if _redis_ttl_env_raw and _redis_ttl_env_raw.strip():
+        return REDIS_TTL_SECONDS
+    try:
+        d = pd.to_datetime(dates_max)
+        today = pd.Timestamp.now().normalize()
+        if d.normalize().date() == today.date():
+            return _TTL_TODAY
+        base = _TTL_HISTORY
+        jitter = random.uniform(0.9, 1.1)
+        return int(base * jitter)
+    except Exception:
+        return _TTL_HISTORY
+
 
 # ---------------------------------------------------------------------------
 # 日期规范化（接受 'YYYYMMDD' / 'YYYY-MM-DD'）
@@ -265,7 +439,7 @@ def get_cached_range(
     start_pg = _to_pg_date(start)
     end_pg = _to_pg_date(end)
 
-    # ① Redis（按精确请求范围键）
+    # ① Redis（精确窗口键 → latest 键兜底）
     r = _get_redis()
     if r is not None:
         try:
@@ -276,44 +450,66 @@ def get_cached_range(
                 if df is not None and not df.empty:
                     logger.debug(f"Redis 命中 {code} ({market}/{adjust})")
                     return df
+            # 精确窗口未命中时，若 latest 键存在且覆盖请求范围则复用（避免浪费）
+            latest_raw = r.get(_redis_latest_key(code, market, adjust))
+            if latest_raw:
+                df = _df_from_bytes(latest_raw)
+                if df is not None and not df.empty and '时间' in df.columns:
+                    need_start = pd.to_datetime(start_pg) if start_pg else None
+                    need_end = pd.to_datetime(end_pg) if end_pg else None
+                    try:
+                        dates = pd.to_datetime(df['时间'])
+                        cov_start = dates.min()
+                        cov_end = dates.max()
+                        if (need_start is None or cov_start <= need_start) and (need_end is None or cov_end >= need_end):
+                            logger.debug(f"Redis latest 命中 {code} ({market}/{adjust})")
+                            # 按请求范围裁剪后返回（保证契约）
+                            m = pd.Series([True] * len(df))
+                            if need_start is not None:
+                                m &= dates >= need_start
+                            if need_end is not None:
+                                m &= dates <= need_end
+                            return df[m].reset_index(drop=True)
+                    except Exception:
+                        pass
         except Exception as e:
             logger.debug(f"Redis 读取失败，回退 PG: {e}")
 
-    # ② PostgreSQL 范围查询
-    conn = _get_pg()
-    if conn is None:
-        return None
-    try:
-        cols = ', '.join(_PG_COLUMNS)
-        # 动态拼 WHERE：避免 `(%s IS NULL OR ...)` 模式 —— psycopg 对裸 %s 无法推断
-        # DATE 类型做 NULL 比较，会抛 IndeterminateDatatype。在 Python 端判空更稳。
-        clauses = ["code = %s", "adjust = %s"]
-        params = [code, adjust]
-        if start_pg:
-            clauses.append("trade_date >= %s")
-            params.append(start_pg)
-        if end_pg:
-            clauses.append("trade_date <= %s")
-            params.append(end_pg)
-        sql = f"SELECT {cols} FROM stock_daily WHERE {' AND '.join(clauses)} ORDER BY trade_date ASC;"
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-            rows = cur.fetchall()
-        if not rows:
+    # ② PostgreSQL 范围查询（兼容 pool / 单连接）
+    with _pg_conn() as conn:
+        if conn is None:
             return None
-        df = pd.DataFrame(rows, columns=_PG_COLUMNS)
-        # 转中文列名 + 日期类型，与 data_manager 输出契约一致
-        df = df.rename(columns=_PG_TO_ZH)
-        if '时间' in df.columns:
-            df['时间'] = pd.to_datetime(df['时间'])
-        for col in ('开盘', '最高', '最低', '收盘', '成交量', '成交额'):
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-        logger.debug(f"PostgreSQL 命中 {code} ({market}/{adjust}): {len(df)} 行")
-        return df
-    except Exception as e:
-        logger.debug(f"PG 读取失败: {e}")
-        return None
+        try:
+            cols = ', '.join(_PG_COLUMNS)
+            # 动态拼 WHERE：避免 `(%s IS NULL OR ...)` 模式 —— psycopg 对裸 %s 无法推断
+            # DATE 类型做 NULL 比较，会抛 IndeterminateDatatype。在 Python 端判空更稳。
+            clauses = ["code = %s", "adjust = %s"]
+            params = [code, adjust]
+            if start_pg:
+                clauses.append("trade_date >= %s")
+                params.append(start_pg)
+            if end_pg:
+                clauses.append("trade_date <= %s")
+                params.append(end_pg)
+            sql = f"SELECT {cols} FROM stock_daily WHERE {' AND '.join(clauses)} ORDER BY trade_date ASC;"
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                rows = cur.fetchall()
+            if not rows:
+                return None
+            df = pd.DataFrame(rows, columns=_PG_COLUMNS)
+            # 转中文列名 + 日期类型，与 data_manager 输出契约一致
+            df = df.rename(columns=_PG_TO_ZH)
+            if '时间' in df.columns:
+                df['时间'] = pd.to_datetime(df['时间'])
+            for col in ('开盘', '最高', '最低', '收盘', '成交量', '成交额'):
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            logger.debug(f"PostgreSQL 命中 {code} ({market}/{adjust}): {len(df)} 行")
+            return df
+        except Exception as e:
+            logger.debug(f"PG 读取失败: {e}")
+            return None
 
 
 def save_daily(
@@ -352,17 +548,17 @@ def save_daily(
     if not rows:
         return
 
-    # ② PG upsert
-    conn = _get_pg()
-    if conn is not None:
-        try:
-            with conn.cursor() as cur:
-                cur.executemany(_UPSERT_SQL, rows)
-            logger.debug(f"PG 写入 {code} ({market}/{adjust}): {len(rows)} 行")
-        except Exception as e:
-            logger.warning(f"PG 写入失败（不影响主流程）: {e}")
+    # ② PG upsert（兼容 pool / 单连接）
+    with _pg_conn() as conn:
+        if conn is not None:
+            try:
+                with conn.cursor() as cur:
+                    cur.executemany(_UPSERT_SQL, rows)
+                logger.debug(f"PG 写入 {code} ({market}/{adjust}): {len(rows)} 行")
+            except Exception as e:
+                logger.warning(f"PG 写入失败（不影响主流程）: {e}")
 
-    # ① Redis 回填（用整段 df 的起止日期作 key）
+    # ① Redis 回填（用整段 df 的起止日期作 key，TTL 分层）
     r = _get_redis()
     if r is not None:
         try:
@@ -370,12 +566,12 @@ def save_daily(
             if not dates.empty:
                 start_s = dates.min().strftime('%Y%m%d')
                 end_s = dates.max().strftime('%Y%m%d')
+                ttl = _redis_ttl_for(dates.max())
                 key = _redis_key(code, market, adjust, start_s, end_s)
-                r.setex(REDIS_TTL_SECONDS, _df_to_bytes(df))
-                # 也存一个不带范围的"最新窗口"键，便于无参查询命中
-                # （Redis SETEX 签名: setex(name, time, value)）
-                r.setex(_redis_key(code, market, adjust, '', ''),
-                        REDIS_TTL_SECONDS, _df_to_bytes(df))
+                r.setex(key, ttl, _df_to_bytes(df))
+                # 也存一个按 code 全量的 latest 键，便于无参查询命中（替代空窗口键）
+                latest_key = _redis_latest_key(code, market, adjust)
+                r.setex(latest_key, ttl, _df_to_bytes(df))
         except Exception as e:
             logger.debug(f"Redis 回填失败: {e}")
 
@@ -391,38 +587,36 @@ def get_latest_date(
     """
     if not DB_CACHE_ENABLED:
         return None
-    conn = _get_pg()
-    if conn is None:
+    with _pg_conn() as conn:
+        if conn is None:
+            return None
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT MAX(trade_date) FROM stock_daily WHERE code=%s AND adjust=%s;",
+                    (str(code), adjust),
+                )
+                row = cur.fetchone()
+            if row and row[0]:
+                return str(row[0])
+        except Exception as e:
+            logger.debug(f"PG get_latest_date 失败: {e}")
         return None
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT MAX(trade_date) FROM stock_daily WHERE code=%s AND adjust=%s;",
-                (str(code), adjust),
-            )
-            row = cur.fetchone()
-        if row and row[0]:
-            return str(row[0])
-    except Exception as e:
-        logger.debug(f"PG get_latest_date 失败: {e}")
-    return None
 
 
 def healthcheck() -> dict:
     """返回 {'postgres': bool, 'redis': bool}，供 /api/health 用。"""
     result = {'postgres': False, 'redis': False}
-    if not DB_CACHE_ENABLED:
-        result['postgres'] = False
-    else:
-        conn = _get_pg()
-        if conn is not None:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT 1;")
-                    cur.fetchone()
-                result['postgres'] = True
-            except Exception:
-                result['postgres'] = False
+    if DB_CACHE_ENABLED:
+        with _pg_conn() as conn:
+            if conn is not None:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT 1;")
+                        cur.fetchone()
+                    result['postgres'] = True
+                except Exception:
+                    result['postgres'] = False
     if REDIS_CACHE_ENABLED:
         r = _get_redis()
         if r is not None:
@@ -441,12 +635,15 @@ if __name__ == '__main__':
     import sys
     cmd = sys.argv[1] if len(sys.argv) > 1 else 'healthcheck'
     if cmd == 'init':
-        c = _get_pg()
-        if c is not None:
-            _ensure_schema(c)
-            print("schema 已就绪（CREATE TABLE IF NOT EXISTS）")
-        else:
-            print("PG 不可用"); sys.exit(1)
+        # 显式初始化并建表
+        init_pool()
+        # 若为 pool 模式，_ensure_schema 已在 _ensure_pg_initialized 内执行
+        # 单连接模式下 _get_pg 已触发建表
+        with _pg_conn() as c:
+            if c is not None:
+                print("schema 已就绪（CREATE TABLE IF NOT EXISTS）")
+            else:
+                print("PG 不可用"); sys.exit(1)
     elif cmd == 'healthcheck':
         print(healthcheck())
     else:

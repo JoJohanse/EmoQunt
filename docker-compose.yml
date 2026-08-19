@@ -1,17 +1,20 @@
-# EmoQunt 本地数据基础设施
-# 启动：docker compose up -d
+# EmoQunt 全栈编排
+# 全栈启动：docker compose up -d --build
+# 仅数据层（本地 python 直连）：docker compose up db cache -d
 # 停止：docker compose down（保留数据）
-# 清空数据：docker compose down -v
+# 清空（含数据卷）：docker compose down -v
 #
 # 提供：
-#   - PostgreSQL 16：持久化全历史 OHLCV（src/data/db.py 自动建表）
-#   - Redis 7：热查询缓存（DataFrame 序列化为 parquet bytes，LRU 256MB）
+#   - app：FastAPI + Vue3 SPA 单镜像（直托 frontend/dist，零 CORS），依赖 db/cache 健康
+#   - db：PostgreSQL 16 持久化全历史 OHLCV（src/data/db.py 自动建表）
+#   - cache：Redis 7 热查询缓存（parquet bytes，LRU 256MB，TTL 分层由应用层决定）
 #
-# 连接参数从 .env 读取（POSTGRES_* / REDIS_*）。应用层 (web_app.py) 仍在
-# 本地 python 进程跑，仅数据缓存走这两个容器。
+# 连接参数从 .env 读取（POSTGRES_* / REDIS_* / QDT_WEB_PORT 等）。
+# 本地直连模式仅启动 db/cache，web_app.py 在宿主机 python 进程跑；
+# 全栈模式 app 容器通过 POSTGRES_HOST=db / REDIS_HOST=cache 覆盖本地 .env。
 services:
   db:
-    image: postgres:16-alpine
+    image: docker.m.daocloud.io/library/postgres:16-alpine
     container_name: emoqunt-db
     restart: unless-stopped
     environment:
@@ -29,17 +32,58 @@ services:
       retries: 5
 
   cache:
-    image: redis:7-alpine
+    image: docker.m.daocloud.io/library/redis:7-alpine
     container_name: emoqunt-cache
     restart: unless-stopped
-    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    # REDIS_PASSWORD 可选：若设置则以 --requirepass 启动，否则无密码
+    # TTL 分层由应用层决定（当日 300s / 历史 7d±10% jitter），此处仅做 maxmemory LRU
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command: >-
+      sh -c 'if [ -n "$$REDIS_PASSWORD" ]; then
+        exec redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass "$$REDIS_PASSWORD";
+      else
+        exec redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru;
+      fi'
     ports:
       - "${REDIS_PORT:-6379}:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG; else redis-cli ping | grep -q PONG; fi"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  app:
+    build: .
+    container_name: emoqunt-app
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      REDIS_HOST: cache
+      QDT_WEB_HOST: "0.0.0.0"
+    ports:
+      - "${QDT_WEB_PORT:-8000}:8000"
+    volumes:
+      - ./stock_data:/app/stock_data
+      - ./nes_data:/app/nes_data
+      - ./output:/app/output
+      - ./logs:/app/logs
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,urllib.request,sys; p=os.environ.get('QDT_WEB_PORT','8000'); sys.exit(0 if urllib.request.urlopen(f'http://localhost:{p}/api/health', timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
 volumes:
   pgdata:

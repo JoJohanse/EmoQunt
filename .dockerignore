@@ -1,0 +1,18 @@
+node_modules
+.git
+__pycache__
+.pytest_cache
+.mypy_cache
+stock_data
+logs
+output
+nes_data/sentiment_results
+nes_data/trendradar/output
+.env
+.venv
+.idea
+.vscode
+gui-test-screenshots
+*.log
+# frontend/dist 需随宿主机预构建一并带入镜像（国内离线构建），不要忽略
+# 如需多阶段前端构建（node:20-alpine），再将此行加回：frontend/dist

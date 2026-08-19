@@ -62,13 +62,27 @@ def _preload_strategies():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _preload_strategies()
-    # 数据缓存层连通性日志（PostgreSQL + Redis；连不上不影响启动，自动降级）
+    # 数据缓存层：懒初始化连接（幂等，失败静默降级），再做连通性日志
     try:
-        from src.data.db import healthcheck as _db_healthcheck
-        logger.info(f"数据缓存层状态: {_db_healthcheck()}")
+        from src.data.db import healthcheck as _db_healthcheck, init_pool
+        try:
+            await run_in_threadpool(init_pool)
+        except Exception as e:
+            logger.debug(f"init_pool 失败（已降级）: {e}")
+        try:
+            logger.info(f"数据缓存层状态: {await run_in_threadpool(_db_healthcheck)}")
+        except Exception as e:
+            logger.warning(f"数据缓存层状态检查失败（已降级）: {e}")
     except Exception as e:
         logger.warning(f"数据缓存层状态检查失败（已降级）: {e}")
-    yield
+    try:
+        yield
+    finally:
+        try:
+            from src.data.db import close_pool as _db_close_pool
+            _db_close_pool()
+        except Exception as e:
+            logger.debug(f"close_pool 失败: {e}")
 
 
 app = FastAPI(title="Qdt_test Web Interface", lifespan=lifespan)
@@ -739,6 +753,21 @@ def get_sentiment_api():
         logger.error(f"获取舆情分析结果时出错: {e}")
         from datetime import datetime
         return {"error": "获取舆情数据失败", "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+
+@app.get("/api/sentiment/calendar")
+async def get_sentiment_calendar_api():
+    """情绪历史日历（JSON，供 Vue3 首页/舆情页）。
+
+    仅读取本地快照 JSON，数据量小；用 run_in_threadpool 包裹扫描，避免
+    阻塞事件循环。失败返回空列表，不抛 500。
+    """
+    try:
+        from src.services.sentiment_calendar import get_sentiment_calendar
+        return await run_in_threadpool(get_sentiment_calendar)
+    except Exception as e:
+        logger.error(f"获取情绪日历失败: {e}", exc_info=True)
+        return []
 
 
 @app.get("/api/system/setup-status")
