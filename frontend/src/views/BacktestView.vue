@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { backtestApi, strategyApi } from '@/api'
@@ -36,6 +36,19 @@ if (historyId) {
     ElMessage.info(`已回填历史回测参数：${rec.strategyName} · ${rec.stockCode}`)
   }
 }
+
+watch(
+  () => route.query.historyId,
+  (hid) => {
+    if (typeof hid === 'string' && hid) {
+      const rec = historyStore.records.find((r) => r.id === hid)
+      if (rec) {
+        form.value = { ...rec.params }
+        ElMessage.info(`已回填历史回测参数：${rec.strategyName} · ${rec.stockCode}`)
+      }
+    }
+  },
+)
 
 // 加载策略列表
 ;(async () => {

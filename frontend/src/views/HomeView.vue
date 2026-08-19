@@ -4,14 +4,75 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
 import { klineApi, sentimentApi, recommendApi } from '@/api'
-import type { KlineData, SentimentData, DailyRecommendData, Market } from '@/api/types'
+import type { KlineData, SentimentData, DailyRecommendData, Market, SentimentCalendarItem } from '@/api/types'
 import { useWatchlistStore } from '@/stores/watchlist'
 import { useBacktestHistoryStore } from '@/stores/backtestHistory'
+import { useHomeLayoutStore } from '@/stores/homeLayout'
 import { VChart } from '@/composables/useECharts'
+import SentimentCalendar from '@/components/SentimentCalendar.vue'
 
 const router = useRouter()
 const watchlistStore = useWatchlistStore()
 const historyStore = useBacktestHistoryStore()
+const homeLayoutStore = useHomeLayoutStore()
+
+// ===== 仪表盘可拖拽布局 =====
+const DEFAULT_WIDGETS = [
+  { id: 'quick', title: '快捷入口', icon: 'Histogram' },
+  { id: 'indexes', title: '指数速览', icon: 'TrendCharts' },
+  { id: 'kline', title: '行情看板', icon: 'CandlestickChart' },
+  { id: 'sectors', title: '热门板块', icon: 'Sunrise' },
+  { id: 'news', title: '当日舆情', icon: 'ChatDotRound' },
+  { id: 'recommend', title: '个股推荐', icon: 'Star' },
+] as const
+
+type WidgetId = (typeof DEFAULT_WIDGETS)[number]['id']
+
+const widgetMeta = computed(() => {
+  const meta = new Map<string, { title: string; icon: string }>()
+  for (const w of DEFAULT_WIDGETS) meta.set(w.id, w)
+  return meta
+})
+
+/** 按持久化顺序渲染的 widget 列表 */
+const orderedWidgets = computed(() =>
+  homeLayoutStore.order
+    .map((id) => ({ id, meta: widgetMeta.value.get(id) }))
+    .filter((w): w is { id: WidgetId; meta: { title: string; icon: string } } => Boolean(w.meta)),
+)
+
+// 拖拽重排：dragstart 记录来源索引，dragover 放行，drop 时移动
+const dragFrom = ref<number | null>(null)
+const draggingIndex = ref<number | null>(null)
+
+function onDragStart(event: DragEvent, index: number) {
+  // 仅允许从手柄发起拖拽，避免干扰卡片内输入框/图表的正常交互
+  const handle = (event.target as HTMLElement).closest('.widget-handle')
+  if (!handle) {
+    event.preventDefault()
+    return
+  }
+  dragFrom.value = index
+  draggingIndex.value = index
+}
+function onDragOver() {
+  // HTML5 拖拽必须 preventDefault 才能触发 drop
+}
+function onDrop(targetIndex: number) {
+  const from = dragFrom.value
+  dragFrom.value = null
+  draggingIndex.value = null
+  if (from === null || from === targetIndex) return
+  homeLayoutStore.move(from, targetIndex)
+}
+function onDragEnd() {
+  dragFrom.value = null
+  draggingIndex.value = null
+}
+function resetLayout() {
+  homeLayoutStore.reset()
+  ElMessage.success('已恢复默认布局')
+}
 
 // ===== 大盘指数速览（固定 3 个 A 股指数） =====
 const INDEX_PRESETS = [
@@ -61,6 +122,12 @@ watch(activeKey, () => {
   watchlistStore.lastKey = activeKey.value
   loadKline()
 })
+watch(
+  () => watchlistStore.lastKey,
+  (v) => {
+    if (v && v !== activeKey.value) activeKey.value = v
+  },
+)
 watch(
   () => watchlistStore.items,
   () => {
@@ -142,6 +209,9 @@ function chgColor(market: Market, chgPct: number): string {
   return up ? 'var(--success)' : 'var(--danger)'
 }
 
+// ===== 情绪日历 =====
+const calendar = ref<SentimentCalendarItem[]>([])
+
 // ===== 最近回测（本地持久化） =====
 const recentBacktests = computed(() => historyStore.records.slice(0, 5))
 function fmtTime(ts: string): string {
@@ -164,6 +234,10 @@ async function loadAll() {
   sentimentApi.get().then((d) => (sentiment.value = d)).catch((e: any) => {
     // 舆情数据获取较慢或需联网，失败时静默降级
     console.warn('舆情数据加载失败', e.message)
+  })
+  // 情绪日历（仅读本地快照，失败静默）
+  sentimentApi.calendar().then((d) => (calendar.value = d)).catch((e: any) => {
+    console.warn('情绪日历加载失败', e.message)
   })
   // 推荐
   recommendApi.get().then((d) => (recommend.value = d)).catch((e: any) => {
@@ -261,183 +335,212 @@ function scoreColor(score: number): string {
 
 <template>
   <div class="dashboard">
-    <!-- 快捷入口 -->
-    <el-row :gutter="12" class="quick-row">
-      <el-col v-for="qa in quickActions" :key="qa.path" :xs="12" :sm="8" :md="4">
-        <router-link :to="qa.path" class="quick-card">
-          <el-icon :size="22"><component :is="qa.icon" /></el-icon>
-          <div class="quick-text">
-            <div class="quick-title">{{ qa.title }}</div>
-            <div class="quick-desc">{{ qa.desc }}</div>
-          </div>
-        </router-link>
-      </el-col>
-    </el-row>
+    <!-- 布局工具栏 -->
+    <div class="layout-toolbar">
+      <span class="layout-hint"><el-icon><Rank /></el-icon> 拖动卡片右上角手柄可调整顺序</span>
+      <el-button size="small" text @click="resetLayout">
+        <el-icon><Refresh /></el-icon> 重置布局
+      </el-button>
+    </div>
 
-    <!-- 大盘指数速览 -->
-    <el-row :gutter="12" class="index-row">
-      <el-col v-for="idx in INDEX_PRESETS" :key="idx.code" :xs="24" :sm="8">
-        <div class="index-card">
-          <span class="index-name">{{ idx.name }}</span>
-          <template v-if="quotes[`${idx.code}|${idx.market}`]">
-            <span class="index-close">{{ quotes[`${idx.code}|${idx.market}`].close.toFixed(2) }}</span>
-            <span
-              class="index-chg"
-              :style="{ color: chgColor(idx.market, quotes[`${idx.code}|${idx.market}`].chgPct) }"
-            >
-              {{ quotes[`${idx.code}|${idx.market}`].chgPct >= 0 ? '+' : '' }}{{ quotes[`${idx.code}|${idx.market}`].chgPct.toFixed(2) }}%
-            </span>
-          </template>
-          <span v-else class="index-close index-loading">加载中…</span>
-        </div>
-      </el-col>
-    </el-row>
+    <!-- 可拖拽 widget 容器（按持久化顺序渲染） -->
+    <div
+      v-for="(w, index) in orderedWidgets"
+      :key="w.id"
+      class="widget"
+      :class="{ dragging: draggingIndex === index }"
+      draggable="true"
+      @dragstart="onDragStart($event, index)"
+      @dragend="onDragEnd"
+      @dragover.prevent="onDragOver"
+      @drop.prevent="onDrop(index)"
+    >
+      <!-- 拖拽手柄 -->
+      <div class="widget-handle" :title="`${w.meta.title} · 拖动调整顺序`">
+        <el-icon :size="14"><Rank /></el-icon>
+      </div>
 
-    <!-- 主区：K线图 + 右侧自选/最近回测 -->
-    <el-row :gutter="16">
-      <el-col :xs="24" :md="16">
-        <el-card shadow="never" class="kline-card">
-          <template #header>
-            <div class="kline-header">
-              <span class="section-title" style="margin: 0; border: none; padding: 0">
-                <el-icon><CandlestickChart /></el-icon> 行情看板
-              </span>
-              <el-select
-                v-model="activeKey"
-                placeholder="选择标的"
-                style="width: 200px"
-                filterable
-              >
-                <el-option
-                  v-for="t in watchlistStore.items"
-                  :key="t.code + t.market"
-                  :label="`${t.name} (${t.code})`"
-                  :value="`${t.code}|${t.market}`"
-                />
-              </el-select>
-            </div>
-          </template>
-          <div v-loading="loadingKline" class="kline-body">
-            <v-chart v-if="kline && kline.dates.length" class="kline-chart" :option="klineOption" autoresize />
-            <el-empty v-else-if="!loadingKline" description="暂无K线数据" />
-          </div>
-        </el-card>
-      </el-col>
-
-      <el-col :xs="24" :md="8" class="side-col">
-        <!-- 自选股（本地持久化） -->
-        <el-card shadow="never" class="side-card">
-          <template #header>
-            <span class="section-title" style="margin: 0; border: none; padding: 0">
-              <el-icon><Collection /></el-icon> 自选股
-            </span>
-          </template>
-          <div class="watch-add">
-            <el-input
-              v-model="newCode"
-              :placeholder="newMarket === 'us' ? '美股代码，如 AAPL' : '6位代码，如 600938'"
-              size="small"
-              @keyup.enter="addWatch"
-            />
-            <el-select v-model="newMarket" size="small" style="width: 84px">
-              <el-option label="A股" value="zh_a" />
-              <el-option label="美股" value="us" />
-            </el-select>
-            <el-button type="primary" size="small" :loading="adding" @click="addWatch">
-              <el-icon><Plus /></el-icon>
-            </el-button>
-          </div>
-          <div class="watch-list">
-            <div
-              v-for="item in watchlistStore.items"
-              :key="`${item.code}|${item.market}`"
-              class="watch-item"
-              :class="{ active: activeKey === `${item.code}|${item.market}` }"
-              @click="activeKey = `${item.code}|${item.market}`"
-            >
-              <div class="watch-name">
-                <span class="watch-title">{{ item.name }}</span>
-                <code class="watch-code">{{ item.code }}</code>
+      <!-- quick：快捷入口 -->
+      <template v-if="w.id === 'quick'">
+        <el-row :gutter="12" class="quick-row">
+          <el-col v-for="qa in quickActions" :key="qa.path" :xs="12" :sm="8" :md="4">
+            <router-link :to="qa.path" class="quick-card">
+              <el-icon :size="22"><component :is="qa.icon" /></el-icon>
+              <div class="quick-text">
+                <div class="quick-title">{{ qa.title }}</div>
+                <div class="quick-desc">{{ qa.desc }}</div>
               </div>
-              <template v-if="quotes[`${item.code}|${item.market}`]">
-                <span class="watch-close">{{ quotes[`${item.code}|${item.market}`].close.toFixed(2) }}</span>
+            </router-link>
+          </el-col>
+        </el-row>
+      </template>
+
+      <!-- indexes：大盘指数速览 -->
+      <template v-else-if="w.id === 'indexes'">
+        <el-row :gutter="12" class="index-row">
+          <el-col v-for="idx in INDEX_PRESETS" :key="idx.code" :xs="24" :sm="8">
+            <div class="index-card">
+              <span class="index-name">{{ idx.name }}</span>
+              <template v-if="quotes[`${idx.code}|${idx.market}`]">
+                <span class="index-close">{{ quotes[`${idx.code}|${idx.market}`].close.toFixed(2) }}</span>
                 <span
-                  class="watch-chg"
-                  :style="{ color: chgColor(item.market, quotes[`${item.code}|${item.market}`].chgPct) }"
+                  class="index-chg"
+                  :style="{ color: chgColor(idx.market, quotes[`${idx.code}|${idx.market}`].chgPct) }"
                 >
-                  {{ quotes[`${item.code}|${item.market}`].chgPct >= 0 ? '+' : '' }}{{ quotes[`${item.code}|${item.market}`].chgPct.toFixed(2) }}%
+                  {{ quotes[`${idx.code}|${idx.market}`].chgPct >= 0 ? '+' : '' }}{{ quotes[`${idx.code}|${idx.market}`].chgPct.toFixed(2) }}%
                 </span>
               </template>
-              <span v-else class="watch-close watch-pending">…</span>
-              <el-button
-                class="watch-del"
-                text
-                circle
-                size="small"
-                title="移除自选"
-                @click.stop="removeWatch(item.code, item.market)"
-              >
-                <el-icon :size="14"><Close /></el-icon>
-              </el-button>
+              <span v-else class="index-close index-loading">加载中…</span>
             </div>
-            <el-empty
-              v-if="!watchlistStore.items.length"
-              :image-size="60"
-              description="暂无自选，输入代码添加"
-            />
-          </div>
-        </el-card>
+          </el-col>
+        </el-row>
+      </template>
 
-        <!-- 最近回测（本地持久化） -->
-        <el-card shadow="never" class="side-card">
-          <template #header>
-            <div class="kline-header">
-              <span class="section-title" style="margin: 0; border: none; padding: 0">
-                <el-icon><Clock /></el-icon> 最近回测
-              </span>
-              <el-button
-                v-if="historyStore.records.length"
-                text
-                size="small"
-                type="danger"
-                @click="historyStore.clear()"
-              >
-                清空
-              </el-button>
-            </div>
-          </template>
-          <div class="history-list">
-            <div v-for="r in recentBacktests" :key="r.id" class="history-item">
-              <div class="history-main">
-                <div class="history-head">
-                  <span class="history-strategy">{{ r.strategyName }}</span>
-                  <code class="watch-code">{{ r.stockCode }}</code>
-                  <span class="history-return" :style="{ color: r.totalReturn >= 0 ? 'var(--danger)' : 'var(--success)' }">
-                    {{ (r.totalReturn * 100).toFixed(2) }}%
+      <!-- kline：K线主图 + 右栏自选/最近回测 -->
+      <template v-else-if="w.id === 'kline'">
+        <el-row :gutter="16">
+          <el-col :xs="24" :md="16">
+            <el-card shadow="never" class="kline-card">
+              <template #header>
+                <div class="kline-header">
+                  <span class="section-title" style="margin: 0; border: none; padding: 0">
+                    <el-icon><CandlestickChart /></el-icon> 行情看板
                   </span>
+                  <el-select
+                    v-model="activeKey"
+                    placeholder="选择标的"
+                    style="width: 200px"
+                    filterable
+                  >
+                    <el-option
+                      v-for="t in watchlistStore.items"
+                      :key="t.code + t.market"
+                      :label="`${t.name} (${t.code})`"
+                      :value="`${t.code}|${t.market}`"
+                    />
+                  </el-select>
                 </div>
-                <small class="history-meta">
-                  {{ fmtTime(r.ts) }} · 回撤 {{ (r.maxDrawdown * 100).toFixed(1) }}% · 夏普 {{ r.sharpe.toFixed(2) }}
-                </small>
+              </template>
+              <div v-loading="loadingKline" class="kline-body">
+                <v-chart v-if="kline && kline.dates.length" class="kline-chart" :option="klineOption" autoresize />
+                <el-empty v-else-if="!loadingKline" description="暂无K线数据" />
               </div>
-              <el-button text size="small" type="primary" @click="rerunBacktest(r.id)">
-                <el-icon><VideoPlay /></el-icon> 重跑
-              </el-button>
-            </div>
-            <el-empty
-              v-if="!recentBacktests.length"
-              :image-size="60"
-              description="还没有回测记录"
-            />
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
+            </el-card>
+          </el-col>
 
-    <!-- 下部三栏：热门板块 / 热门舆情 / 个股推荐 -->
-    <el-row :gutter="16" class="info-row">
-      <!-- 热门板块 -->
-      <el-col :xs="24" :md="8">
+          <el-col :xs="24" :md="8" class="side-col">
+            <!-- 自选股（本地持久化） -->
+            <el-card shadow="never" class="side-card">
+              <template #header>
+                <span class="section-title" style="margin: 0; border: none; padding: 0">
+                  <el-icon><Collection /></el-icon> 自选股
+                </span>
+              </template>
+              <div class="watch-add">
+                <el-input
+                  v-model="newCode"
+                  :placeholder="newMarket === 'us' ? '美股代码，如 AAPL' : '6位代码，如 600938'"
+                  size="small"
+                  @keyup.enter="addWatch"
+                />
+                <el-select v-model="newMarket" size="small" style="width: 84px">
+                  <el-option label="A股" value="zh_a" />
+                  <el-option label="美股" value="us" />
+                </el-select>
+                <el-button type="primary" size="small" :loading="adding" @click="addWatch">
+                  <el-icon><Plus /></el-icon>
+                </el-button>
+              </div>
+              <div class="watch-list">
+                <div
+                  v-for="item in watchlistStore.items"
+                  :key="`${item.code}|${item.market}`"
+                  class="watch-item"
+                  :class="{ active: activeKey === `${item.code}|${item.market}` }"
+                  @click="activeKey = `${item.code}|${item.market}`"
+                >
+                  <div class="watch-name">
+                    <span class="watch-title">{{ item.name }}</span>
+                    <code class="watch-code">{{ item.code }}</code>
+                  </div>
+                  <template v-if="quotes[`${item.code}|${item.market}`]">
+                    <span class="watch-close">{{ quotes[`${item.code}|${item.market}`].close.toFixed(2) }}</span>
+                    <span
+                      class="watch-chg"
+                      :style="{ color: chgColor(item.market, quotes[`${item.code}|${item.market}`].chgPct) }"
+                    >
+                      {{ quotes[`${item.code}|${item.market}`].chgPct >= 0 ? '+' : '' }}{{ quotes[`${item.code}|${item.market}`].chgPct.toFixed(2) }}%
+                    </span>
+                  </template>
+                  <span v-else class="watch-close watch-pending">…</span>
+                  <el-button
+                    class="watch-del"
+                    text
+                    circle
+                    size="small"
+                    title="移除自选"
+                    @click.stop="removeWatch(item.code, item.market)"
+                  >
+                    <el-icon :size="14"><Close /></el-icon>
+                  </el-button>
+                </div>
+                <el-empty
+                  v-if="!watchlistStore.items.length"
+                  :image-size="60"
+                  description="暂无自选，输入代码添加"
+                />
+              </div>
+            </el-card>
+
+            <!-- 最近回测（本地持久化） -->
+            <el-card shadow="never" class="side-card">
+              <template #header>
+                <div class="kline-header">
+                  <span class="section-title" style="margin: 0; border: none; padding: 0">
+                    <el-icon><Clock /></el-icon> 最近回测
+                  </span>
+                  <el-button
+                    v-if="historyStore.records.length"
+                    text
+                    size="small"
+                    type="danger"
+                    @click="historyStore.clear()"
+                  >
+                    清空
+                  </el-button>
+                </div>
+              </template>
+              <div class="history-list">
+                <div v-for="r in recentBacktests" :key="r.id" class="history-item">
+                  <div class="history-main">
+                    <div class="history-head">
+                      <span class="history-strategy">{{ r.strategyName }}</span>
+                      <code class="watch-code">{{ r.stockCode }}</code>
+                      <span class="history-return" :style="{ color: r.totalReturn >= 0 ? 'var(--danger)' : 'var(--success)' }">
+                        {{ (r.totalReturn * 100).toFixed(2) }}%
+                      </span>
+                    </div>
+                    <small class="history-meta">
+                      {{ fmtTime(r.ts) }} · 回撤 {{ (r.maxDrawdown * 100).toFixed(1) }}% · 夏普 {{ r.sharpe.toFixed(2) }}
+                    </small>
+                  </div>
+                  <el-button text size="small" type="primary" @click="rerunBacktest(r.id)">
+                    <el-icon><VideoPlay /></el-icon> 重跑
+                  </el-button>
+                </div>
+                <el-empty
+                  v-if="!recentBacktests.length"
+                  :image-size="60"
+                  description="还没有回测记录"
+                />
+              </div>
+            </el-card>
+          </el-col>
+        </el-row>
+      </template>
+
+      <!-- sectors：热门板块 -->
+      <template v-else-if="w.id === 'sectors'">
         <el-card shadow="never" class="info-card">
           <template #header>
             <span class="section-title" style="margin: 0; border: none; padding: 0">
@@ -464,10 +567,10 @@ function scoreColor(score: number): string {
             <el-empty v-if="!(recommend?.top_sectors?.length || sentiment?.sectors?.length)" :image-size="60" description="暂无板块数据" />
           </div>
         </el-card>
-      </el-col>
+      </template>
 
-      <!-- 热门舆情 -->
-      <el-col :xs="24" :md="8">
+      <!-- news：当日舆情 -->
+      <template v-else-if="w.id === 'news'">
         <el-card shadow="never" class="info-card">
           <template #header>
             <span class="section-title" style="margin: 0; border: none; padding: 0">
@@ -486,10 +589,10 @@ function scoreColor(score: number): string {
             <el-empty v-if="!sentiment?.news_list?.length" :image-size="60" description="暂无舆情数据" />
           </div>
         </el-card>
-      </el-col>
+      </template>
 
-      <!-- 个股推荐 -->
-      <el-col :xs="24" :md="8">
+      <!-- recommend：个股推荐 -->
+      <template v-else-if="w.id === 'recommend'">
         <el-card shadow="never" class="info-card">
           <template #header>
             <span class="section-title" style="margin: 0; border: none; padding: 0">
@@ -511,8 +614,20 @@ function scoreColor(score: number): string {
             <el-empty v-if="!recommend?.recommendations?.length" :image-size="60" description="暂无推荐数据" />
           </div>
         </el-card>
-      </el-col>
-    </el-row>
+      </template>
+    </div>
+
+    <!-- 情绪日历 -->
+    <div class="widget">
+      <el-card shadow="never" class="info-card">
+        <template #header>
+          <span class="section-title" style="margin: 0; border: none; padding: 0">
+            <el-icon><Calendar /></el-icon> 情绪日历
+          </span>
+        </template>
+        <SentimentCalendar :calendar="calendar" />
+      </el-card>
+    </div>
   </div>
 </template>
 
@@ -524,6 +639,64 @@ function scoreColor(score: number): string {
 }
 .dashboard > .el-row {
   width: 100%;
+}
+
+/* 布局工具栏 */
+.layout-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+}
+.layout-hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 可拖拽 widget 容器 */
+.widget {
+  position: relative;
+  width: 100%;
+}
+.widget.dragging {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+.widget-handle {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+.widget:hover .widget-handle {
+  opacity: 1;
+}
+.widget-handle:hover {
+  color: var(--brand-start);
+  border-color: var(--brand-start);
+}
+.widget-handle:active {
+  cursor: grabbing;
+}
+@media (pointer: coarse) {
+  .widget-handle {
+    opacity: 1;
+  }
 }
 
 /* 快捷入口 */

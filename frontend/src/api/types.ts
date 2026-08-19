@@ -109,6 +109,20 @@ export interface SentimentData {
   update_time: string
 }
 
+/** 情绪日历单日条目（后端 /api/sentiment/calendar） */
+export interface SentimentCalendarItem {
+  /** 快照日期 YYYY-MM-DD */
+  date: string
+  /** 当日覆盖的行业数（all_sectors 数量） */
+  sectors_count: number
+  /** 当日最强板块情绪分 */
+  top_sentiment: number
+  /** 当日最强板块名称 */
+  top_sector_name: string
+  /** 当日新闻条数 */
+  news_count: number
+}
+
 /** 新闻条目 */
 export interface NewsItem {
   title: string

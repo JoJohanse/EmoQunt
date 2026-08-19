@@ -1,17 +1,35 @@
 <script setup lang="ts">
 import { useRoute } from 'vue-router'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useUiStore } from '@/stores/ui'
+import { useFavoritesStore } from '@/stores/favorites'
 import ChatPanel from '@/components/ChatPanel.vue'
+import AppTabs from '@/components/AppTabs.vue'
+import CommandPalette from '@/components/CommandPalette.vue'
 
 const route = useRoute()
 const activeIndex = computed(() => route.path)
 const pageTitle = computed(() => (route.meta.title as string) ?? '')
 const chatStore = useChatStore()
 const uiStore = useUiStore()
+const favoritesStore = useFavoritesStore()
 
 const isDark = computed(() => uiStore.theme === 'dark')
+const cmdRef = ref<InstanceType<typeof CommandPalette> | null>(null)
+function openCommand() {
+  ;(cmdRef.value as unknown as { open: () => void })?.open?.()
+}
+
+const favTitleMap: Record<string, string> = {
+  '/': '首页',
+  '/backtest': '策略回测',
+  '/strategy-compare': '策略对比',
+  '/factor-analysis': '因子分析',
+  '/sentiment': '舆情分析',
+  '/daily-recommend': '每日推荐',
+  '/strategies': '策略列表',
+}
 </script>
 
 <template>
@@ -38,8 +56,25 @@ const isDark = computed(() => uiStore.theme === 'dark')
         >
           <el-menu-item index="/">
             <el-icon><HomeFilled /></el-icon>
-            <template #title>首页</template>
+            <template #title>
+              <span class="menu-label">首页</span>
+              <el-button text size="small" class="fav-btn" @click.stop="favoritesStore.toggle('/')">
+                <el-icon><StarFilled v-if="favoritesStore.isFavorite('/')" /><Star v-else /></el-icon>
+              </el-button>
+            </template>
           </el-menu-item>
+
+          <!-- 收藏分组：仅当有收藏时显示 -->
+          <el-sub-menu v-if="favoritesStore.paths.length" index="favorites">
+            <template #title>
+              <el-icon><StarFilled /></el-icon>
+              <span>收藏</span>
+            </template>
+            <el-menu-item v-for="p in favoritesStore.paths" :key="p" :index="p">
+              <el-icon><Star /></el-icon>
+              <template #title>{{ favTitleMap[p] ?? p }}</template>
+            </el-menu-item>
+          </el-sub-menu>
 
           <el-sub-menu index="research">
             <template #title>
@@ -48,15 +83,30 @@ const isDark = computed(() => uiStore.theme === 'dark')
             </template>
             <el-menu-item index="/backtest">
               <el-icon><Histogram /></el-icon>
-              <template #title>策略回测</template>
+              <template #title>
+                <span class="menu-label">策略回测</span>
+                <el-button text size="small" class="fav-btn" @click.stop="favoritesStore.toggle('/backtest')">
+                  <el-icon><StarFilled v-if="favoritesStore.isFavorite('/backtest')" /><Star v-else /></el-icon>
+                </el-button>
+              </template>
             </el-menu-item>
             <el-menu-item index="/strategy-compare">
               <el-icon><DataLine /></el-icon>
-              <template #title>策略对比</template>
+              <template #title>
+                <span class="menu-label">策略对比</span>
+                <el-button text size="small" class="fav-btn" @click.stop="favoritesStore.toggle('/strategy-compare')">
+                  <el-icon><StarFilled v-if="favoritesStore.isFavorite('/strategy-compare')" /><Star v-else /></el-icon>
+                </el-button>
+              </template>
             </el-menu-item>
             <el-menu-item index="/factor-analysis">
               <el-icon><DataAnalysis /></el-icon>
-              <template #title>因子分析</template>
+              <template #title>
+                <span class="menu-label">因子分析</span>
+                <el-button text size="small" class="fav-btn" @click.stop="favoritesStore.toggle('/factor-analysis')">
+                  <el-icon><StarFilled v-if="favoritesStore.isFavorite('/factor-analysis')" /><Star v-else /></el-icon>
+                </el-button>
+              </template>
             </el-menu-item>
           </el-sub-menu>
 
@@ -67,11 +117,21 @@ const isDark = computed(() => uiStore.theme === 'dark')
             </template>
             <el-menu-item index="/sentiment">
               <el-icon><ChatDotRound /></el-icon>
-              <template #title>舆情分析</template>
+              <template #title>
+                <span class="menu-label">舆情分析</span>
+                <el-button text size="small" class="fav-btn" @click.stop="favoritesStore.toggle('/sentiment')">
+                  <el-icon><StarFilled v-if="favoritesStore.isFavorite('/sentiment')" /><Star v-else /></el-icon>
+                </el-button>
+              </template>
             </el-menu-item>
             <el-menu-item index="/daily-recommend">
               <el-icon><Star /></el-icon>
-              <template #title>每日推荐</template>
+              <template #title>
+                <span class="menu-label">每日推荐</span>
+                <el-button text size="small" class="fav-btn" @click.stop="favoritesStore.toggle('/daily-recommend')">
+                  <el-icon><StarFilled v-if="favoritesStore.isFavorite('/daily-recommend')" /><Star v-else /></el-icon>
+                </el-button>
+              </template>
             </el-menu-item>
           </el-sub-menu>
 
@@ -82,7 +142,12 @@ const isDark = computed(() => uiStore.theme === 'dark')
             </template>
             <el-menu-item index="/strategies">
               <el-icon><List /></el-icon>
-              <template #title>策略列表</template>
+              <template #title>
+                <span class="menu-label">策略列表</span>
+                <el-button text size="small" class="fav-btn" @click.stop="favoritesStore.toggle('/strategies')">
+                  <el-icon><StarFilled v-if="favoritesStore.isFavorite('/strategies')" /><Star v-else /></el-icon>
+                </el-button>
+              </template>
             </el-menu-item>
           </el-sub-menu>
         </el-menu>
@@ -103,6 +168,9 @@ const isDark = computed(() => uiStore.theme === 'dark')
           </el-breadcrumb>
         </div>
         <div class="header-right">
+          <el-button text circle title="命令面板 Ctrl+K" @click="openCommand">
+            <el-icon :size="18"><Search /></el-icon>
+          </el-button>
           <el-button
             text
             circle
@@ -117,6 +185,7 @@ const isDark = computed(() => uiStore.theme === 'dark')
           </el-button>
         </div>
       </el-header>
+      <AppTabs />
       <el-main class="app-main">
         <slot />
       </el-main>
@@ -124,6 +193,9 @@ const isDark = computed(() => uiStore.theme === 'dark')
         <span><el-icon><TrendCharts /></el-icon> EmoQunt 量化系统 · 让量化投资更简单</span>
       </el-footer>
     </el-container>
+
+    <!-- 全局命令面板 -->
+    <CommandPalette ref="cmdRef" />
 
     <!-- 全局 AI 助手抽屉（所有页面可用） -->
     <el-drawer
@@ -180,6 +252,17 @@ const isDark = computed(() => uiStore.theme === 'dark')
   border-radius: 8px;
   height: 46px;
   line-height: 46px;
+}
+.menu-label {
+  flex: 1;
+}
+.fav-btn {
+  margin-left: 6px;
+  color: rgba(255, 255, 255, 0.7) !important;
+  padding: 2px !important;
+}
+.fav-btn:hover {
+  color: #fff !important;
 }
 .aside-tip {
   color: rgba(255, 255, 255, 0.45);

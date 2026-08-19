@@ -8,6 +8,7 @@ import type {
   FactorAnalysisRequest,
   FactorAnalysisResult,
   KlineData,
+  SentimentCalendarItem,
   SentimentData,
   StrategyDetail,
 } from './types'
@@ -105,6 +106,10 @@ export const sentimentApi = {
   },
   refresh(): Promise<SentimentData> {
     return http.get('/sentiment/data').then((r) => r.data)
+  },
+  /** 情绪历史日历（按日期升序的单日情绪摘要） */
+  calendar(): Promise<SentimentCalendarItem[]> {
+    return http.get('/sentiment/calendar').then((r) => r.data)
   },
 }
 
