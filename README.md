@@ -16,15 +16,15 @@
 ### 数据层（多源容错）
 - **A股回退链**：Tushare Pro（可选，需 `TUSHARE_TOKEN`）→ akshare 新浪源 → 东财源 → baostock，任一环节失败自动降级
 - **美股两级回退**：yfinance（主）→ akshare 新浪源
-- **可选 PostgreSQL + Redis 缓存**（`docker-compose.yml` 一键启动）：Redis 热缓存 + PG 持久化，读序 Redis → PG → CSV → 网络；不可用时自动静默降级为纯网络模式
-- 行情结果缓存至本地 `stock_data/`
+- **可选 PostgreSQL + Redis 缓存**（`docker-compose.yml` 一键启动，国内源 `docker.m.daocloud.io`，可选 `REDIS_PASSWORD`）：Redis 热缓存 + PG 持久化，读序 Redis → PG → CSV → 网络；不可用时自动静默降级为纯网络模式；PG 支持可选 `psycopg_pool` 连接池与 TTL 分层（当日 300s / 历史 7d±jitter）
+- 行情结果缓存至本地 `stock_data/`；情绪快照位于 `nes_data/sentiment_results/{YYYYMMDD}.json`，并通过 `GET /api/sentiment/calendar` 供首页情绪日历使用（纯本地读取，线程池化，不阻塞事件循环）
 
 ### Vue3 SPA（`/spa/*`，现代化前端）
-- **可折叠分组侧边栏导航**（总览 / 回测研究 / 数据洞察 / 策略管理）+ 面包屑 + **暗色模式**（Element Plus `html.dark` 方案）
-- **丰富首页**：功能快捷入口、大盘指数速览条、**自选股面板**（增删、最新价/涨跌幅，A股红涨绿跌·美股绿涨红跌，点击切换主图）、**最近回测**（摘要 + 一键重跑参数回填）、热门板块 / 当日舆情 / 个股推荐
+- **可折叠分组侧边栏导航**（总览 / 回测研究 / 数据洞察 / 策略管理）+ 面包屑 + **暗色模式**（Element Plus `html.dark` 方案）+ **全局命令面板 `Cmd+K`** + **顶部标签页 Tabs** + **侧边栏收藏**
+- **丰富首页**：功能快捷入口、大盘指数速览条、**自选股面板**（增删、最新价/涨跌幅，A股红涨绿跌·美股绿涨红跌，点击切换主图）、**最近回测**（摘要 + 一键重跑参数回填）、热门板块 / 当日舆情 / 个股推荐、**情绪日历**（`sentiment_results/{YYYYMMDD}.json` 驱动）与 **可拖拽网格布局**（`emoqunt:homeLayout` 持久化）
 - **动态 ECharts 图表**：回测收益/回撤/日收益曲线（可缩放），K 线蜡烛图 + 成交量
 - **SPA 独有页面**：策略对比（2~5 策略同台净值对比 + 指标表）、因子分析（IC 序列 / 分层累计收益 / 单调性检验）
-- **浏览器本地持久化**（零依赖 Pinia 插件，`emoqunt:` 前缀 localStorage）：UI 偏好（主题/侧边栏）、自选股、回测历史与上次表单、AI 对话记录——刷新全部保持
+- **浏览器本地持久化**（零依赖 Pinia 插件，`emoqunt:` 前缀 localStorage）：UI 偏好（主题/侧边栏）、自选股、回测历史与上次表单、AI 对话记录、收藏/标签页/首页布局——刷新全部保持
 - **AI 投资助手**：全局抽屉式对话面板，LangGraph ReAct agent，SSE 流式输出、Markdown 渲染、工具调用过程可见
 
 ### Jinja2 经典版（`/`，服务端渲染）
@@ -49,10 +49,11 @@ EmoQunt/
 ├── frontend/               # Vue3 SPA（Vite + TS + Element Plus + ECharts + Pinia）
 │   └── src/
 │       ├── views/          # 首页/回测/策略列表/舆情/推荐/策略对比/因子分析
-│       ├── stores/         # Pinia 状态（chat/ui/watchlist/backtestHistory + persist 插件）
+│       ├── stores/         # Pinia 状态（chat/ui/watchlist/backtestHistory/favorites/tabs/homeLayout + persist 插件）
 │       ├── api/            # axios 封装 + SSE 解析 + 类型定义
-│       └── layouts/        # 侧边栏 + 面包屑 + 暗色切换布局
-├── nes_data/               # 舆情数据与情绪快照（sentiment_results/{YYYYMMDD}.json）
+│       ├── components/     # CommandPalette/AppTabs/SentimentCalendar/ChatPanel 等
+│       └── layouts/        # 侧边栏（含收藏）+ 面包屑 + 标签页 + 暗色/命令面板布局
+├── nes_data/               # 舆情数据与情绪快照（sentiment_results/{YYYYMMDD}.json，供首页情绪日历与回测情绪过滤）
 ├── src/
 │   ├── agent/              # LangGraph ReAct 投资助手
 │   ├── Strategy/           # 策略基类 + 动态策略工厂 + 情绪过滤 + 用户策略
@@ -71,7 +72,9 @@ EmoQunt/
 
 ## 页面预览
 
-### SPA 首页（亮色）——侧边栏导航 / 指数速览 / 自选股 / K 线看板
+> 截图由 `conda run -n qdt python docs/screenshots/_capture.py` 在本机源码服务（`web_app.py` + `db/cache`）上自动采集，亮/暗色、回测结果与策略列表均为 2026-08 迭代后界面（含命令面板、标签页、可拖拽网格与情绪日历）。
+
+### SPA 首页（亮色）——侧边栏导航 / 指数速览 / 自选股 / K 线看板 / 情绪日历
 ![SPA 首页（亮色）](docs/screenshots/spa-home-light.png)
 
 ### SPA 首页（暗色模式）——主题切换后刷新仍保持
@@ -112,7 +115,8 @@ python web_app.py            # http://127.0.0.1:8000
 
 ### 可选：启用数据库缓存层
 ```bash
-docker compose up -d         # PostgreSQL 16 + Redis 7；连接参数见 .env
+docker compose up -d         # PostgreSQL 16 + Redis 7（国内源 docker.m.daocloud.io）；连接参数见 .env
+# 国内网络：基础镜像与 pip 均已配置国内源；构建镜像时可用 --build-arg PIP_INDEX_URL 覆盖
 ```
 
 ### 运行测试
@@ -161,6 +165,7 @@ pytest test/test_backtest.py -v
 | `/api/factor/analyze` | POST | 因子 IC / 分层分析 |
 | `/api/kline` | GET | K 线 OHLCV（`stock_code` / `market` / `days`） |
 | `/api/sentiment` / `sentiment/data` | GET | 舆情数据 |
+| `/api/sentiment/calendar` | GET | 情绪日历（扫描本地 `sentiment_results/*.json`，供首页日历使用） |
 | `/api/daily-recommend`（`/refresh`） | GET | 每日推荐（强制刷新） |
 | `/api/agent/chat` | POST | AI 助手（SSE 流式） |
 | `/api/agent/chat/sync` | POST | AI 助手（非流式） |
@@ -182,8 +187,8 @@ pytest test/test_backtest.py -v
 
 ## 技术栈
 
-- **后端**：FastAPI + Uvicorn + Jinja2；数据类接口线程池化
-- **SPA 前端**：Vue 3 + TypeScript + Vite + Element Plus + ECharts + Pinia（含自研 localStorage 持久化插件）
+- **后端**：FastAPI + Uvicorn + Jinja2；数据类接口线程池化；可选 `psycopg_pool` 连接池 + 数据缓存层
+- **SPA 前端**：Vue 3 + TypeScript + Vite + Element Plus + ECharts + Pinia（含自研 localStorage 持久化插件，含首页可拖拽网格与持久化布局）
 - **经典版前端**：Bootstrap 5.3 + Font Awesome 6
 - **数据**：akshare / Tushare Pro（可选）/ baostock / yfinance；可选 PostgreSQL 16 + Redis 7 缓存
 - **回测**：backtrader + 自定义双市场成本模型

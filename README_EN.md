@@ -16,15 +16,15 @@ An intelligent quantitative-investment backtesting platform driven by sentiment 
 ### Data Layer (multi-source failover)
 - **A-share fallback chain**: Tushare Pro (optional, needs `TUSHARE_TOKEN`) → akshare Sina → Eastmoney → baostock, degrading automatically on failure.
 - **US two-tier fallback**: yfinance (primary) → akshare Sina.
-- **Optional PostgreSQL + Redis cache** (one-command `docker-compose.yml`): Redis hot cache + PG persistence, read order Redis → PG → CSV → network; silently degrades to pure network mode when unavailable.
-- Market data is cached locally under `stock_data/`.
+- **Optional PostgreSQL + Redis cache** (one-command `docker-compose.yml` via domestic mirror `docker.m.daocloud.io`, optional `REDIS_PASSWORD`): Redis hot cache + PG persistence, read order Redis → PG → CSV → network; silently degrades to pure network mode when unavailable. PG supports optional `psycopg_pool` connection pool + tiered TTL (today 300s / history 7d ±jitter).
+- Market data is cached locally under `stock_data/`; sentiment snapshots live at `nes_data/sentiment_results/{YYYYMMDD}.json` and feed the homepage sentiment calendar via `GET /api/sentiment/calendar` (local-only, threadpooled).
 
 ### Vue3 SPA (`/spa/*`, modern frontend)
-- **Collapsible grouped sidebar navigation** (Overview / Backtest Research / Data Insights / Strategy Management) + breadcrumbs + **dark mode** (Element Plus `html.dark`).
-- **Rich homepage**: quick action entries, market index strip, **watchlist panel** (add/remove, live price & change — red-up/green-down for A-shares, green-up/red-down for US; click to switch the main chart), **recent backtests** (summary + one-click re-run with parameter refill), top sectors / news / recommendations.
+- **Collapsible grouped sidebar navigation** (Overview / Backtest Research / Data Insights / Strategy Management) + breadcrumbs + **dark mode** (Element Plus `html.dark`) + **global command palette `Cmd+K`** + **top tab bar** + **sidebar favorites**.
+- **Rich homepage**: quick action entries, market index strip, **watchlist panel** (add/remove, live price & change — red-up/green-down for A-shares, green-up/red-down for US; click to switch the main chart), **recent backtests** (summary + one-click re-run with parameter refill), top sectors / news / recommendations, **sentiment calendar** (driven by `sentiment_results/{YYYYMMDD}.json`) and **draggable grid layout** (persisted as `emoqunt:homeLayout`).
 - **Dynamic ECharts**: zoomable equity/drawdown/daily-return charts; candlestick + volume K-line board.
 - **SPA-exclusive pages**: strategy comparison (2–5 strategies overlaid with a metrics table) and factor analysis (IC series / quantile cumulative returns / monotonicity).
-- **Browser-local persistence** (zero-dependency Pinia plugin, `emoqunt:`-prefixed localStorage): UI preferences (theme/sidebar), watchlist, backtest history & last form, AI chat history — all survive a refresh.
+- **Browser-local persistence** (zero-dependency Pinia plugin, `emoqunt:`-prefixed localStorage): UI preferences (theme/sidebar), watchlist, backtest history & last form, AI chat history, favorites/tabs/home layout — all survive a refresh.
 - **AI investment assistant**: global drawer chat panel, LangGraph ReAct agent, SSE streaming, Markdown rendering, visible tool calls.
 
 ### Classic Jinja2 Frontend (`/`, server-rendered)
@@ -49,10 +49,11 @@ EmoQunt/
 ├── frontend/               # Vue3 SPA (Vite + TS + Element Plus + ECharts + Pinia)
 │   └── src/
 │       ├── views/          # Home/Backtest/Strategies/Sentiment/Recommend/Compare/Factor
-│       ├── stores/         # Pinia stores (chat/ui/watchlist/backtestHistory + persist plugin)
+│       ├── stores/         # Pinia stores (chat/ui/watchlist/backtestHistory/favorites/tabs/homeLayout + persist plugin)
 │       ├── api/            # axios wrapper + SSE parsing + type definitions
-│       └── layouts/        # Sidebar + breadcrumb + dark-mode layout
-├── nes_data/               # Sentiment data & snapshots (sentiment_results/{YYYYMMDD}.json)
+│       ├── components/     # CommandPalette/AppTabs/SentimentCalendar/ChatPanel, etc.
+│       └── layouts/        # Sidebar (with favorites) + breadcrumbs + tabs + dark/command palette layout
+├── nes_data/               # Sentiment data & snapshots (sentiment_results/{YYYYMMDD}.json, feeds the homepage calendar & backtest sentiment filter)
 ├── src/
 │   ├── agent/              # LangGraph ReAct investment assistant
 │   ├── Strategy/           # Strategy base + dynamic factory + sentiment filter + user strategies
@@ -71,7 +72,9 @@ EmoQunt/
 
 ## Page Previews
 
-### SPA Home (light) — sidebar nav / index strip / watchlist / K-line board
+> Screenshots are captured locally via `conda run -n qdt python docs/screenshots/_capture.py` against the source stack (`web_app.py` + `db/cache`); light/dark home, backtest results and strategy list are from the 2026-08 iteration (with command palette, tab bar, draggable grid and sentiment calendar).
+
+### SPA Home (light) — sidebar nav / index strip / watchlist / K-line board / sentiment calendar
 ![SPA Home (light)](docs/screenshots/spa-home-light.png)
 
 ### SPA Home (dark mode) — persists across reloads
@@ -112,7 +115,8 @@ python web_app.py            # http://127.0.0.1:8000
 
 ### Optional: enable the database cache layer
 ```bash
-docker compose up -d         # PostgreSQL 16 + Redis 7; connection params in .env
+docker compose up -d         # PostgreSQL 16 + Redis 7 (via domestic mirror docker.m.daocloud.io); connection params in .env
+# Pip also defaults to a domestic mirror; override with --build-arg PIP_INDEX_URL if needed
 ```
 
 ### Run Tests
@@ -161,6 +165,7 @@ Both frontends share the same `/api/*` endpoints (data-heavy handlers run in a t
 | `/api/factor/analyze` | POST | Factor IC / quantile analysis |
 | `/api/kline` | GET | K-line OHLCV (`stock_code` / `market` / `days`) |
 | `/api/sentiment` / `sentiment/data` | GET | Sentiment data |
+| `/api/sentiment/calendar` | GET | Sentiment calendar (scans local `sentiment_results/*.json` for the homepage calendar) |
 | `/api/daily-recommend` (`/refresh`) | GET | Daily recommendations (force refresh) |
 | `/api/agent/chat` | POST | AI assistant (SSE streaming) |
 | `/api/agent/chat/sync` | POST | AI assistant (non-streaming) |
@@ -182,8 +187,8 @@ Both frontends share the same `/api/*` endpoints (data-heavy handlers run in a t
 
 ## Tech Stack
 
-- **Backend**: FastAPI + Uvicorn + Jinja2; data-heavy handlers threadpooled
-- **SPA frontend**: Vue 3 + TypeScript + Vite + Element Plus + ECharts + Pinia (with a homegrown localStorage persistence plugin)
+- **Backend**: FastAPI + Uvicorn + Jinja2; data-heavy handlers threadpooled; optional `psycopg_pool` pool + cache layer
+- **SPA frontend**: Vue 3 + TypeScript + Vite + Element Plus + ECharts + Pinia (with a homegrown localStorage persistence plugin, including a draggable home grid with persisted layout)
 - **Classic frontend**: Bootstrap 5.3 + Font Awesome 6
 - **Data**: akshare / Tushare Pro (optional) / baostock / yfinance; optional PostgreSQL 16 + Redis 7 cache
 - **Backtesting**: backtrader + custom dual-market cost models
