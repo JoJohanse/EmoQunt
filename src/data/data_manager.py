@@ -310,65 +310,63 @@ class Stock:
                 }
 
                 if type == 'daily':
-                    # 获取日线数据
+                    # 获取日线数据（daily 薄壳：组装 fetcher 交给 KlineProvider）
                     if end_date is None:
                         # 使用当前日期作为结束日期
                         end_date = datetime.now().strftime('%Y%m%d')
 
-                    # ---- DB 缓存层（Redis→PostgreSQL）----
-                    # 先查缓存，命中且非空则直接返回，跳过网络。
-                    # 失败静默降级（连不上 DB 时回退到下面的网络回退链）。
-                    try:
-                        from src.data import db as _db
-                        _cached = _db.get_cached_range(
-                            code_without_prefix, self.market, adjust,
-                            start_date, end_date,
-                        )
-                        if _cached is not None and not _cached.empty:
-                            logger.info(f"DB 缓存命中 {self.stock_code} ({self.market}/{adjust}): {len(_cached)} 行")
-                            return _cached, file_name
-                    except Exception as _e:
-                        logger.debug(f"DB 缓存查询失败，回退网络链: {_e}")
-
-                    print(f"正在获取{self.stock_code}的历史数据（日线），日期范围: {start_date}至{end_date}")
-                    if self.market == 'us':
-                        ticker = self.get_code_without_prefix()
-                        # 优先 yfinance（支持 start/end，更可靠），失败回退 akshare 新浪源
-                        try:
-                            stock_data = self._fetch_us_stock_yf(ticker, start_date, end_date, adjust_map[adjust])
-                        except Exception as e:
-                            logger.warning(f"yfinance 个股获取异常，准备回退: {e}")
-                            stock_data = pd.DataFrame()
-                        if stock_data is None or stock_data.empty:
-                            logger.warning("yfinance 返回空数据，回退到 akshare stock_us_daily（新浪源）")
-                            stock_data = ak.stock_us_daily(symbol=ticker, adjust=adjust_map[adjust])
-                            stock_data = self._filter_us_daily_by_date(stock_data, start_date, end_date)
-                    else:
-                        # A股回退链：Tushare(可选首选) → 新浪源 → 东财源 → baostock
-                        if _TUSHARE_TOKEN:
-                            stock_data = self._fetch_ashare_tushare(start_date, end_date, adjust_map[adjust])
-                        else:
-                            stock_data = pd.DataFrame()
-
-                        if stock_data is None or stock_data.empty:
+                    def _daily_fetcher(_start, _end, _adjust_str):
+                        print(f"正在获取{self.stock_code}的历史数据（日线），日期范围: {_start}至{_end}")
+                        if self.market == 'us':
+                            ticker = self.get_code_without_prefix()
+                            # 优先 yfinance（支持 start/end，更可靠），失败回退 akshare 新浪源
                             try:
-                                stock_data = ak.stock_zh_a_daily(
-                                    symbol=self.stock_code,
-                                    start_date=start_date,
-                                    end_date=end_date,
-                                    adjust=adjust_map[adjust]
-                                )
+                                df = self._fetch_us_stock_yf(ticker, _start, _end, _adjust_str)
                             except Exception as e:
-                                logger.warning(f"akshare 新浪源获取 {self.stock_code} 失败: {e}，回退到东财源")
-                                stock_data = pd.DataFrame()
+                                logger.warning(f"yfinance 个股获取异常，准备回退: {e}")
+                                df = pd.DataFrame()
+                            if df is None or df.empty:
+                                logger.warning("yfinance 返回空数据，回退到 akshare stock_us_daily（新浪源）")
+                                df = ak.stock_us_daily(symbol=ticker, adjust=_adjust_str)
+                                df = self._filter_us_daily_by_date(df, _start, _end)
+                            return df
+                        else:
+                            # A股回退链：Tushare(可选首选) → 新浪源 → 东财源 → baostock
+                            if _TUSHARE_TOKEN:
+                                df = self._fetch_ashare_tushare(_start, _end, _adjust_str)
+                            else:
+                                df = pd.DataFrame()
+                            if df is None or df.empty:
+                                try:
+                                    df = ak.stock_zh_a_daily(
+                                        symbol=self.stock_code,
+                                        start_date=_start,
+                                        end_date=_end,
+                                        adjust=_adjust_str
+                                    )
+                                except Exception as e:
+                                    logger.warning(f"akshare 新浪源获取 {self.stock_code} 失败: {e}，回退到东财源")
+                                    df = pd.DataFrame()
+                            if df is None or df.empty:
+                                logger.warning("新浪源返回空数据，回退到 akshare stock_zh_a_hist（东财源）")
+                                df = self._fetch_ashare_hist_em(_start, _end, _adjust_str)
+                            if df is None or df.empty:
+                                logger.warning("东财源返回空数据，回退到 baostock")
+                                df = self._fetch_ashare_baostock(_start, _end, _adjust_str)
+                            return df
 
-                        if stock_data is None or stock_data.empty:
-                            logger.warning("新浪源返回空数据，回退到 akshare stock_zh_a_hist（东财源）")
-                            stock_data = self._fetch_ashare_hist_em(start_date, end_date, adjust_map[adjust])
-
-                        if stock_data is None or stock_data.empty:
-                            logger.warning("东财源返回空数据，回退到 baostock")
-                            stock_data = self._fetch_ashare_baostock(start_date, end_date, adjust_map[adjust])
+                    from src.data.provider import KlineProvider
+                    provider = KlineProvider()
+                    stock_data, prov_file = provider.fetch_daily(
+                        code_without_prefix, self.market, adjust,
+                        start_date, end_date, fetcher=_daily_fetcher,
+                    )
+                    if stock_data is None or stock_data.empty:
+                        print(f"akshare返回空数据，检查股票代码或日期范围")
+                        return pd.DataFrame(), ''
+                    print(f"成功获取数据，数据行数: {len(stock_data)}")
+                    print(f"数据列名: {stock_data.columns.tolist()}")
+                    return stock_data, prov_file
                 elif type == 'minute':
                     # 获取分钟级数据（仅 A 股支持）
                     if self.market == 'us':
@@ -385,6 +383,7 @@ class Stock:
                     print(f"错误：无效的数据类型 {type}，请使用 'daily' 或 'minute'")
                     return pd.DataFrame(), ''
             
+            # 分钟级后处理（日线已由 KlineProvider 完成重命名/回填并提前返回）
             # 检查返回的数据是否为空
             if stock_data is None or stock_data.empty:
                 print(f"akshare返回空数据，检查股票代码或日期范围")
@@ -403,17 +402,6 @@ class Stock:
 
             # 重命名列
             stock_data = stock_data.rename(columns=rename_map)
-
-            # ---- 回填 DB 缓存层（PostgreSQL upsert + Redis）----
-            # 仅日线数据写缓存（分钟级数据量大且本模块不持久化）；失败静默。
-            if type == 'daily':
-                try:
-                    from src.data import db as _db
-                    _db.save_daily(
-                        stock_data, code_without_prefix, self.market, adjust,
-                    )
-                except Exception as _e:
-                    logger.debug(f"DB 缓存回填失败（不影响主流程）: {_e}")
 
             return stock_data, file_name
         except Exception as e:
@@ -719,112 +707,94 @@ def get_index_data(index_code: str = '000300', start_date: str = '', end_date: s
 
         symbol = INDEX_SYMBOLS.get(index_code)
         if symbol is None:
-            # 兜底：6 开头归上交所，0/3 开头归深交所
             symbol = ('sh' if str(index_code).startswith('6') else 'sz') + str(index_code)
 
-        # ---- DB 缓存层（指数）----
-        # 命中则直接返回，跳过网络回退链；失败静默降级。
-        try:
-            from src.data import db as _db
-            _cached = _db.get_cached_range(
-                str(index_code), market, 'nfq', start_date, end_date, is_index=True,
-            )
-            if _cached is not None and not _cached.empty:
-                logger.info(f"DB 缓存命中 指数 {index_code}: {len(_cached)} 行")
-                return _cached
-        except Exception as _e:
-            logger.debug(f"DB 缓存查询失败（指数），回退网络链: {_e}")
+        def _ashare_index_fetcher(_start, _end, _adjust_str):
+            print(f"正在获取指数 {index_code} 的日线数据，日期范围: {_start} 至 {_end}")
+            # 0) Tushare
+            df_inner = pd.DataFrame()
+            if _TUSHARE_TOKEN:
+                try:
+                    import tushare as ts
+                    ts.set_token(_TUSHARE_TOKEN)
+                    pro = ts.pro_api()
+                    idx_ts_code = f"{symbol[2:]}.{symbol[:2].upper()}"
+                    raw = pro.index_daily(ts_code=idx_ts_code, start_date=_start, end_date=_end)
+                    if raw is not None and not raw.empty:
+                        col_map = {'trade_date': 'date', 'vol': 'volume'}
+                        col_map = {k: v for k, v in col_map.items() if k in raw.columns}
+                        df_inner = raw.rename(columns=col_map)
+                        for col in ('open', 'high', 'low', 'close', 'volume', 'amount'):
+                            if col in df_inner.columns:
+                                df_inner[col] = pd.to_numeric(df_inner[col], errors='coerce')
+                        if 'amount' in df_inner.columns:
+                            df_inner['amount'] = df_inner['amount'] * 1000.0
+                except Exception as e:
+                    logger.warning(f"Tushare 指数获取 {index_code} 失败: {e}，回退到免费链")
+                    df_inner = pd.DataFrame()
+            if df_inner is None or df_inner.empty:
+                try:
+                    df_inner = ak.stock_zh_index_daily(symbol=symbol)
+                except Exception as e:
+                    logger.warning(f"akshare 新浪指数源获取 {index_code} 失败: {e}，回退到东财源")
+                    df_inner = pd.DataFrame()
+            if df_inner is None or df_inner.empty:
+                logger.warning("新浪指数源返回空数据，回退到 akshare stock_zh_index_daily_em（东财源）")
+                try:
+                    df_inner = ak.stock_zh_index_daily_em(
+                        symbol=symbol,
+                        start_date=_start or '19900101',
+                        end_date=_end or '20500101',
+                    )
+                except Exception as e:
+                    logger.warning(f"akshare 东财指数源获取 {index_code} 失败: {e}，回退到 baostock")
+                    df_inner = pd.DataFrame()
+            if df_inner is None or df_inner.empty:
+                logger.warning("东财指数源返回空数据，回退到 baostock")
+                try:
+                    df_inner = _baostock_query(
+                        symbol, _start, _end, adjust_str='',
+                        fields="date,open,high,low,close,volume,amount",
+                    )
+                    if df_inner is not None and not df_inner.empty:
+                        for col in ('open', 'high', 'low', 'close', 'volume', 'amount'):
+                            if col in df_inner.columns:
+                                df_inner[col] = pd.to_numeric(df_inner[col], errors='coerce')
+                        if 'volume' in df_inner.columns:
+                            df_inner['volume'] = df_inner['volume'] / 100.0
+                except Exception as e:
+                    logger.warning(f"baostock 指数获取 {index_code} 失败: {e}")
+                    df_inner = pd.DataFrame()
+            # 本地日期过滤（Provider 重命名前为小写 date）
+            if df_inner is not None and not df_inner.empty and 'date' in df_inner.columns:
+                try:
+                    df_inner['date'] = pd.to_datetime(df_inner['date'])
+                    if _start:
+                        df_inner = df_inner[df_inner['date'] >= pd.to_datetime(_start)]
+                    if _end:
+                        df_inner = df_inner[df_inner['date'] <= pd.to_datetime(_end)]
+                    df_inner = df_inner.sort_values('date').reset_index(drop=True)
+                except Exception:
+                    pass
+            return df_inner
 
-        print(f"正在获取指数 {index_code} 的日线数据，日期范围: {start_date} 至 {end_date}")
-
-        # A股指数回退链：Tushare(可选首选) → 新浪源 → 东财源 → baostock
-        # 0) Tushare Pro（需 token，支持 start/end）
-        df = pd.DataFrame()
-        if _TUSHARE_TOKEN:
-            try:
-                import tushare as ts
-                ts.set_token(_TUSHARE_TOKEN)
-                pro = ts.pro_api()
-                # sh000300 → 000300.SH
-                idx_ts_code = f"{symbol[2:]}.{symbol[:2].upper()}"
-                raw = pro.index_daily(ts_code=idx_ts_code, start_date=start_date, end_date=end_date)
-                if raw is not None and not raw.empty:
-                    col_map = {'trade_date': 'date', 'vol': 'volume'}
-                    col_map = {k: v for k, v in col_map.items() if k in raw.columns}
-                    df = raw.rename(columns=col_map)
-                    for col in ('open', 'high', 'low', 'close', 'volume', 'amount'):
-                        if col in df.columns:
-                            df[col] = pd.to_numeric(df[col], errors='coerce')
-                    if 'amount' in df.columns:
-                        df['amount'] = df['amount'] * 1000.0  # 千元 → 元
-            except Exception as e:
-                logger.warning(f"Tushare 指数获取 {index_code} 失败: {e}，回退到免费链")
-                df = pd.DataFrame()
-
-        # 1) 新浪源（不支持 start/end，需本地过滤）
-        if df is None or df.empty:
-            try:
-                df = ak.stock_zh_index_daily(symbol=symbol)
-            except Exception as e:
-                logger.warning(f"akshare 新浪指数源获取 {index_code} 失败: {e}，回退到东财源")
-                df = pd.DataFrame()
-
-        # 2) 东财源（支持 start/end，更精确）
-        if df is None or df.empty:
-            logger.warning("新浪指数源返回空数据，回退到 akshare stock_zh_index_daily_em（东财源）")
-            try:
-                df = ak.stock_zh_index_daily_em(
-                    symbol=symbol,
-                    start_date=start_date or '19900101',
-                    end_date=end_date or '20500101',
-                )
-            except Exception as e:
-                logger.warning(f"akshare 东财指数源获取 {index_code} 失败: {e}，回退到 baostock")
-                df = pd.DataFrame()
-
-        # 3) baostock（独立服务器，指数用不复权）
-        if df is None or df.empty:
-            logger.warning("东财指数源返回空数据，回退到 baostock")
-            try:
-                df = _baostock_query(
-                    symbol, start_date, end_date, adjust_str='',
-                    fields="date,open,high,low,close,volume,amount",
-                )
-                if df is not None and not df.empty:
-                    for col in ('open', 'high', 'low', 'close', 'volume', 'amount'):
-                        if col in df.columns:
-                            df[col] = pd.to_numeric(df[col], errors='coerce')
-                    if 'volume' in df.columns:
-                        df['volume'] = df['volume'] / 100.0  # 股 → 手
-            except Exception as e:
-                logger.warning(f"baostock 指数获取 {index_code} 失败: {e}")
-                df = pd.DataFrame()
-
+        from src.data.provider import KlineProvider
+        provider = KlineProvider()
+        # 复用 Provider 的 fetch_daily 获取 (中文列)df，并拼接 file_name 语义（指数路径原本无 file 概念，这里保持返回 df，丢弃 file_name）
+        df, _ = provider.fetch_daily(
+            str(index_code), market, 'nfq', start_date, end_date,
+            is_index=True, fetcher=_ashare_index_fetcher,
+        )
         if df is None or df.empty:
             print(f"指数 {index_code} 所有数据源均返回空数据")
             return pd.DataFrame()
-
-        # 统一列名重命名（三条路径都返回小写英文列名）
-        from src.data.columns import EN_TO_ZH
-        rename_map = {k: v for k, v in EN_TO_ZH.items() if k in df.columns}
-        df = df.rename(columns=rename_map)
-
-        # 本地日期过滤（新浪源不支持 start/end；东财/baostock 已过滤，但统一过滤确保一致）
+        # Provider 已做 EN_TO_ZH；但指数需确保按时间排序（已在 fetcher 内排序，这里再保证）
         if '时间' in df.columns:
-            df['时间'] = pd.to_datetime(df['时间'])
-            if start_date:
-                df = df[df['时间'] >= pd.to_datetime(start_date)]
-            if end_date:
-                df = df[df['时间'] <= pd.to_datetime(end_date)]
-            df = df.sort_values('时间').reset_index(drop=True)
-
-        # ---- 回填 DB 缓存层（指数）----
-        try:
-            from src.data import db as _db
-            _db.save_daily(df, str(index_code), market, 'nfq', is_index=True)
-        except Exception as _e:
-            logger.debug(f"DB 缓存回填失败（指数，不影响主流程）: {_e}")
-
+            try:
+                df['时间'] = pd.to_datetime(df['时间'])
+                df = df.sort_values('时间').reset_index(drop=True)
+            except Exception:
+                pass
         print(f"成功获取指数数据，数据行数: {len(df)}")
         return df
     except Exception as e:
@@ -898,59 +868,38 @@ def get_us_index_data(index_code: str = 'SP500', start_date: str = '', end_date:
         if not end_date:
             end_date = datetime.now().strftime('%Y%m%d')
 
-        # ---- DB 缓存层（美股指数）----
-        try:
-            from src.data import db as _db
-            _cached = _db.get_cached_range(
-                str(index_code), 'us', 'nfq', start_date, end_date, is_index=True,
-            )
-            if _cached is not None and not _cached.empty:
-                logger.info(f"DB 缓存命中 美股指数 {index_code}: {len(_cached)} 行")
-                return _cached
-        except Exception as _e:
-            logger.debug(f"DB 缓存查询失败（美股指数），回退网络链: {_e}")
+        def _us_index_fetcher(_start, _end, _adjust_str):
+            print(f"正在获取美股指数 {index_code} 的日线数据，日期范围: {_start} 至 {_end}")
+            try:
+                df_inner = _fetch_us_index_yf(index_code, _start, _end)
+            except Exception as e:
+                logger.warning(f"yfinance 指数获取异常，准备回退: {e}")
+                df_inner = pd.DataFrame()
+            if df_inner is None or df_inner.empty:
+                logger.warning("yfinance 指数数据为空，回退到 akshare index_us_stock_sina（新浪源）")
+                symbol = US_INDEX_SYMBOLS.get(str(index_code).upper(), index_code)
+                df_inner = ak.index_us_stock_sina(symbol=symbol)
+                if df_inner is None or df_inner.empty:
+                    print(f"美股指数 {index_code} 返回空数据")
+                    return pd.DataFrame()
+                if 'date' in df_inner.columns:
+                    df_inner['date'] = pd.to_datetime(df_inner['date'])
+                    if _start:
+                        df_inner = df_inner[df_inner['date'] >= pd.to_datetime(_start)]
+                    if _end:
+                        df_inner = df_inner[df_inner['date'] <= pd.to_datetime(_end)]
+                    df_inner = df_inner.sort_values('date').reset_index(drop=True)
+            return df_inner
 
-        print(f"正在获取美股指数 {index_code} 的日线数据，日期范围: {start_date} 至 {end_date}")
-
-        # 优先 yfinance（返回小写列名，已按 start/end 过滤）
-        try:
-            df = _fetch_us_index_yf(index_code, start_date, end_date)
-        except Exception as e:
-            logger.warning(f"yfinance 指数获取异常，准备回退: {e}")
-            df = pd.DataFrame()
-
+        from src.data.provider import KlineProvider
+        provider = KlineProvider()
+        df, _ = provider.fetch_daily(
+            str(index_code), 'us', 'nfq', start_date, end_date,
+            is_index=True, fetcher=_us_index_fetcher,
+        )
         if df is None or df.empty:
-            # 回退 akshare 新浪源（不支持 start/end，需本地过滤）
-            logger.warning("yfinance 指数数据为空，回退到 akshare index_us_stock_sina（新浪源）")
-            symbol = US_INDEX_SYMBOLS.get(str(index_code).upper(), index_code)
-            df = ak.index_us_stock_sina(symbol=symbol)
-            if df is None or df.empty:
-                print(f"美股指数 {index_code} 返回空数据")
-                return pd.DataFrame()
-            # 本地日期过滤（小写 date 列）
-            if 'date' in df.columns:
-                df['date'] = pd.to_datetime(df['date'])
-                if start_date:
-                    df = df[df['date'] >= pd.to_datetime(start_date)]
-                if end_date:
-                    df = df[df['date'] <= pd.to_datetime(end_date)]
-                df = df.sort_values('date').reset_index(drop=True)
-
-        if df is None or df.empty:
+            # fetcher 已打印“返回空数据”；此处兜底空返回保持与原逻辑一致
             return pd.DataFrame()
-
-        # 统一列名重命名（两条路径都返回小写列名）
-        from src.data.columns import EN_TO_ZH
-        rename_map = {k: v for k, v in EN_TO_ZH.items() if k in df.columns}
-        df = df.rename(columns=rename_map)
-
-        # ---- 回填 DB 缓存层（美股指数）----
-        try:
-            from src.data import db as _db
-            _db.save_daily(df, str(index_code), 'us', 'nfq', is_index=True)
-        except Exception as _e:
-            logger.debug(f"DB 缓存回填失败（美股指数，不影响主流程）: {_e}")
-
         print(f"成功获取美股指数数据，数据行数: {len(df)}")
         return df
     except Exception as e:
