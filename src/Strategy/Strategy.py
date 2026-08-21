@@ -328,15 +328,14 @@ def extract_param_value(param_dict):
                       或 ``{"name": "short_period", "default": 5, "type": "int"}``
     :return: (name, value) 或 (None, None) 表示该参数缺失/无值
     """
-    name = param_dict.get("name")
-    # 用户保存的实际值用 "value"，模板默认用 "default"；优先用户值
-    raw_value = param_dict.get("value")
-    if raw_value is None:
-        raw_value = param_dict.get("default")
+    from .param_spec import resolve_param
+
+    name = param_dict.get("name") if isinstance(param_dict, dict) else None
+    raw_value = resolve_param(param_dict, fallback=None, prefer="value")
     if not name or raw_value is None:
         return None, None
 
-    param_type = param_dict.get("type", "int")
+    param_type = param_dict.get("type", "int") if isinstance(param_dict, dict) else "int"
     if param_type == "int":
         return name, int(raw_value)
     if param_type == "float":
