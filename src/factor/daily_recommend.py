@@ -100,6 +100,9 @@ INDUSTRIES = []
 SECTOR_STOCKS = {}
 SECTOR_SENTIMENT = {}
 
+_loaded = False
+_load_lock = threading.RLock()
+
 def load_hs300_stocks():
     global HS300_STOCKS, INDUSTRIES, SECTOR_STOCKS
     
@@ -182,18 +185,39 @@ def reload_sentiment():
     global SECTOR_SENTIMENT
     init_sentiment()
 
-def load_all_data():
+
+def _do_load():
+    """内部：执行全部加载步骤（不单独管理 _loaded 标志）。"""
     load_hs300_stocks()
     load_industries()
     init_sentiment()
 
-load_all_data()
+
+def load_all_data():
+    global _loaded
+    _do_load()
+    with _load_lock:
+        _loaded = True
+
+
+def _ensure_loaded():
+    """懒初始化：首次调用时加载 HS300、行业、舆情数据。线程安全（双重检查）。"""
+    global _loaded
+    if _loaded:
+        return
+    with _load_lock:
+        if _loaded:
+            return
+        _do_load()
+        _loaded = True
 
 def get_top_sectors(n: int = 3) -> List[tuple]:
+    _ensure_loaded()
     sorted_sectors = sorted(SECTOR_SENTIMENT.items(), key=lambda x: x[1], reverse=True)
     return sorted_sectors[:n]
 
 def get_sector_stocks(sector: str) -> List[Dict]:
+    _ensure_loaded()
     return SECTOR_STOCKS.get(sector, [])
 
 def get_stock_data(stock_code: str, days: int = 30) -> Optional[pd.DataFrame]:
@@ -690,6 +714,7 @@ def generate_daily_recommend(n: int = 10) -> Dict:
     :param n: 推荐股票数量
     :return: 推荐结果字典
     """
+    _ensure_loaded()
     top_sectors = get_top_sectors(3)
     
     logger.info(f"前3热门板块: {top_sectors}")
@@ -740,6 +765,7 @@ _cache_time = None
 
 def get_cached_recommendation() -> Dict:
     global _cache, _cache_time
+    _ensure_loaded()
     
     now = datetime.now()
     if _cache is None or _cache_time is None or (now - _cache_time).total_seconds() > 3600:
@@ -750,6 +776,7 @@ def get_cached_recommendation() -> Dict:
 
 def refresh_recommendation() -> Dict:
     global _cache, _cache_time
+    _ensure_loaded()
     
     _cache = generate_daily_recommend()
     _cache_time = datetime.now()
@@ -757,6 +784,7 @@ def refresh_recommendation() -> Dict:
     return _cache
 
 def get_sentiment_data() -> Dict:
+    _ensure_loaded()
     top_sectors = get_top_sectors(10)
     
     result = {
