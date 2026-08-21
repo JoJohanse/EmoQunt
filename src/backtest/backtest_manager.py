@@ -2,7 +2,7 @@ import backtrader as bt
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Union, Tuple
+from typing import Dict, Optional, Tuple
 import os
 import sys
 import matplotlib.pyplot as plt
@@ -22,10 +22,10 @@ def parse_bool(value) -> bool:
 # 添加项目路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.Strategy import Strategy, global_strategy_manager
 from src.data.data_manager import Stock
 from src.data.columns import DATE, OPEN, HIGH, LOW, CLOSE, VOLUME
 
+# 绩效指标唯一事实来源为 calculate_strategy_metrics，PerformanceAnalyzer.generate_report 为旧报告视图
 class PerformanceAnalyzer:
     """
     策略绩效分析器
@@ -365,352 +365,6 @@ class USStockCommInfo(bt.CommInfoBase):
         return amount * self.p.commission_rate
 
 
-class BacktestRunner:
-    """
-    回测运行器类
-    """
-
-    def __init__(self):
-        """
-        初始化回测运行器
-        """
-        self.cerebro = bt.Cerebro()
-        self.results = None
-        self.performance_reports = {}
-        self.portfolio_weights = {}  # 存储调仓权重
-    
-    def add_data_from_csv(
-        self, 
-        csv_path: str, 
-        name: str = 'STOCK',
-        datetime_col: str = 'date',
-        open_col: str = '开盘',
-        high_col: str = '最高',
-        low_col: str = '最低',
-        close_col: str = '收盘',
-        volume_col: str = '成交量'
-    ):
-        """
-        从CSV文件添加数据
-        :param csv_path: CSV文件路径
-        :param name: 数据名称
-        :param datetime_col: 日期时间列名
-        :param open_col: 开盘价列名
-        :param high_col: 最高价列名
-        :param low_col: 最低价列名
-        :param close_col: 收盘价列名
-        :param volume_col: 成交量列名
-        """
-        # 读取CSV数据
-        df = pd.read_csv(csv_path)
-        
-        # 转换日期列
-        df[datetime_col] = pd.to_datetime(df[datetime_col])
-        df.set_index(datetime_col, inplace=True)
-        
-        # 创建Backtrader数据源
-        data_feed = bt.feeds.PandasData(
-            dataname=df,
-            name=name,
-            open=open_col,
-            high=high_col,
-            low=low_col,
-            close=close_col,
-            volume=volume_col,
-            openinterest=-1  # 不使用未平仓量
-        )
-        
-        # 添加数据到Cerebro
-        self.cerebro.adddata(data_feed)
-        print(f"已添加数据: {name}, 数据范围: {df.index[0]} 到 {df.index[-1]}, 共 {len(df)} 条记录")
-    
-    def add_data_from_stock(
-        self,
-        stock_code: str,
-        start_date: str,
-        end_date: str,
-        adjust: str = 'hfq',
-        data_type: str = 'daily'
-    ):
-        """
-        从Stock类获取数据并添加到回测
-        :param stock_code: 股票代码
-        :param start_date: 开始日期 (YYYYMMDD)
-        :param end_date: 结束日期 (YYYYMMDD)
-        :param adjust: 复权方式 ('hfq', 'qfq', 'nfq')
-        :param data_type: 数据类型 ('daily', 'minute')
-        """
-        stock = Stock(stock_code)
-        data, filename = stock.get_stock_data(
-            start_date=start_date,
-            end_date=end_date,
-            adjust=adjust,
-            type=data_type
-        )
-        
-        if data.empty:
-            print(f"获取股票 {stock_code} 数据失败")
-            return
-        
-        # 转换日期列
-        if '时间' in data.columns:
-            data['时间'] = pd.to_datetime(data['时间'])
-            data.set_index('时间', inplace=True)
-        
-        # 创建Backtrader数据源
-        data_feed = bt.feeds.PandasData(
-            dataname=data,
-            name=stock_code,
-            open=OPEN,
-            high=HIGH,
-            low=LOW,
-            close=CLOSE,
-            volume=VOLUME,
-            openinterest=-1
-        )
-        
-        # 添加数据到Cerebro
-        self.cerebro.adddata(data_feed)
-        print(f"已添加股票数据: {stock_code}, 数据范围: {data.index[0]} 到 {data.index[-1]}, 共 {len(data)} 条记录")
-    
-    def set_initial_capital(self, cash: float = 100000.0):
-        """
-        设置初始资金
-        :param cash: 初始资金
-        """
-        self.cerebro.broker.setcash(cash)
-        print(f"设置初始资金: {cash:,.2f}")
-    
-    def set_commission(self, commission: float = 0.001, margin: Optional[float] = None, mult: float = 1.0):
-        """
-        设置交易佣金
-        :param commission: 佣金比例
-        :param margin: 保证金（期货用）
-        :param mult: 乘数（期货用）
-        """
-        self.cerebro.broker.setcommission(commission=commission, margin=margin, mult=mult)
-        print(f"设置交易佣金: {commission:.3%}")
-
-    def set_ashare_commission(
-        self,
-        commission_rate: float = 0.0003,
-        min_commission: float = 5.0,
-        stamp_duty: float = 0.0005,
-        transfer_fee_rate: float = 0.00001,
-    ):
-        """
-        设置A股真实交易成本（佣金+印花税+过户费）。
-
-        相对 set_commission 的对称单一佣金，本方法建模三项费用：
-        - 佣金：双边，按 commission_rate，单笔不低于 min_commission
-        - 印花税：仅卖出，stamp_duty（默认 0.05%）
-        - 过户费：双边，transfer_fee_rate（默认 0.001%）
-
-        :param commission_rate: 佣金费率（双边）
-        :param min_commission: 单笔佣金最低收费（元）
-        :param stamp_duty: 印花税率（仅卖出）
-        :param transfer_fee_rate: 过户费率（双边）
-        """
-        comminfo = AShareCommInfo(
-            commission_rate=commission_rate,
-            min_commission=min_commission,
-            stamp_duty=stamp_duty,
-            transfer_fee_rate=transfer_fee_rate,
-        )
-        self.cerebro.broker.addcommissioninfo(comminfo)
-        print(
-            f"设置A股交易成本: 佣金{commission_rate:.4%}(最低{min_commission}元), "
-            f"印花税{stamp_duty:.4%}(仅卖出), 过户费{transfer_fee_rate:.5%}(双边)"
-        )
-
-    def set_us_commission(self, commission_rate: float = 0.0005):
-        """
-        设置美股交易成本（仅双边佣金，无印花税/过户费）。
-
-        :param commission_rate: 佣金费率（双边），默认万五
-        """
-        comminfo = USStockCommInfo(commission_rate=commission_rate)
-        self.cerebro.broker.addcommissioninfo(comminfo)
-        print(f"设置美股交易成本: 佣金{commission_rate:.4%}(双边, 无印花税/过户费)")
-
-    def set_slippage(self, slippage_perc: float = 0.0005, enabled: bool = True):
-        """
-        设置百分比滑点模型。
-
-        :param slippage_perc: 滑点比例（默认 0.05%）
-        :param enabled: 是否启用
-        """
-        if not enabled:
-            return
-        self.cerebro.broker.set_slippage_perc(perc=slippage_perc)
-        print(f"设置滑点: {slippage_perc:.4%}")
-
-    def add_strategy(self, strategy_name: str, **kwargs):
-        """
-        添加策略
-        :param strategy_name: 策略名称
-        :param kwargs: 策略参数
-        """
-        strategy_class = global_strategy_manager.get_strategy(strategy_name)
-        if strategy_class is None:
-            print(f"策略 {strategy_name} 不存在")
-            return
-        
-        self.cerebro.addstrategy(strategy_class, **kwargs)
-        print(f"已添加策略: {strategy_name}, 参数: {kwargs}")
-    
-    def add_analyzers(self):
-        """
-        添加分析器
-        """
-        # 添加常用的分析器
-        self.cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='tradeanalyzer')
-        self.cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharperatio')
-        self.cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
-        self.cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
-        self.cerebro.addanalyzer(bt.analyzers.TimeReturn, _name='timereturn')
-        print("已添加分析器")
-    
-    def run_backtest(self):
-        """
-        运行回测
-        :return: 回测结果
-        """
-        print(f"开始回测，初始资金: {self.cerebro.broker.getvalue():,.2f}")
-        
-        # 运行回测
-        self.results = self.cerebro.run()
-        
-        print(f"回测完成，最终资金: {self.cerebro.broker.getvalue():,.2f}")
-        print(f"总收益率: {(self.cerebro.broker.getvalue() / self.cerebro.broker.startingcash - 1):.2%}")
-        
-        return self.results
-    
-    def get_strategy_returns(self) -> pd.Series:
-        """
-        获取策略收益率序列
-        :return: 收益率序列
-        """
-        if self.results is None:
-            print("请先运行回测")
-            return pd.Series()
-        
-        # 从分析器获取收益率
-        strat = self.results[0]
-        if hasattr(strat, 'analyzers') and 'timereturn' in strat.analyzers:
-            timereturn = strat.analyzers.timereturn.get_analysis()
-            returns = pd.Series(timereturn)
-            return returns
-        else:
-            # 如果没有分析器，从broker获取价值历史
-            # 这里简化处理，实际需要从broker获取每日价值
-            print("未找到收益率数据，请确保添加了分析器")
-            return pd.Series()
-    
-    def analyze_performance(self, benchmark_returns: Optional[pd.Series] = None):
-        """
-        分析策略绩效
-        :param benchmark_returns: 基准收益率序列
-        :return: 绩效报告
-        """
-        returns = self.get_strategy_returns()
-        if returns.empty:
-            print("无法获取收益率数据，跳过绩效分析")
-            return {}
-        
-        analyzer = PerformanceAnalyzer(returns, benchmark_returns)
-        report = analyzer.generate_report()
-        
-        # 保存报告
-        self.performance_reports['strategy'] = report
-        
-        print("=" * 50)
-        print("策略绩效报告")
-        print("=" * 50)
-        for metric, value in report.items():
-            if isinstance(value, float):
-                if '收益率' in metric or '比率' in metric or metric in ['胜率']:
-                    print(f"{metric}: {value:.4f} ({value:.2%})")
-                else:
-                    print(f"{metric}: {value:.4f}")
-            else:
-                print(f"{metric}: {value}")
-        
-        return report
-
-    def run_multiple_strategies(
-        self, 
-        strategies_config: List[Dict],
-        data_feed: Union[str, pd.DataFrame],
-        start_date: str,
-        end_date: str,
-        initial_cash: float = 100000.0
-    ) -> Dict:
-        """
-        运行多个策略进行对比
-        :param strategies_config: 策略配置列表
-        :param data_feed: 数据源
-        :param start_date: 开始日期
-        :param end_date: 结束日期
-        :param initial_cash: 初始资金
-        :return: 各策略结果字典
-        """
-        results = {}
-        
-        for config in strategies_config:
-            strategy_name = config['name']
-            strategy_params = config.get('params', {})
-            
-            # 创建新的Cerebro实例
-            cerebro = bt.Cerebro()
-            
-            # 添加数据
-            if isinstance(data_feed, str):
-                # 假设是CSV路径
-                df = pd.read_csv(data_feed)
-                df['date'] = pd.to_datetime(df['date'])
-                df.set_index('date', inplace=True)
-
-                data_feed_bt = bt.feeds.PandasData(
-                    dataname=df,
-                    open=OPEN, high=HIGH, low=LOW, close=CLOSE,
-                    volume=VOLUME, openinterest=-1,
-                )
-            else:
-                # 假设是DataFrame
-                data_feed_bt = bt.feeds.PandasData(
-                    dataname=data_feed,
-                    open=OPEN, high=HIGH, low=LOW, close=CLOSE,
-                    volume=VOLUME, openinterest=-1,
-                )
-            
-            cerebro.adddata(data_feed_bt)
-            
-            # 设置资金和佣金
-            cerebro.broker.setcash(initial_cash)
-            cerebro.broker.setcommission(commission=0.001)
-            
-            # 添加策略
-            strategy_class = global_strategy_manager.get_strategy(strategy_name)
-            if strategy_class:
-                cerebro.addstrategy(strategy_class, **strategy_params)
-            
-            # 添加分析器
-            cerebro.addanalyzer(bt.analyzers.TimeReturn, _name='timereturn')
-            
-            # 运行回测
-            result = cerebro.run()
-            
-            # 获取收益率
-            strat = result[0]
-            timereturn = strat.analyzers.timereturn.get_analysis()
-            returns = pd.Series(timereturn)
-            
-            results[strategy_name] = returns
-            print(f"{strategy_name} 回测完成，最终资金: {cerebro.broker.getvalue():,.2f}")
-
-        return results
-
 
 def calculate_strategy_metrics(
     portfolio_values: pd.Series,
@@ -877,14 +531,20 @@ def _run_backtest_core(
     except Exception:
         slippage_enabled_cfg = False
 
-    runner = BacktestRunner()
-    runner.set_initial_capital(initial_capital)
+    cerebro = bt.Cerebro()
+    cerebro.broker.setcash(initial_capital)
     if market == 'us':
-        runner.set_us_commission(commission_rate=commission_rate)
+        cerebro.broker.addcommissioninfo(USStockCommInfo(commission_rate=commission_rate))
     else:
-        runner.set_ashare_commission(commission_rate=commission_rate)
-    runner.set_slippage(slippage_perc=slippage_rate, enabled=slippage_enabled_cfg or True)
-    runner.add_analyzers()
+        cerebro.broker.addcommissioninfo(AShareCommInfo(commission_rate=commission_rate))
+    # 滑点：保持原有行为（slippage_enabled_cfg or True 恒为 True，始终启用）
+    if slippage_enabled_cfg or True:
+        cerebro.broker.set_slippage_perc(perc=slippage_rate)
+    cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='tradeanalyzer')
+    cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharperatio')
+    cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
+    cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
+    cerebro.addanalyzer(bt.analyzers.TimeReturn, _name='timereturn')
 
     stock = Stock(stock_code, market=market)
     stock_data, _ = stock.get_stock_data(
@@ -900,7 +560,7 @@ def _run_backtest_core(
         stock_data[DATE] = pd.to_datetime(stock_data[DATE])
         stock_data.set_index(DATE, inplace=True)
 
-    runner.cerebro.adddata(bt.feeds.PandasData(
+    cerebro.adddata(bt.feeds.PandasData(
         dataname=stock_data, name=stock_code,
         open=OPEN, high=HIGH, low=LOW, close=CLOSE,
         volume=VOLUME, openinterest=-1,
@@ -930,9 +590,9 @@ def _run_backtest_core(
     strategy_class = create_user_strategy_class(
         user_config, sentiment_series=sentiment_series, sentiment_sector=sentiment_sector,
     )
-    runner.cerebro.addstrategy(strategy_class)
+    cerebro.addstrategy(strategy_class)
 
-    results = runner.cerebro.run()
+    results = cerebro.run()
     strat = results[0]
 
     # 日收益率序列

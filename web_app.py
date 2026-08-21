@@ -26,8 +26,6 @@ from src.utils.validators import (
     validate_commission_rate, validate_strategy_name, sanitize_string,
     ValidationError,
 )
-# 情绪分析专用（analyze_sentiment 路由仍需直接用 is_hs300_stock/get_stock_sector）
-from src.factor import get_latest_trendradar_data, get_stock_sector, is_hs300_stock
 
 logger = get_logger("web_app")
 
@@ -366,104 +364,24 @@ def analyze_sentiment(request: Request, strategy: str = Form(...), stock_code: s
         if not valid:
             raise ValidationError(error)
 
-        if not is_hs300_stock(stock_code):
-            return templates.TemplateResponse("error.html", {
-                "request": request,
-                "error": f"股票 {stock_code} 不是沪深300成分股，暂时只支持沪深300成分股的舆情分析",
-                "title": "错误",
-            })
-
-        stock_sector = get_stock_sector(stock_code)
-        from src.factor.sentiment import calculate_sentiment_factor
-        from nes_data.trendradar.trendradar import check_recent_txt_exists, parse_trendradar_txt
-        has_recent, txt_file = check_recent_txt_exists(max_age_seconds=3600)
-        if has_recent:
-            news_data = parse_trendradar_txt(txt_file)
-            sentiment_result = calculate_sentiment_factor(news_data) if news_data else _get_trendradar_sentiment()
-        else:
-            sentiment_result = _get_trendradar_sentiment()
-
-        from src.Strategy.strategy_manager import get_user_strategy
-        user_config = get_user_strategy(strategy)
-        sentiment_weight = 0.3
-        if user_config and 'parameters' in user_config:
-            for param in user_config['parameters']:
-                if param.get('name') == 'sentiment_weight':
-                    sentiment_weight = float(param.get('default', param.get('value', 0.3)))
-
-        adjusted_score = sentiment_result.get('average_score', 0) * sentiment_weight
-        adjusted_signal = 'buy' if adjusted_score > 0.3 else ('sell' if adjusted_score < -0.3 else 'hold')
-        sentiment_result.update(signal=adjusted_signal, strategy=strategy,
-                                stock_code=stock_code, stock_sector=stock_sector,
-                                sentiment_weight=sentiment_weight)
-
-        from datetime import datetime
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        sentiment_dir = f"output/sentiment_analysis/{strategy}_{stock_code}/{timestamp}"
-        os.makedirs(sentiment_dir, exist_ok=True)
-        sentiment_chart_url = _generate_sentiment_chart(sentiment_result, sentiment_dir, timestamp)
-        news_data = get_latest_trendradar_data() or []
-        _save_sentiment_result(sentiment_result, strategy, stock_code, stock_sector, news_data)
+        from src.services.sentiment import analyze_stock_sentiment
+        result = analyze_stock_sentiment(strategy, stock_code)
 
         return templates.TemplateResponse("sentiment_result.html", {
-            "request": request, "sentiment_result": sentiment_result,
-            "sentiment_chart_url": sentiment_chart_url,
-            "news_data": news_data[:10], "title": "舆情分析结果", "nav_active": "sentiment",
+            "request": request, "sentiment_result": result["sentiment_result"],
+            "sentiment_chart_url": result["sentiment_chart_url"],
+            "news_data": result["news_data"], "title": "舆情分析结果", "nav_active": "sentiment",
         })
     except ValidationError as e:
         return _handle_error(request, e, "舆情分析参数验证")
+    except ValueError as e:
+        # HS300 业务规则错误（service 抛出）直接向用户展示文案；其余 ValueError 记日志
+        logger.warning(f"舆情分析业务错误: {e}")
+        return templates.TemplateResponse("error.html", {
+            "request": request, "error": str(e), "title": "错误",
+        })
     except Exception as e:
         return _handle_error(request, e, "舆情分析执行")
-
-
-def _get_trendradar_sentiment():
-    from src.factor import get_trendradar_sentiment
-    return get_trendradar_sentiment()
-
-
-def _generate_sentiment_chart(sentiment_result, sentiment_dir, timestamp):
-    """生成舆情分析图表（辅助函数，仅 analyze_sentiment 用）"""
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    import numpy as np
-    analysis_result = sentiment_result.get('analysis_result', {})
-    score_dist = analysis_result.get('score_distribution', {})
-    sizes = [score_dist.get('positive', 0) or 0, score_dist.get('negative', 0) or 0, score_dist.get('neutral', 0) or 0]
-    colors = ['#4CAF50', '#F44336', '#FFC107']
-    sizes = [0 if (s is None or np.isnan(s)) else s for s in sizes]
-    total = sum(sizes)
-    sizes = [1/3, 1/3, 1/3] if total == 0 else [s / total for s in sizes]
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.pie(sizes, labels=['正面', '负面', '中性'], colors=colors, autopct='%1.1f%%', startangle=90)
-    ax.axis('equal')
-    plt.title('舆情情绪分布')
-    chart_path = os.path.join(sentiment_dir, f"sentiment_distribution_{timestamp}.png")
-    plt.savefig(chart_path)
-    plt.close(fig)
-    rel_path = os.path.relpath(chart_path, output_dir).replace(os.sep, "/")
-    return f"/output/{rel_path}"
-
-
-def _save_sentiment_result(sentiment_result, strategy, stock_code, stock_sector, news_data):
-    """保存舆情分析结果（辅助函数）"""
-    try:
-        from src.factor.sentiment import process_industry_details, save_sentiment_result
-        from datetime import datetime
-        industry_details = sentiment_result.get('analysis_result', {}).get('industry_details', [])
-        all_sectors_list, top_sectors_list = process_industry_details(industry_details)
-        save_data = {
-            "date": datetime.now().strftime("%Y-%m-%d"),
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "strategy": strategy, "stock_code": stock_code, "stock_sector": stock_sector,
-            "average_score": sentiment_result.get('average_score', 0),
-            "signal": sentiment_result.get('signal', 'hold'),
-            "all_sectors": all_sectors_list, "top_sectors": top_sectors_list,
-            "news_count": len(news_data) if news_data else 0,
-        }
-        save_sentiment_result(save_data)
-    except Exception as e:
-        logger.warning(f"保存舆情结果失败: {e}")
 
 
 # ===========================================================================

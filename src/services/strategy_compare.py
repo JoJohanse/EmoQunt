@@ -1,8 +1,6 @@
 """策略对比服务：在同一标的上运行多个用户策略，返回对齐的净值曲线与指标。
 
-激活休眠的多策略对比能力（替代半成品的 run_multiple_strategies）。
-复用已验证的 `_run_backtest_core` 路径（正确佣金/复权/create_user_strategy_class），
-而非 run_multiple_strategies（其依赖空的 global_strategy_manager + 默认佣金）。
+复用已验证的 `_run_backtest_core` 路径（正确佣金/复权/create_user_strategy_class）。
 """
 from __future__ import annotations
 

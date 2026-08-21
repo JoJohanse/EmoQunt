@@ -1,5 +1,4 @@
 from .backtest_manager import (
-    BacktestRunner,
     PerformanceAnalyzer,
     AShareCommInfo,
     USStockCommInfo,
@@ -9,7 +8,6 @@ from .backtest_manager import (
 )
 
 __all__ = [
-    'BacktestRunner',
     'PerformanceAnalyzer',
     'AShareCommInfo',
     'USStockCommInfo',
