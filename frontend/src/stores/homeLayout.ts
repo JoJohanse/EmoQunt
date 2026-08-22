@@ -2,10 +2,27 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
 /** 首页仪表盘 widget 的唯一标识 */
-export type HomeWidgetId = 'quick' | 'indexes' | 'kline' | 'sectors' | 'news' | 'recommend'
+export type HomeWidgetId =
+  | 'quick'
+  | 'indexes'
+  | 'breadth'
+  | 'kline'
+  | 'heatmap'
+  | 'sectors'
+  | 'news'
+  | 'recommend'
 
 /** 默认布局顺序（首次使用 / 重置布局时恢复） */
-export const DEFAULT_HOME_ORDER: HomeWidgetId[] = ['quick', 'indexes', 'kline', 'sectors', 'news', 'recommend']
+export const DEFAULT_HOME_ORDER: HomeWidgetId[] = [
+  'quick',
+  'indexes',
+  'breadth',
+  'kline',
+  'heatmap',
+  'sectors',
+  'news',
+  'recommend',
+]
 
 /**
  * 首页可拖拽仪表盘的布局状态，持久化到 localStorage（key: emoqunt:homeLayout）。
@@ -37,7 +54,7 @@ export const useHomeLayoutStore = defineStore(
     persist: {
       pick: ['order'],
       // 兼容历史/脏数据：只保留已知 widget，缺失的按默认顺序补在末尾，
-      // 保证 6 个 widget 永远完整渲染。
+      // 保证 8 个 widget 永远完整渲染。
       revive: (s) => {
         const deduped = [...new Set(Array.isArray(s.order) ? (s.order as unknown[]) : [])]
         const saved = deduped.filter(

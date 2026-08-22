@@ -148,6 +148,34 @@ export interface DailyRecommendData {
   recommendations: RecommendedStock[]
 }
 
+/** 行业板块行情（/api/market/sectors） */
+export interface SectorBoardItem {
+  name: string
+  chg_pct: number
+  turnover: number
+  net_inflow: number
+  up_count: number
+  down_count: number
+  leader: string
+  leader_chg: number
+}
+export interface SectorBoardData {
+  sectors: SectorBoardItem[]
+  updated_at: string
+}
+
+/** 市场宽度（/api/market/breadth） */
+export interface MarketBreadth {
+  up: number
+  down: number
+  limit_up: number | null
+  limit_down: number | null
+  rising_sectors: number
+  total_sectors: number
+  top_sector: { name: string; chg_pct: number }
+  updated_at: string
+}
+
 /** K 线 OHLCV 数据（首页看板蜡烛图） */
 export interface KlineData {
   code: string

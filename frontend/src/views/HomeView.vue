@@ -3,8 +3,16 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
-import { klineApi, sentimentApi, recommendApi } from '@/api'
-import type { KlineData, SentimentData, DailyRecommendData, Market, SentimentCalendarItem } from '@/api/types'
+import { klineApi, sentimentApi, recommendApi, marketApi } from '@/api'
+import type {
+  KlineData,
+  SentimentData,
+  DailyRecommendData,
+  Market,
+  SentimentCalendarItem,
+  MarketBreadth,
+  SectorBoardData,
+} from '@/api/types'
 import { useWatchlistStore } from '@/stores/watchlist'
 import { useBacktestHistoryStore } from '@/stores/backtestHistory'
 import { useHomeLayoutStore } from '@/stores/homeLayout'
@@ -16,11 +24,13 @@ const watchlistStore = useWatchlistStore()
 const historyStore = useBacktestHistoryStore()
 const homeLayoutStore = useHomeLayoutStore()
 
-// ===== 仪表盘可拖拽布局 =====
+// ===== 仪表盘可拖拽布局（与 stores/homeLayout 保持一致） =====
 const DEFAULT_WIDGETS = [
   { id: 'quick', title: '快捷入口', icon: 'Histogram' },
   { id: 'indexes', title: '指数速览', icon: 'TrendCharts' },
+  { id: 'breadth', title: '市场宽度', icon: 'Odometer' },
   { id: 'kline', title: '行情看板', icon: 'CandlestickChart' },
+  { id: 'heatmap', title: '行业热力图', icon: 'Grid' },
   { id: 'sectors', title: '热门板块', icon: 'Sunrise' },
   { id: 'news', title: '当日舆情', icon: 'ChatDotRound' },
   { id: 'recommend', title: '个股推荐', icon: 'Star' },
@@ -28,6 +38,7 @@ const DEFAULT_WIDGETS = [
 
 type WidgetId = (typeof DEFAULT_WIDGETS)[number]['id']
 
+// 与 HomeWidgetId 同源，避免 stores/homeLayout 里的 DEFAULT_HOME_ORDER 漂移时漏同步
 const widgetMeta = computed(() => {
   const meta = new Map<string, { title: string; icon: string }>()
   for (const w of DEFAULT_WIDGETS) meta.set(w.id, w)
@@ -96,6 +107,31 @@ const kline = ref<KlineData | null>(null)
 const sentiment = ref<SentimentData | null>(null)
 const recommend = ref<DailyRecommendData | null>(null)
 const loadingKline = ref(false)
+const klineChartRef = ref<InstanceType<typeof VChart> | null>(null)
+
+// MA 叠加开关，持久化到 localStorage
+const MA_KEY = 'emoqunt:kline_ma'
+function loadShowMA(): boolean {
+  try {
+    const raw = localStorage.getItem(MA_KEY)
+    if (raw !== null) return JSON.parse(raw) as boolean
+  } catch { /* ignore */ }
+  return true
+}
+const showMA = ref(loadShowMA())
+watch(showMA, (v) => {
+  try { localStorage.setItem(MA_KEY, JSON.stringify(v)) } catch { /* quota */ }
+})
+
+function resetKlineZoom() {
+  try {
+    const inst: any = (klineChartRef.value as any)?.chart
+    if (inst?.dispatchAction) {
+      inst.dispatchAction({ type: 'dataZoom', dataZoomIndex: 0, start: 60, end: 100 })
+      inst.dispatchAction({ type: 'dataZoom', dataZoomIndex: 1, start: 60, end: 100 })
+    }
+  } catch { /* ignore */ }
+}
 
 // 当前标的（键为 `code|market`），上次选择持久化在 watchlist store
 const activeKey = ref(watchlistStore.lastKey || '000001|zh_a')
@@ -201,16 +237,29 @@ function removeWatch(code: string, market: Market) {
   watchlistStore.remove(code, market)
 }
 
-// 涨跌配色：A股红涨绿跌，美股绿涨红跌（与主流行情软件一致）
-function chgColor(market: Market, chgPct: number): string {
-  if (chgPct === 0) return 'var(--neutral)'
+// 涨跌徽章（A股红涨绿跌，美股绿涨红跌）
+function deltaBadgeStyle(market: Market, chgPct: number): Record<string, string> {
+  if (chgPct === 0) return { background: 'var(--neutral)', color: '#fff' }
   const up = chgPct > 0
-  if (market === 'zh_a') return up ? 'var(--danger)' : 'var(--success)'
-  return up ? 'var(--success)' : 'var(--danger)'
+  if (market === 'zh_a') return up ? { background: '#fef2f2', color: 'var(--danger)', border: '1px solid #fecaca' } : { background: '#f0fdf4', color: 'var(--success)', border: '1px solid #bbf7d0' }
+  return up ? { background: '#f0fdf4', color: 'var(--success)', border: '1px solid #bbf7d0' } : { background: '#fef2f2', color: 'var(--danger)', border: '1px solid #fecaca' }
 }
 
 // ===== 情绪日历 =====
 const calendar = ref<SentimentCalendarItem[]>([])
+
+// ===== 市场宽度 + 板块热力图 =====
+const breadth = ref<MarketBreadth | null>(null)
+const sectorBoard = ref<SectorBoardData | null>(null)
+const loadingBreadth = ref(false)
+const loadingSectors = ref(false)
+
+const breadthUpPct = computed(() => {
+  if (!breadth.value) return 50
+  const total = breadth.value.up + breadth.value.down
+  if (!total) return 50
+  return Math.round((breadth.value.up / total) * 100)
+})
 
 // ===== 最近回测（本地持久化） =====
 const recentBacktests = computed(() => historyStore.records.slice(0, 5))
@@ -243,10 +292,48 @@ async function loadAll() {
   recommendApi.get().then((d) => (recommend.value = d)).catch((e: any) => {
     console.warn('推荐数据加载失败', e.message)
   })
+  // 市场宽度
+  loadingBreadth.value = true
+  marketApi.breadth().then((d) => (breadth.value = d)).catch((e: any) => {
+    console.warn('市场宽度加载失败', e.message)
+  }).finally(() => (loadingBreadth.value = false))
+  // 板块行情（热力图数据源）
+  loadingSectors.value = true
+  marketApi.sectors().then((d) => (sectorBoard.value = d)).catch((e: any) => {
+    console.warn('板块行情加载失败', e.message)
+  }).finally(() => (loadingSectors.value = false))
 }
 onMounted(loadAll)
 
-// K线 ECharts 配置：蜡烛图 + 成交量
+// 工具：计算 MA
+function calcMA(closes: number[], period: number): (number | null)[] {
+  const out: (number | null)[] = []
+  for (let i = 0; i < closes.length; i++) {
+    if (i < period - 1) { out.push(null); continue }
+    let sum = 0
+    for (let j = i - period + 1; j <= i; j++) sum += closes[j]!
+    out.push(+(sum / period).toFixed(2))
+  }
+  return out
+}
+
+function heatColor(chg: number): string {
+  const v = Math.max(-5, Math.min(5, chg))
+  if (v > 0) {
+    const t = v / 5
+    // 白 -> 浅红 -> 深红
+    if (t < 0.5) return t < 0.25 ? '#fecaca' : '#f87171'
+    return t < 0.75 ? '#ef4444' : '#991b1b'
+  }
+  if (v < 0) {
+    const t = -v / 5
+    if (t < 0.5) return t < 0.25 ? '#bbf7d0' : '#4ade80'
+    return t < 0.75 ? '#22c55e' : '#14532d'
+  }
+  return '#f3f4f6'
+}
+
+// K线 ECharts 配置：蜡烛图 + 成交量 + MA 叠加
 const klineOption = computed(() => {
   if (!kline.value || !kline.value.dates.length) return {}
   const k = kline.value
@@ -254,6 +341,41 @@ const klineOption = computed(() => {
   const isUS = k.market === 'us'
   const upColor = isUS ? '#26a69a' : '#ef232a'
   const downColor = isUS ? '#ef5350' : '#14b143'
+  const closes = k.ohlcv.map((o) => o[1])
+  const ma5 = calcMA(closes, 5)
+  const ma20 = calcMA(closes, 20)
+  const ma60 = calcMA(closes, 60)
+  const legendData = showMA.value ? ['日K', 'MA5', 'MA20', 'MA60', '成交量'] : ['日K', '成交量']
+  const series: any[] = [
+    {
+      name: '日K',
+      type: 'candlestick',
+      data: k.ohlcv,
+      itemStyle: {
+        color: upColor,
+        color0: downColor,
+        borderColor: upColor,
+        borderColor0: downColor,
+      },
+    },
+  ]
+  if (showMA.value) {
+    series.push(
+      { name: 'MA5', type: 'line', data: ma5, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#f59e0b' } },
+      { name: 'MA20', type: 'line', data: ma20, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#667eea' } },
+      { name: 'MA60', type: 'line', data: ma60, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#10b981' } },
+    )
+  }
+  series.push({
+    name: '成交量',
+    type: 'bar',
+    xAxisIndex: 1,
+    yAxisIndex: 1,
+    data: k.volumes.map((v, i) => ({
+      value: v,
+      itemStyle: { color: k.ohlcv[i] && k.ohlcv[i][1] >= k.ohlcv[i][0] ? upColor : downColor },
+    })),
+  })
   return {
     title: {
       text: `${k.name || k.code} ${isUS ? '(美股)' : '(A股)'}`,
@@ -262,9 +384,33 @@ const klineOption = computed(() => {
     },
     tooltip: {
       trigger: 'axis',
-      axisPointer: { type: 'cross' },
+      axisPointer: { type: 'cross', label: { backgroundColor: '#6a7985' } },
+      backgroundColor: 'rgba(255,255,255,0.97)',
+      borderColor: '#e5e7eb',
+      borderWidth: 1,
+      textStyle: { color: '#1f2937', fontSize: 12 },
+      formatter(params: any) {
+        const arr: any[] = Array.isArray(params) ? params : [params]
+        const idx = arr[0]?.dataIndex ?? 0
+        const date = k.dates[idx] ?? ''
+        const ohlcv = k.ohlcv[idx]
+        if (!ohlcv) return date
+        const lines = [`<div style="font-weight:600;margin-bottom:4px">${date}</div>`]
+        lines.push(`开盘 ${ohlcv[0].toFixed(2)} &nbsp; 收盘 ${ohlcv[1].toFixed(2)} &nbsp; 最低 ${ohlcv[2].toFixed(2)} &nbsp; 最高 ${ohlcv[3].toFixed(2)}`)
+        if (showMA.value) {
+          const m5 = ma5[idx], m20 = ma20[idx], m60 = ma60[idx]
+          const maLine: string[] = []
+          if (m5 != null) maLine.push(`<span style="color:#f59e0b">MA5 ${m5.toFixed(2)}</span>`)
+          if (m20 != null) maLine.push(`<span style="color:#667eea">MA20 ${m20.toFixed(2)}</span>`)
+          if (m60 != null) maLine.push(`<span style="color:#10b981">MA60 ${m60.toFixed(2)}</span>`)
+          if (maLine.length) lines.push(maLine.join(' &nbsp; '))
+        }
+        const vol = k.volumes[idx]
+        if (vol != null) lines.push(`成交量 ${(vol / 10000).toFixed(1)}万`)
+        return lines.join('<br/>')
+      },
     },
-    legend: { data: ['日K', '成交量'], top: 28, left: 'center' },
+    legend: { data: legendData, top: 28, left: 'center' },
     grid: [
       { left: '6%', right: '3%', top: 60, height: '58%' },
       { left: '6%', right: '3%', top: '76%', height: '16%' },
@@ -295,30 +441,67 @@ const klineOption = computed(() => {
       { type: 'inside', xAxisIndex: [0, 1], start: 60, end: 100 },
       { type: 'slider', xAxisIndex: [0, 1], top: '94%', start: 60, end: 100 },
     ],
+    series,
+  }
+})
+
+const heatLabelColor = (chg: number): string => (Math.abs(chg) >= 2 ? '#fff' : '#1f2937')
+
+// 热力图 ECharts 配置：面积=成交额、颜色=涨跌幅，全市场 90 行业按成交额取前 28
+const heatmapOption = computed(() => {
+  const sectors = sectorBoard.value?.sectors
+  if (!sectors?.length) return {}
+  const top = [...sectors].sort((a, b) => b.turnover - a.turnover).slice(0, 28)
+  return {
+    tooltip: {
+      backgroundColor: 'rgba(255,255,255,0.97)',
+      borderColor: '#e5e7eb',
+      textStyle: { color: '#1f2937', fontSize: 12 },
+      formatter(info: any) {
+        const c = info.data as any
+        return `${c.nameRaw}<br/>涨跌幅 ${c.chg > 0 ? '+' : ''}${c.chg.toFixed(2)}%<br/>成交额 ${c.value.toFixed(1)}亿 &nbsp; 领涨 ${c.leader || '-'}`
+      },
+    },
     series: [
       {
-        name: '日K',
-        type: 'candlestick',
-        data: k.ohlcv,
-        itemStyle: {
-          color: upColor,
-          color0: downColor,
-          borderColor: upColor,
-          borderColor0: downColor,
+        type: 'treemap',
+        roam: false,
+        nodeClick: false,
+        breadcrumb: { show: false },
+        label: {
+          show: true,
+          formatter(param: any) {
+            const c = param.data as any
+            return `${c.nameRaw}\n${c.chg > 0 ? '+' : ''}${c.chg.toFixed(2)}%`
+          },
+          fontSize: 11,
+          color: '#1f2937',
+          // satureted cells are dark; per-label color override applied via itemStyle label
         },
-      },
-      {
-        name: '成交量',
-        type: 'bar',
-        xAxisIndex: 1,
-        yAxisIndex: 1,
-        data: k.volumes.map((v, i) => ({
-          value: v,
-          itemStyle: { color: k.ohlcv[i] && k.ohlcv[i][1] >= k.ohlcv[i][0] ? upColor : downColor },
+        upperLabel: { show: false },
+        itemStyle: { borderColor: '#fff', borderWidth: 1, gapWidth: 1 },
+        data: top.map((s) => ({
+          name: s.name,
+          nameRaw: s.name,
+          value: Math.max(1, s.turnover || 1),
+          chg: s.chg_pct,
+          leader: s.leader,
+          label: { color: heatLabelColor(s.chg_pct) },
+          itemStyle: { color: heatColor(s.chg_pct) },
         })),
       },
     ],
   }
+})
+
+const sectorFallbackList = computed(() => {
+  const top = recommend.value?.top_sectors
+  if (top?.length) return top.map((s) => ({ name: s.name, val: s.sentiment, label: `${s.sentiment}` }))
+  const board = sectorBoard.value?.sectors
+  if (board?.length) return board.slice(0, 6).map((s) => ({ name: s.name, val: Math.abs(s.chg_pct), label: `${s.chg_pct > 0 ? '+' : ''}${s.chg_pct.toFixed(2)}%` }))
+  const senti = sentiment.value?.sectors
+  if (senti?.length) return senti.slice(0, 6).map((s) => ({ name: s.name, val: s.sentiment, label: `${s.sentiment}` }))
+  return [] as { name: string; val: number; label: string }[]
 })
 
 function sectorColor(sentiment: number): string {
@@ -384,16 +567,72 @@ function scoreColor(score: number): string {
               <template v-if="quotes[`${idx.code}|${idx.market}`]">
                 <span class="index-close">{{ quotes[`${idx.code}|${idx.market}`].close.toFixed(2) }}</span>
                 <span
-                  class="index-chg"
-                  :style="{ color: chgColor(idx.market, quotes[`${idx.code}|${idx.market}`].chgPct) }"
+                  class="delta-badge"
+                  :style="deltaBadgeStyle(idx.market, quotes[`${idx.code}|${idx.market}`].chgPct)"
                 >
+                  {{ quotes[`${idx.code}|${idx.market}`].chgPct >= 0 ? '▲' : '▼' }}
                   {{ quotes[`${idx.code}|${idx.market}`].chgPct >= 0 ? '+' : '' }}{{ quotes[`${idx.code}|${idx.market}`].chgPct.toFixed(2) }}%
                 </span>
               </template>
-              <span v-else class="index-close index-loading">加载中…</span>
+              <el-skeleton v-else animated style="width: 120px; flex: 1">
+                <template #template>
+                  <el-skeleton-item variant="text" style="width: 70px; height: 14px" />
+                  <el-skeleton-item variant="text" style="width: 48px; height: 14px; margin-left: 8px" />
+                </template>
+              </el-skeleton>
             </div>
           </el-col>
         </el-row>
+      </template>
+
+      <!-- breadth：市场宽度风向标 -->
+      <template v-else-if="w.id === 'breadth'">
+        <el-card shadow="never" class="info-card breadth-card">
+          <template #header>
+            <div class="card-head-row">
+              <span class="section-title" style="margin: 0; border: none; padding: 0">
+                <el-icon><Odometer /></el-icon> 市场宽度
+              </span>
+              <small v-if="breadth" class="card-updated">{{ breadth.updated_at }}</small>
+            </div>
+          </template>
+          <div v-if="loadingBreadth" class="info-body" style="min-height: 110px">
+            <el-skeleton animated :rows="3" />
+          </div>
+          <template v-else-if="breadth">
+            <div class="breadth-stats">
+              <div class="breadth-stat">
+                <span class="b-label">上涨</span>
+                <strong class="b-val" style="color: var(--danger)">{{ breadth.up }}</strong>
+              </div>
+              <div class="breadth-stat">
+                <span class="b-label">下跌</span>
+                <strong class="b-val" style="color: var(--success)">{{ breadth.down }}</strong>
+              </div>
+              <div class="breadth-stat">
+                <span class="b-label">涨停</span>
+                <strong class="b-val" style="color: #b91c1c">{{ breadth.limit_up ?? '—' }}</strong>
+              </div>
+              <div class="breadth-stat">
+                <span class="b-label">跌停</span>
+                <strong class="b-val" style="color: #14532d">{{ breadth.limit_down ?? '—' }}</strong>
+              </div>
+              <div class="breadth-stat">
+                <span class="b-label">上涨板块</span>
+                <strong class="b-val">{{ breadth.rising_sectors }}/{{ breadth.total_sectors }}</strong>
+              </div>
+            </div>
+            <div class="breadth-bar">
+              <div class="breadth-seg up" :style="{ width: breadthUpPct + '%' }"></div>
+              <div class="breadth-seg down" :style="{ width: (100 - breadthUpPct) + '%' }"></div>
+            </div>
+            <div class="breadth-foot">
+              <span>领涨板块 <strong :style="{ color: breadth.top_sector.chg_pct > 0 ? 'var(--danger)' : 'var(--success)' }">{{ breadth.top_sector.name }} {{ breadth.top_sector.chg_pct > 0 ? '+' : '' }}{{ breadth.top_sector.chg_pct.toFixed(2) }}%</strong></span>
+              <span class="b-meta">上涨占比 {{ breadthUpPct }}%</span>
+            </div>
+          </template>
+          <el-empty v-else :image-size="60" description="暂无市场宽度数据" />
+        </el-card>
       </template>
 
       <!-- kline：K线主图 + 右栏自选/最近回测 -->
@@ -406,24 +645,36 @@ function scoreColor(score: number): string {
                   <span class="section-title" style="margin: 0; border: none; padding: 0">
                     <el-icon><CandlestickChart /></el-icon> 行情看板
                   </span>
-                  <el-select
-                    v-model="activeKey"
-                    placeholder="选择标的"
-                    style="width: 200px"
-                    filterable
-                  >
-                    <el-option
-                      v-for="t in watchlistStore.items"
-                      :key="t.code + t.market"
-                      :label="`${t.name} (${t.code})`"
-                      :value="`${t.code}|${t.market}`"
-                    />
-                  </el-select>
+                  <div class="kline-toolbar">
+                    <span class="ma-toggle">
+                      <el-switch v-model="showMA" size="small" />
+                      <small>MA</small>
+                    </span>
+                    <el-button size="small" text @click="resetKlineZoom">
+                      <el-icon><Refresh /></el-icon> 重置缩放
+                    </el-button>
+                    <el-select
+                      v-model="activeKey"
+                      placeholder="选择标的"
+                      style="width: 180px"
+                      filterable
+                    >
+                      <el-option
+                        v-for="t in watchlistStore.items"
+                        :key="t.code + t.market"
+                        :label="`${t.name} (${t.code})`"
+                        :value="`${t.code}|${t.market}`"
+                      />
+                    </el-select>
+                  </div>
                 </div>
               </template>
-              <div v-loading="loadingKline" class="kline-body">
-                <v-chart v-if="kline && kline.dates.length" class="kline-chart" :option="klineOption" autoresize />
-                <el-empty v-else-if="!loadingKline" description="暂无K线数据" />
+              <div class="kline-body">
+                <el-skeleton v-if="loadingKline" animated :rows="5" style="padding: 16px" />
+                <template v-else>
+                  <v-chart ref="klineChartRef" v-if="kline && kline.dates.length" class="kline-chart" :option="klineOption" autoresize />
+                  <el-empty v-else description="暂无K线数据" />
+                </template>
               </div>
             </el-card>
           </el-col>
@@ -466,13 +717,17 @@ function scoreColor(score: number): string {
                   <template v-if="quotes[`${item.code}|${item.market}`]">
                     <span class="watch-close">{{ quotes[`${item.code}|${item.market}`].close.toFixed(2) }}</span>
                     <span
-                      class="watch-chg"
-                      :style="{ color: chgColor(item.market, quotes[`${item.code}|${item.market}`].chgPct) }"
+                      class="delta-badge delta-badge-sm"
+                      :style="deltaBadgeStyle(item.market, quotes[`${item.code}|${item.market}`].chgPct)"
                     >
                       {{ quotes[`${item.code}|${item.market}`].chgPct >= 0 ? '+' : '' }}{{ quotes[`${item.code}|${item.market}`].chgPct.toFixed(2) }}%
                     </span>
                   </template>
-                  <span v-else class="watch-close watch-pending">…</span>
+                  <el-skeleton v-else animated style="width: 90px">
+                    <template #template>
+                      <el-skeleton-item variant="text" style="width: 40px; height: 12px" />
+                    </template>
+                  </el-skeleton>
                   <el-button
                     class="watch-del"
                     text
@@ -539,6 +794,35 @@ function scoreColor(score: number): string {
         </el-row>
       </template>
 
+      <!-- heatmap：行业热力图 -->
+      <template v-else-if="w.id === 'heatmap'">
+        <el-card shadow="never" class="info-card heatmap-card">
+          <template #header>
+            <div class="card-head-row">
+              <span class="section-title" style="margin: 0; border: none; padding: 0">
+                <el-icon><Grid /></el-icon> 行业热力图
+              </span>
+              <small v-if="sectorBoard" class="card-updated">{{ sectorBoard.updated_at }}</small>
+            </div>
+          </template>
+          <div v-if="loadingSectors" style="min-height: 320px; padding: 16px">
+            <el-skeleton animated :rows="6" />
+          </div>
+          <template v-else-if="sectorBoard?.sectors?.length">
+            <v-chart class="heatmap-chart" :option="heatmapOption" autoresize />
+            <div class="heatmap-legend">
+              <span class="hl" style="background:#14532d"></span> 跌 &gt;3%
+              <span class="hl" style="background:#4ade80"></span> 跌
+              <span class="hl" style="background:#f3f4f6;border:1px solid #e5e7eb"></span> 平
+              <span class="hl" style="background:#f87171"></span> 涨
+              <span class="hl" style="background:#991b1b"></span> 涨 &gt;3%
+              <span class="hl-meta">面积=成交额 · 颜色=涨跌幅</span>
+            </div>
+          </template>
+          <el-empty v-else :image-size="60" description="暂无板块数据" />
+        </el-card>
+      </template>
+
       <!-- sectors：热门板块 -->
       <template v-else-if="w.id === 'sectors'">
         <el-card shadow="never" class="info-card">
@@ -549,22 +833,22 @@ function scoreColor(score: number): string {
           </template>
           <div class="info-body">
             <div
-              v-for="s in (recommend?.top_sectors || sentiment?.sectors || []).slice(0, 6)"
+              v-for="s in sectorFallbackList"
               :key="s.name"
               class="sector-row"
             >
               <div class="sector-row-head">
                 <span class="sector-name">{{ s.name }}</span>
-                <span class="sector-score" :style="{ color: sectorColor(s.sentiment) }">{{ s.sentiment }}</span>
+                <span class="sector-score" :style="{ color: sectorColor(s.val) }">{{ s.label }}</span>
               </div>
               <el-progress
-                :percentage="s.sentiment"
-                :color="sectorColor(s.sentiment)"
+                :percentage="Math.min(100, Math.abs(s.val))"
+                :color="sectorColor(s.val)"
                 :stroke-width="6"
                 :show-text="false"
               />
             </div>
-            <el-empty v-if="!(recommend?.top_sectors?.length || sentiment?.sectors?.length)" :image-size="60" description="暂无板块数据" />
+            <el-empty v-if="!sectorFallbackList.length" :image-size="60" description="暂无板块数据" />
           </div>
         </el-card>
       </template>
@@ -737,13 +1021,14 @@ function scoreColor(score: number): string {
 /* 指数速览 */
 .index-card {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 10px 16px;
   margin-bottom: 12px;
+  min-height: 48px;
 }
 .index-name {
   font-weight: 600;
@@ -755,16 +1040,82 @@ function scoreColor(score: number): string {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-.index-chg {
-  font-size: 0.9rem;
-  font-weight: 600;
+.delta-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.82rem;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
+  padding: 2px 8px;
+  border-radius: 999px;
+  line-height: 1.4;
 }
-.index-loading {
+.delta-badge-sm {
+  font-size: 0.76rem;
+  padding: 1px 6px;
+}
+.card-head-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.card-updated {
   color: var(--text-muted);
-  font-size: 0.85rem;
-  font-weight: 400;
+  font-size: 0.72rem;
 }
+
+/* 市场宽度风向标 */
+.breadth-card :deep(.el-card__body) { padding-top: 12px; }
+.breadth-stats {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.breadth-stat {
+  flex: 1;
+  min-width: 72px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  text-align: center;
+}
+.b-label { display: block; font-size: 0.72rem; color: var(--text-muted); margin-bottom: 2px; }
+.b-val { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.breadth-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--border);
+  margin-bottom: 10px;
+}
+.breadth-seg.up { background: var(--danger); }
+.breadth-seg.down { background: var(--success); }
+.breadth-foot {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+.b-meta { font-variant-numeric: tabular-nums; }
+
+/* 热力图 */
+.heatmap-card :deep(.el-card__body) { padding-top: 8px; }
+.heatmap-chart { height: 360px; width: 100%; }
+.heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+.heatmap-legend .hl { width: 14px; height: 10px; border-radius: 3px; display: inline-block; }
+.hl-meta { margin-left: auto; }
 
 /* K线主图 */
 .kline-card {
@@ -774,7 +1125,16 @@ function scoreColor(score: number): string {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
+.kline-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ma-toggle { display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
 .kline-body {
   min-height: 460px;
 }
@@ -839,13 +1199,6 @@ function scoreColor(score: number): string {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   font-size: 0.88rem;
-}
-.watch-chg {
-  width: 62px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-  font-size: 0.85rem;
 }
 .watch-pending {
   color: var(--text-muted);

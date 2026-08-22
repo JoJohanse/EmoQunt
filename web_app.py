@@ -734,6 +734,32 @@ def refresh_daily_recommend_api():
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.get("/api/market/sectors")
+def get_market_sectors_api():
+    """行业板块行情（同花顺源，含涨跌幅/成交额/领涨股，供首页热力图）。
+
+    plain def：akshare 网络拉取较慢，走线程池避免阻塞事件循环；
+    服务层自带 5 分钟进程内缓存。
+    """
+    try:
+        from src.services.market import get_sector_board
+        return get_sector_board()
+    except Exception as e:
+        logger.error(f"获取行业板块行情失败: {e}", exc_info=True)
+        return JSONResponse({"error": "获取板块行情失败，请稍后重试"}, status_code=500)
+
+
+@app.get("/api/market/breadth")
+def get_market_breadth_api():
+    """市场宽度概览（涨跌家数 + 涨停/跌停家数，供首页风向标条）。"""
+    try:
+        from src.services.market import get_market_breadth
+        return get_market_breadth()
+    except Exception as e:
+        logger.error(f"获取市场宽度失败: {e}", exc_info=True)
+        return JSONResponse({"error": "获取市场宽度失败，请稍后重试"}, status_code=500)
+
+
 # ===========================================================================
 # AI 投资助手（SSE 流式 + 同步）
 # ===========================================================================

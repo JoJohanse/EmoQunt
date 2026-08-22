@@ -4,7 +4,7 @@
  */
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { LineChart, BarChart, HeatmapChart, CandlestickChart } from 'echarts/charts'
+import { LineChart, BarChart, HeatmapChart, CandlestickChart, TreemapChart } from 'echarts/charts'
 import {
   TitleComponent,
   TooltipComponent,
@@ -22,6 +22,7 @@ use([
   BarChart,
   HeatmapChart,
   CandlestickChart,
+  TreemapChart,
   TitleComponent,
   TooltipComponent,
   LegendComponent,

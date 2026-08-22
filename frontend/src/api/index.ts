@@ -8,6 +8,8 @@ import type {
   FactorAnalysisRequest,
   FactorAnalysisResult,
   KlineData,
+  MarketBreadth,
+  SectorBoardData,
   SentimentCalendarItem,
   SentimentData,
   StrategyDetail,
@@ -120,6 +122,16 @@ export const recommendApi = {
   },
   refresh(): Promise<DailyRecommendData> {
     return http.get('/daily-recommend/refresh').then((r) => r.data)
+  },
+}
+
+/** 市场宽度 / 板块行情 API（首页看板） */
+export const marketApi = {
+  breadth(): Promise<MarketBreadth> {
+    return http.get('/market/breadth').then((r) => r.data)
+  },
+  sectors(): Promise<SectorBoardData> {
+    return http.get('/market/sectors').then((r) => r.data)
   },
 }
 
