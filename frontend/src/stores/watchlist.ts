@@ -10,13 +10,15 @@ export interface WatchlistItem {
   name: string
   /** 添加时间（ISO 字符串） */
   addedAt: string
+  /** 指数标记：kind=index 时行情走服务端指数数据链（000001 等二义代码需要） */
+  kind?: 'index'
 }
 
 /** 首次使用时的默认自选（与首页原有预设标的一致） */
 const DEFAULT_ITEMS: WatchlistItem[] = [
-  { code: '000001', market: 'zh_a', name: '上证指数', addedAt: '' },
-  { code: '000300', market: 'zh_a', name: '沪深300', addedAt: '' },
-  { code: '399001', market: 'zh_a', name: '深证成指', addedAt: '' },
+  { code: '000001', market: 'zh_a', name: '上证指数', addedAt: '', kind: 'index' },
+  { code: '000300', market: 'zh_a', name: '沪深300', addedAt: '', kind: 'index' },
+  { code: '399001', market: 'zh_a', name: '深证成指', addedAt: '', kind: 'index' },
   { code: 'AAPL', market: 'us', name: 'Apple', addedAt: '' },
   { code: 'MSFT', market: 'us', name: 'Microsoft', addedAt: '' },
   { code: 'TSLA', market: 'us', name: 'Tesla', addedAt: '' },
@@ -61,5 +63,19 @@ export const useWatchlistStore = defineStore(
 
     return { items, lastKey, has, add, remove, rename }
   },
-  { persist: true },
+  {
+    persist: {
+      // 迁移：旧持久化数据无 kind 字段，按默认自选的三个指数代码回填，
+      // 使「上证指数/沪深300/深证成指」继续走服务端指数链而非个股链
+      revive: (s) => {
+        const INDEX_KEYS = new Set(['000001|zh_a', '000300|zh_a', '399001|zh_a'])
+        if (Array.isArray(s.items)) {
+          for (const it of s.items) {
+            if (it && !it.kind && INDEX_KEYS.has(`${it.code}|${it.market}`)) it.kind = 'index'
+          }
+        }
+        return s
+      },
+    },
+  },
 )

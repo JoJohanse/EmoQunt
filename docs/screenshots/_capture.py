@@ -1,6 +1,8 @@
 """README 截图采集脚本：用系统 Edge 无头浏览器访问本机 FastAPI，截取新版界面。
 
-用法: conda run -n qdt python docs/screenshots/_capture.py
+用法:
+    conda run -n qdt python docs/screenshots/_capture.py           # 全量（含真实回测）
+    conda run -n qdt python docs/screenshots/_capture.py --quick   # 仅首页/K线截图
 """
 import sys
 from pathlib import Path
@@ -10,6 +12,7 @@ from playwright.sync_api import sync_playwright
 BASE = "http://127.0.0.1:8000"
 OUT = Path(__file__).parent
 VIEWPORT = {"width": 1440, "height": 960}
+QUICK = "--quick" in sys.argv
 
 
 def main() -> int:
@@ -41,6 +44,27 @@ def main() -> int:
         # 切回亮色，保持默认偏好
         page.locator('button[title="切换到亮色模式"]').click()
         page.wait_for_timeout(800)
+
+        # 2b) K 线看板特写：蜡烛 + MA 叠加 + 最新价虚线 + MACD 副图（上证指数走指数链）
+        kline_card = page.locator(".kline-card")
+        kline_card.scroll_into_view_if_needed()
+        page.wait_for_timeout(800)
+        kline_card.screenshot(path=str(OUT / "spa-kline.png"))
+        print("spa-kline.png done")
+
+        # 2c) 切周线：服务端聚合 + 三窗格联动
+        page.locator(".el-radio-button", has_text="周").click()
+        page.wait_for_timeout(6000)
+        kline_card.screenshot(path=str(OUT / "spa-kline-week.png"))
+        print("spa-kline-week.png done")
+        # 切回日线，保持默认偏好
+        page.locator(".el-radio-button", has_text="日").click()
+        page.wait_for_timeout(4000)
+
+        if QUICK:
+            ctx.close()
+            browser.close()
+            return 0
 
         # 3) SPA 回测：跑一段 2025 区间（外部数据源对该区间稳定），截结果页
         page.goto(f"{BASE}/spa/backtest", wait_until="domcontentloaded")

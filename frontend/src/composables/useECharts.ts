@@ -13,6 +13,9 @@ import {
   DataZoomComponent,
   ToolboxComponent,
   VisualMapComponent,
+  MarkLineComponent,
+  MarkPointComponent,
+  AxisPointerComponent,
 } from 'echarts/components'
 
 // 只注册用到的组件
@@ -30,6 +33,9 @@ use([
   DataZoomComponent,
   ToolboxComponent,
   VisualMapComponent,
+  MarkLineComponent,
+  MarkPointComponent,
+  AxisPointerComponent,
 ])
 
 export { default as VChart } from 'vue-echarts'

@@ -72,10 +72,16 @@ EmoQunt/
 
 ## 页面预览
 
-> 截图由 `conda run -n qdt python docs/screenshots/_capture.py` 在本机源码服务（`web_app.py` + `db/cache`）上自动采集，亮/暗色、回测结果与策略列表均为 2026-08 迭代后界面（含命令面板、标签页、可拖拽网格与情绪日历）。
+> 截图由 `conda run -n qdt python docs/screenshots/_capture.py` 在本机源码服务（`web_app.py` + `db/cache`）上自动采集，亮/暗色、K 线看板、回测结果与策略列表均为 2026-08 迭代后界面（含命令面板、标签页、可拖拽网格、情绪日历与指数行情/K 线增强）。
 
 ### SPA 首页（亮色）——侧边栏导航 / 指数速览 / 自选股 / K 线看板 / 情绪日历
 ![SPA 首页（亮色）](docs/screenshots/spa-home-light.png)
+
+### SPA K 线看板——红涨绿跌蜡烛 + MA/BOLL 叠加 + 最新价虚线 + MACD/KDJ/RSI 副图 + 日/周/月与复权切换
+![SPA K 线看板](docs/screenshots/spa-kline.png)
+
+### SPA K 线周线——服务端聚合，三窗格联动缩放
+![SPA K 线周线](docs/screenshots/spa-kline-week.png)
 
 ### SPA 首页（暗色模式）——主题切换后刷新仍保持
 ![SPA 首页（暗色）](docs/screenshots/spa-home-dark.png)

@@ -85,11 +85,11 @@ function resetLayout() {
   ElMessage.success('已恢复默认布局')
 }
 
-// ===== 大盘指数速览（固定 3 个 A 股指数） =====
+// ===== 大盘指数速览（固定 3 个 A 股指数；kind=index 走服务端指数数据链） =====
 const INDEX_PRESETS = [
-  { code: '000001', market: 'zh_a' as Market, name: '上证指数' },
-  { code: '000300', market: 'zh_a' as Market, name: '沪深300' },
-  { code: '399001', market: 'zh_a' as Market, name: '深证成指' },
+  { code: '000001', market: 'zh_a' as Market, name: '上证指数', kind: 'index' as const },
+  { code: '000300', market: 'zh_a' as Market, name: '沪深300', kind: 'index' as const },
+  { code: '399001', market: 'zh_a' as Market, name: '深证成指', kind: 'index' as const },
 ]
 
 // ===== 快捷入口 =====
@@ -109,26 +109,54 @@ const recommend = ref<DailyRecommendData | null>(null)
 const loadingKline = ref(false)
 const klineChartRef = ref<InstanceType<typeof VChart> | null>(null)
 
-// MA 叠加开关，持久化到 localStorage
-const MA_KEY = 'emoqunt:kline_ma'
-function loadShowMA(): boolean {
+// ===== K线工具栏偏好（周期/复权/主图叠加/副图指标），持久化到 localStorage =====
+function loadPref<T>(key: string, fallback: T): T {
   try {
-    const raw = localStorage.getItem(MA_KEY)
-    if (raw !== null) return JSON.parse(raw) as boolean
+    const raw = localStorage.getItem(key)
+    if (raw !== null) return JSON.parse(raw) as T
   } catch { /* ignore */ }
-  return true
+  return fallback
 }
-const showMA = ref(loadShowMA())
-watch(showMA, (v) => {
-  try { localStorage.setItem(MA_KEY, JSON.stringify(v)) } catch { /* quota */ }
-})
+function savePref(key: string, value: unknown) {
+  try { localStorage.setItem(key, JSON.stringify(value)) } catch { /* quota */ }
+}
+
+type KlinePeriod = 'day' | 'week' | 'month'
+type KlineAdjust = 'qfq' | 'hfq' | 'nfq'
+type OverlayMode = 'none' | 'ma' | 'boll'
+type SubIndicator = 'none' | 'macd' | 'kdj' | 'rsi'
+
+const PERIOD_KEY = 'emoqunt:kline_period'
+const ADJUST_KEY = 'emoqunt:kline_adjust'
+const OVERLAY_KEY = 'emoqunt:kline_overlay'
+const SUB_KEY = 'emoqunt:kline_sub'
+
+const PERIOD_LABELS: Record<KlinePeriod, string> = { day: '日线', week: '周线', month: '月线' }
+const ADJUST_LABELS: Record<KlineAdjust, string> = { qfq: '前复权', hfq: '后复权', nfq: '不复权' }
+
+const klinePeriod = ref(loadPref<KlinePeriod>(PERIOD_KEY, 'day'))
+// 兼容旧「MA 开关」：kline_ma=false 迁移为主图叠加=无
+const klineOverlayInit = loadPref<OverlayMode | ''>(OVERLAY_KEY, '')
+const klineOverlay = ref<OverlayMode>(
+  klineOverlayInit === 'ma' || klineOverlayInit === 'boll' || klineOverlayInit === 'none'
+    ? klineOverlayInit
+    : (loadPref('emoqunt:kline_ma', true) ? 'ma' : 'none'),
+)
+const klineAdjust = ref(loadPref(ADJUST_KEY, 'qfq') as KlineAdjust)
+const klineSub = ref(loadPref(SUB_KEY, 'macd') as SubIndicator)
+
+watch(klinePeriod, (v) => savePref(PERIOD_KEY, v))
+watch(klineOverlay, (v) => savePref(OVERLAY_KEY, v))
+watch(klineAdjust, (v) => savePref(ADJUST_KEY, v))
+watch(klineSub, (v) => savePref(SUB_KEY, v))
 
 function resetKlineZoom() {
   try {
     const inst: any = (klineChartRef.value as any)?.chart
     if (inst?.dispatchAction) {
-      inst.dispatchAction({ type: 'dataZoom', dataZoomIndex: 0, start: 60, end: 100 })
-      inst.dispatchAction({ type: 'dataZoom', dataZoomIndex: 1, start: 60, end: 100 })
+      for (let i = 0; i < 3; i++) {
+        inst.dispatchAction({ type: 'dataZoom', dataZoomIndex: i, start: 60, end: 100 })
+      }
     }
   } catch { /* ignore */ }
 }
@@ -139,12 +167,18 @@ const activeTarget = computed(() => {
   const found = watchlistStore.items.find((t) => `${t.code}|${t.market}` === activeKey.value)
   return found || watchlistStore.items[0] || INDEX_PRESETS[0]
 })
+/** 是否指数标的：指数无复权概念，禁用复权选择 */
+const isIndexTarget = computed(() => activeTarget.value?.kind === 'index')
 
 async function loadKline() {
   if (!activeTarget.value) return
   loadingKline.value = true
   try {
-    kline.value = await klineApi.get(activeTarget.value.code, activeTarget.value.market, 180)
+    kline.value = await klineApi.get(
+      activeTarget.value.code, activeTarget.value.market, 180,
+      klinePeriod.value, klineAdjust.value,
+      isIndexTarget.value ? 'index' : '',
+    )
   } catch (e: any) {
     ElMessage.warning('K线数据加载失败：' + e.message)
     kline.value = null
@@ -158,6 +192,8 @@ watch(activeKey, () => {
   watchlistStore.lastKey = activeKey.value
   loadKline()
 })
+// 周期/复权切换重新拉数据
+watch([klinePeriod, klineAdjust], () => loadKline())
 watch(
   () => watchlistStore.lastKey,
   (v) => {
@@ -186,9 +222,16 @@ interface Quote {
 }
 const quotes = ref<Record<string, Quote>>({})
 
-async function loadQuote(code: string, market: Market, name?: string) {
+interface QuoteTarget {
+  code: string
+  market: Market
+  name?: string
+  kind?: '' | 'index'
+}
+
+async function loadQuote(code: string, market: Market, name?: string, kind?: '' | 'index') {
   try {
-    const d = await klineApi.get(code, market, 2)
+    const d = await klineApi.get(code, market, 2, 'day', '', kind ?? '')
     if (!d.ohlcv.length) return
     const close = d.ohlcv[d.ohlcv.length - 1][1]
     const prev = d.ohlcv.length > 1 ? d.ohlcv[d.ohlcv.length - 2][1] : close
@@ -273,10 +316,10 @@ function rerunBacktest(id: string) {
 // ===== 首屏加载 =====
 async function loadAll() {
   // 自选 + 指数速览的行情（并行，失败静默）
-  const quoteTargets = new Map<string, { code: string; market: Market; name?: string }>()
+  const quoteTargets = new Map<string, QuoteTarget>()
   for (const i of INDEX_PRESETS) quoteTargets.set(`${i.code}|${i.market}`, i)
   for (const it of watchlistStore.items) quoteTargets.set(`${it.code}|${it.market}`, it)
-  quoteTargets.forEach((t) => loadQuote(t.code, t.market, t.name))
+  quoteTargets.forEach((t) => loadQuote(t.code, t.market, t.name, t.kind))
   // K线
   await loadKline()
   // 舆情
@@ -317,6 +360,85 @@ function calcMA(closes: number[], period: number): (number | null)[] {
   return out
 }
 
+// 工具：EMA（递推初值取首值）
+function calcEMA(src: number[], n: number): number[] {
+  const k = 2 / (n + 1)
+  let prev = src[0] ?? 0
+  return src.map((v, i) => {
+    prev = i === 0 ? v : v * k + prev * (1 - k)
+    return prev
+  })
+}
+
+// 工具：BOLL(N=20,±2σ)，σ 为总体标准差（对齐国内软件 STD 口径）
+function calcBOLL(closes: number[], n = 20, mult = 2): { mid: (number | null)[]; up: (number | null)[]; low: (number | null)[] } {
+  const mid = calcMA(closes, n)
+  const up: (number | null)[] = []
+  const low: (number | null)[] = []
+  for (let i = 0; i < closes.length; i++) {
+    if (i < n - 1 || mid[i] == null) { up.push(null); low.push(null); continue }
+    let s = 0
+    for (let j = i - n + 1; j <= i; j++) { const d = closes[j]! - mid[i]!; s += d * d }
+    const sd = Math.sqrt(s / n)
+    up.push(+(mid[i]! + mult * sd).toFixed(2))
+    low.push(+(mid[i]! - mult * sd).toFixed(2))
+  }
+  return { mid, up, low }
+}
+
+// 工具：MACD(12,26,9)，hist=(DIF-DEA)*2 对齐国内软件红绿柱
+function calcMACD(closes: number[]): { dif: number[]; dea: number[]; hist: number[] } {
+  const ema12 = calcEMA(closes, 12)
+  const ema26 = calcEMA(closes, 26)
+  const dif = closes.map((_, i) => ema12[i]! - ema26[i]!)
+  const dea = calcEMA(dif, 9)
+  return {
+    dif: dif.map((v) => +v.toFixed(3)),
+    dea: dea.map((v) => +v.toFixed(3)),
+    hist: dif.map((v, i) => +((v - dea[i]!) * 2).toFixed(3)),
+  }
+}
+
+// 工具：KDJ(9,3,3)，SMA(RSV,3,1) 平滑，初值取首根 RSV（通达信口径）
+function calcKDJ(ohlcv: [number, number, number, number][]): { K: number[]; D: number[]; J: number[] } {
+  const lows = ohlcv.map((o) => o[2])
+  const highs = ohlcv.map((o) => o[3])
+  const K: number[] = [], D: number[] = [], J: number[] = []
+  let kv = 50, dv = 50
+  for (let i = 0; i < ohlcv.length; i++) {
+    const lo = Math.min(...lows.slice(Math.max(0, i - 8), i + 1))
+    const hi = Math.max(...highs.slice(Math.max(0, i - 8), i + 1))
+    const rsv = hi === lo ? 50 : ((ohlcv[i]![1] - lo) / (hi - lo)) * 100
+    kv = i === 0 ? rsv : (2 * kv + rsv) / 3
+    dv = i === 0 ? rsv : (2 * dv + kv) / 3
+    K.push(+kv.toFixed(2)); D.push(+dv.toFixed(2)); J.push(+(3 * kv - 2 * dv).toFixed(2))
+  }
+  return { K, D, J }
+}
+
+// 工具：RSI(N)，Wilder/SMA(U,N,1) 平滑（国内软件口径）
+function calcRSI(closes: number[], n: number): (number | null)[] {
+  const out: (number | null)[] = [null]
+  let au = 0, ad = 0
+  for (let i = 1; i < closes.length; i++) {
+    const u = Math.max(closes[i]! - closes[i - 1]!, 0)
+    const d = Math.max(closes[i - 1]! - closes[i]!, 0)
+    au = (au * (n - 1) + u) / n
+    ad = (ad * (n - 1) + d) / n
+    out.push(au + ad === 0 ? 50 : +(100 * au / (au + ad)).toFixed(2))
+  }
+  return out
+}
+
+// 成交量格式化：亿/万自适应
+function fmtVol(v: number): string {
+  if (!isFinite(v)) return '-'
+  const a = Math.abs(v)
+  if (a >= 1e8) return (v / 1e8).toFixed(2) + '亿'
+  if (a >= 1e4) return (v / 1e4).toFixed(1) + '万'
+  return String(Math.round(v))
+}
+
 function heatColor(chg: number): string {
   const v = Math.max(-5, Math.min(5, chg))
   if (v > 0) {
@@ -333,7 +455,13 @@ function heatColor(chg: number): string {
   return '#f3f4f6'
 }
 
-// K线 ECharts 配置：蜡烛图 + 成交量 + MA 叠加
+// 价格轴格式化：千分位；≥1000 的指数点位省去小数，避免宽标签溢出网格边距被裁剪
+function fmtPriceNum(v: number): string {
+  const dec = Math.abs(v) >= 1000 ? 0 : 2
+  return v.toLocaleString('zh-CN', { minimumFractionDigits: dec, maximumFractionDigits: dec })
+}
+
+// K线 ECharts 配置：蜡烛图 + 成交量 + 主图叠加(MA/BOLL) + 副图指标(MACD/KDJ/RSI)
 const klineOption = computed(() => {
   if (!kline.value || !kline.value.dates.length) return {}
   const k = kline.value
@@ -341,29 +469,86 @@ const klineOption = computed(() => {
   const isUS = k.market === 'us'
   const upColor = isUS ? '#26a69a' : '#ef232a'
   const downColor = isUS ? '#ef5350' : '#14b143'
-  const closes = k.ohlcv.map((o) => o[1])
+  const upText = isUS ? '#059669' : '#dc2626'
+  const downText = isUS ? '#dc2626' : '#059669'
+
+  const dates = k.dates
+  const ohlcv = k.ohlcv
+  const closes = ohlcv.map((o) => o[1])
+  const lastClose = closes[closes.length - 1]!
+  const lastUp = ohlcv.length > 1 ? lastClose >= ohlcv[ohlcv.length - 2]![1] : true
+
+  const periodLabel = PERIOD_LABELS[k.period ?? klinePeriod.value] ?? '日线'
+  const adjustLabel = k.kind === 'index' ? '指数' : (ADJUST_LABELS[k.adjust ?? klineAdjust.value] ?? '')
+
+  // ---- 主图叠加与副图指标（由工具栏偏好驱动） ----
+  const overlay = klineOverlay.value
+  const sub = klineSub.value
   const ma5 = calcMA(closes, 5)
   const ma20 = calcMA(closes, 20)
   const ma60 = calcMA(closes, 60)
-  const legendData = showMA.value ? ['日K', 'MA5', 'MA20', 'MA60', '成交量'] : ['日K', '成交量']
+  const boll = overlay === 'boll' ? calcBOLL(closes) : null
+  const macd = sub === 'macd' ? calcMACD(closes) : null
+  const kdj = sub === 'kdj' ? calcKDJ(ohlcv) : null
+  const rsi6 = sub === 'rsi' ? calcRSI(closes, 6) : null
+  const rsi12 = sub === 'rsi' ? calcRSI(closes, 12) : null
+  const rsi24 = sub === 'rsi' ? calcRSI(closes, 24) : null
+  const hasSub = sub !== 'none'
+
+  // 蜡烛宽度按数据密度分档（180根约6-10px，长周期压到2-4px）
+  const nBars = dates.length
+  const candleWidth = nBars <= 70 ? 9 : nBars <= 140 ? 7 : nBars <= 260 ? 4 : nBars <= 420 ? 3 : 2
+
+  const legendData: string[] = ['日K']
+  if (overlay === 'ma') legendData.push('MA5', 'MA20', 'MA60')
+  if (overlay === 'boll') legendData.push('BOLL中轨', 'BOLL上轨', 'BOLL下轨')
+  legendData.push('成交量')
+  if (sub === 'macd') legendData.push('DIF', 'DEA', 'MACD')
+  if (sub === 'kdj') legendData.push('K', 'D', 'J')
+  if (sub === 'rsi') legendData.push('RSI6', 'RSI12', 'RSI24')
+
+  const trendLine = { type: 'line', smooth: true, showSymbol: false, connectNulls: true }
+
   const series: any[] = [
     {
       name: '日K',
       type: 'candlestick',
-      data: k.ohlcv,
+      data: ohlcv,
+      barWidth: candleWidth,
+      barMinWidth: 1,
       itemStyle: {
         color: upColor,
         color0: downColor,
         borderColor: upColor,
         borderColor0: downColor,
       },
+      // 最新价虚线 + 右侧价格标签（TradingView 式）
+      markLine: {
+        symbol: ['none', 'none'],
+        silent: true,
+        animation: false,
+        lineStyle: { type: 'dashed', width: 1, color: lastUp ? upColor : downColor },
+        label: {
+          position: 'insideEndTop',
+          formatter: () => fmtPriceNum(lastClose),
+          color: lastUp ? upColor : downText,
+          fontSize: 11,
+        },
+        data: [{ yAxis: lastClose }],
+      },
     },
   ]
-  if (showMA.value) {
+  if (overlay === 'ma') {
     series.push(
-      { name: 'MA5', type: 'line', data: ma5, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#f59e0b' } },
-      { name: 'MA20', type: 'line', data: ma20, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#667eea' } },
-      { name: 'MA60', type: 'line', data: ma60, smooth: true, showSymbol: false, lineStyle: { width: 1.2, color: '#10b981' } },
+      { name: 'MA5', ...trendLine, data: ma5, lineStyle: { width: 1.2, color: '#f59e0b' } },
+      { name: 'MA20', ...trendLine, data: ma20, lineStyle: { width: 1.2, color: '#667eea' } },
+      { name: 'MA60', ...trendLine, data: ma60, lineStyle: { width: 1.2, color: '#10b981' } },
+    )
+  } else if (boll) {
+    series.push(
+      { name: 'BOLL中轨', ...trendLine, data: boll.mid, lineStyle: { width: 1.2, color: '#8b5cf6' } },
+      { name: 'BOLL上轨', ...trendLine, data: boll.up, lineStyle: { width: 1, type: 'dashed', opacity: 0.7, color: '#8b5cf6' } },
+      { name: 'BOLL下轨', ...trendLine, data: boll.low, lineStyle: { width: 1, type: 'dashed', opacity: 0.7, color: '#8b5cf6' } },
     )
   }
   series.push({
@@ -373,15 +558,57 @@ const klineOption = computed(() => {
     yAxisIndex: 1,
     data: k.volumes.map((v, i) => ({
       value: v,
-      itemStyle: { color: k.ohlcv[i] && k.ohlcv[i][1] >= k.ohlcv[i][0] ? upColor : downColor },
+      itemStyle: { color: ohlcv[i] && ohlcv[i][1] >= ohlcv[i][0] ? upColor : downColor },
     })),
   })
+  // 副图指标系列挂在第三个窗格
+  if (macd) {
+    series.push(
+      { name: 'DIF', ...trendLine, xAxisIndex: 2, yAxisIndex: 2, data: macd.dif, lineStyle: { width: 1, color: '#f59e0b' } },
+      { name: 'DEA', ...trendLine, xAxisIndex: 2, yAxisIndex: 2, data: macd.dea, lineStyle: { width: 1, color: '#667eea' } },
+      {
+        name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2,
+        data: macd.hist.map((v) => ({ value: v, itemStyle: { color: v >= 0 ? upColor : downColor } })),
+      },
+    )
+  } else if (kdj) {
+    series.push(
+      { name: 'K', ...trendLine, xAxisIndex: 2, yAxisIndex: 2, data: kdj.K, lineStyle: { width: 1, color: '#f59e0b' } },
+      { name: 'D', ...trendLine, xAxisIndex: 2, yAxisIndex: 2, data: kdj.D, lineStyle: { width: 1, color: '#667eea' } },
+      { name: 'J', ...trendLine, xAxisIndex: 2, yAxisIndex: 2, data: kdj.J, lineStyle: { width: 1, color: '#8b5cf6' } },
+    )
+  } else if (rsi6 && rsi12 && rsi24) {
+    series.push(
+      { name: 'RSI6', ...trendLine, xAxisIndex: 2, yAxisIndex: 2, data: rsi6, lineStyle: { width: 1, color: '#f59e0b' } },
+      { name: 'RSI12', ...trendLine, xAxisIndex: 2, yAxisIndex: 2, data: rsi12, lineStyle: { width: 1, color: '#667eea' } },
+      { name: 'RSI24', ...trendLine, xAxisIndex: 2, yAxisIndex: 2, data: rsi24, lineStyle: { width: 1, color: '#64748b' } },
+    )
+  }
+
+  const xCategory = (gridIndex: number, labelShow: boolean) => ({
+    type: 'category',
+    gridIndex,
+    data: dates,
+    boundaryGap: true,
+    axisLine: { onZero: false },
+    axisTick: { show: false },
+    axisLabel: { show: labelShow },
+    splitLine: { show: false },
+    min: 'dataMin',
+    max: 'dataMax',
+  })
+
   return {
     title: {
       text: `${k.name || k.code} ${isUS ? '(美股)' : '(A股)'}`,
+      subtext: `${periodLabel}${adjustLabel ? ' · ' + adjustLabel : ''}`,
       left: 'center',
-      textStyle: { fontSize: 16, fontWeight: 600 },
+      top: 2,
+      textStyle: { fontSize: 15, fontWeight: 600 },
+      subtextStyle: { fontSize: 11, color: '#9ca3af' },
     },
+    // 多窗格十字光标联动
+    axisPointer: { link: [{ xAxisIndex: 'all' }], label: { backgroundColor: '#6a7985' } },
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'cross', label: { backgroundColor: '#6a7985' } },
@@ -392,54 +619,99 @@ const klineOption = computed(() => {
       formatter(params: any) {
         const arr: any[] = Array.isArray(params) ? params : [params]
         const idx = arr[0]?.dataIndex ?? 0
-        const date = k.dates[idx] ?? ''
-        const ohlcv = k.ohlcv[idx]
-        if (!ohlcv) return date
-        const lines = [`<div style="font-weight:600;margin-bottom:4px">${date}</div>`]
-        lines.push(`开盘 ${ohlcv[0].toFixed(2)} &nbsp; 收盘 ${ohlcv[1].toFixed(2)} &nbsp; 最低 ${ohlcv[2].toFixed(2)} &nbsp; 最高 ${ohlcv[3].toFixed(2)}`)
-        if (showMA.value) {
+        const date = dates[idx] ?? ''
+        const o = ohlcv[idx]
+        if (!o) return date
+        const prev = idx > 0 ? ohlcv[idx - 1]![1] : o[0]
+        const chg = (o[1] / prev - 1) * 100
+        const amp = ((o[3] - o[2]) / prev) * 100
+        const valColor = (v: number) => (v > 0 ? upText : v < 0 ? downText : 'inherit')
+        const pctStr = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(2)}%`
+        const pv = (label: string, v: number) =>
+          `<span style="color:${valColor(v - prev)}">${label} ${fmtPriceNum(v)}</span>`
+        const lines = [`<div style="font-weight:600;margin-bottom:4px">${date} · ${periodLabel}</div>`]
+        lines.push(`${pv('开', o[0])} &nbsp; ${pv('高', o[3])}<br/>${pv('低', o[2])} &nbsp; ${pv('收', o[1])}`)
+        lines.push(
+          `<span style="color:${valColor(chg)}">涨跌 ${pctStr(chg)}</span> &nbsp; ` +
+          `<span style="color:${valColor(chg)}">振幅 ${pctStr(amp)}</span>`,
+        )
+        if (overlay === 'ma') {
           const m5 = ma5[idx], m20 = ma20[idx], m60 = ma60[idx]
           const maLine: string[] = []
           if (m5 != null) maLine.push(`<span style="color:#f59e0b">MA5 ${m5.toFixed(2)}</span>`)
           if (m20 != null) maLine.push(`<span style="color:#667eea">MA20 ${m20.toFixed(2)}</span>`)
           if (m60 != null) maLine.push(`<span style="color:#10b981">MA60 ${m60.toFixed(2)}</span>`)
           if (maLine.length) lines.push(maLine.join(' &nbsp; '))
+        } else if (boll) {
+          const bm = boll.mid[idx], bu = boll.up[idx], bl = boll.low[idx]
+          if (bu != null && bl != null) {
+            lines.push(
+              `<span style="color:#8b5cf6">UP ${bu!.toFixed(2)}</span> &nbsp; ` +
+              `<span style="color:#8b5cf6">MB ${bm!.toFixed(2)}</span> &nbsp; ` +
+              `<span style="color:#8b5cf6">DN ${bl!.toFixed(2)}</span>`,
+            )
+          }
+        }
+        if (macd) {
+          const h = macd.hist[idx] ?? 0
+          lines.push(
+            `<span style="color:#f59e0b">DIF ${macd.dif[idx]?.toFixed(3)}</span> &nbsp; ` +
+            `<span style="color:#667eea">DEA ${macd.dea[idx]?.toFixed(3)}</span> &nbsp; ` +
+            `<span style="color:${h >= 0 ? upText : downText}">MACD ${h.toFixed(3)}</span>`,
+          )
+        } else if (kdj) {
+          lines.push(
+            `<span style="color:#f59e0b">K ${kdj.K[idx]}</span> &nbsp; ` +
+            `<span style="color:#667eea">D ${kdj.D[idx]}</span> &nbsp; ` +
+            `<span style="color:#8b5cf6">J ${kdj.J[idx]}</span>`,
+          )
+        } else if (sub === 'rsi') {
+          const r6 = rsi6![idx], r12 = rsi12![idx], r24 = rsi24![idx]
+          const rl: string[] = []
+          if (r6 != null) rl.push(`<span style="color:#f59e0b">RSI6 ${r6}</span>`)
+          if (r12 != null) rl.push(`<span style="color:#667eea">RSI12 ${r12}</span>`)
+          if (r24 != null) rl.push(`<span style="color:#64748b">RSI24 ${r24}</span>`)
+          if (rl.length) lines.push(rl.join(' &nbsp; '))
         }
         const vol = k.volumes[idx]
-        if (vol != null) lines.push(`成交量 ${(vol / 10000).toFixed(1)}万`)
+        if (vol != null) lines.push(`成交量 ${fmtVol(vol)}`)
         return lines.join('<br/>')
       },
     },
-    legend: { data: legendData, top: 28, left: 'center' },
-    grid: [
-      { left: '6%', right: '3%', top: 60, height: '58%' },
-      { left: '6%', right: '3%', top: '76%', height: '16%' },
-    ],
+    legend: { data: legendData, top: 50, left: 'center', itemWidth: 14, itemHeight: 8, textStyle: { fontSize: 11 } },
+    grid: hasSub
+      ? [
+          { left: '7%', right: '4%', top: 74, height: '44%' },
+          { left: '7%', right: '4%', top: '64%', height: '11%' },
+          { left: '7%', right: '4%', top: '77%', height: '11%' },
+        ]
+      : [
+          { left: '7%', right: '4%', top: 74, height: '58%' },
+          { left: '7%', right: '4%', top: '81%', height: '12%' },
+        ],
     xAxis: [
-      {
-        type: 'category',
-        data: k.dates,
-        boundaryGap: true,
-        axisLine: { onZero: false },
-        splitLine: { show: false },
-        min: 'dataMin',
-        max: 'dataMax',
-      },
-      {
-        type: 'category',
-        gridIndex: 1,
-        data: k.dates,
-        boundaryGap: true,
-        axisLabel: { show: false },
-      },
+      xCategory(0, false),
+      xCategory(1, !hasSub),
+      ...(hasSub ? [xCategory(2, true)] : []),
     ],
     yAxis: [
-      { scale: true, splitArea: { show: true } },
+      { scale: true, splitArea: { show: true }, axisLabel: { formatter: (v: number) => fmtPriceNum(v) } },
       { gridIndex: 1, splitNumber: 2, axisLabel: { show: false } },
+      ...(hasSub
+        ? [{ gridIndex: 2, scale: true, splitNumber: 2, splitArea: { show: false }, axisLabel: { show: true, fontSize: 10 } }]
+        : []),
     ],
     dataZoom: [
-      { type: 'inside', xAxisIndex: [0, 1], start: 60, end: 100 },
-      { type: 'slider', xAxisIndex: [0, 1], top: '94%', start: 60, end: 100 },
+      {
+        type: 'inside', xAxisIndex: hasSub ? [0, 1, 2] : [0, 1],
+        start: 60, end: 100, minValueSpan: 15,
+        zoomOnMouseWheel: true, moveOnMouseMove: true, preventDefaultMouseMove: true,
+      },
+      {
+        type: 'slider', xAxisIndex: hasSub ? [0, 1, 2] : [0, 1],
+        left: '7%', right: '4%', top: hasSub ? '89%' : '94%', height: 18,
+        start: 60, end: 100,
+      },
     ],
     series,
   }
@@ -646,10 +918,33 @@ function scoreColor(score: number): string {
                     <el-icon><CandlestickChart /></el-icon> 行情看板
                   </span>
                   <div class="kline-toolbar">
-                    <span class="ma-toggle">
-                      <el-switch v-model="showMA" size="small" />
-                      <small>MA</small>
-                    </span>
+                    <el-radio-group v-model="klinePeriod" size="small">
+                      <el-radio-button value="day">日</el-radio-button>
+                      <el-radio-button value="week">周</el-radio-button>
+                      <el-radio-button value="month">月</el-radio-button>
+                    </el-radio-group>
+                    <el-select
+                      v-model="klineAdjust"
+                      size="small"
+                      style="width: 92px"
+                      title="复权方式（指数无复权概念）"
+                      :disabled="isIndexTarget"
+                    >
+                      <el-option label="前复权" value="qfq" />
+                      <el-option label="后复权" value="hfq" />
+                      <el-option label="不复权" value="nfq" />
+                    </el-select>
+                    <el-select v-model="klineOverlay" size="small" style="width: 96px" title="主图叠加指标">
+                      <el-option label="主图：MA" value="ma" />
+                      <el-option label="主图：BOLL" value="boll" />
+                      <el-option label="主图：无" value="none" />
+                    </el-select>
+                    <el-select v-model="klineSub" size="small" style="width: 106px" title="副图指标">
+                      <el-option label="副图：MACD" value="macd" />
+                      <el-option label="副图：KDJ" value="kdj" />
+                      <el-option label="副图：RSI" value="rsi" />
+                      <el-option label="副图：无" value="none" />
+                    </el-select>
                     <el-button size="small" text @click="resetKlineZoom">
                       <el-icon><Refresh /></el-icon> 重置缩放
                     </el-button>
@@ -672,7 +967,14 @@ function scoreColor(score: number): string {
               <div class="kline-body">
                 <el-skeleton v-if="loadingKline" animated :rows="5" style="padding: 16px" />
                 <template v-else>
-                  <v-chart ref="klineChartRef" v-if="kline && kline.dates.length" class="kline-chart" :option="klineOption" autoresize />
+                  <v-chart
+                    ref="klineChartRef"
+                    v-if="kline && kline.dates.length"
+                    class="kline-chart"
+                    :option="klineOption"
+                    :update-options="{ notMerge: true }"
+                    autoresize
+                  />
                   <el-empty v-else description="暂无K线数据" />
                 </template>
               </div>
@@ -1134,12 +1436,11 @@ function scoreColor(score: number): string {
   gap: 10px;
   flex-wrap: wrap;
 }
-.ma-toggle { display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
 .kline-body {
-  min-height: 460px;
+  min-height: 520px;
 }
 .kline-chart {
-  height: 460px;
+  height: 520px;
   width: 100%;
 }
 

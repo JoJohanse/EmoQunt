@@ -92,11 +92,18 @@ export const factorApi = {
   },
 }
 
-/** K 线 API（首页看板蜡烛图） */
+/** K 线 API（首页看板蜡烛图；period=day/week/month 服务端聚合，adjust=qfq/hfq/nfq，kind=index 走指数链） */
 export const klineApi = {
-  get(stock_code: string, market: 'zh_a' | 'us' = 'zh_a', days = 180): Promise<KlineData> {
+  get(
+    stock_code: string,
+    market: 'zh_a' | 'us' = 'zh_a',
+    days = 180,
+    period: 'day' | 'week' | 'month' = 'day',
+    adjust: 'qfq' | 'hfq' | 'nfq' | '' = '',
+    kind: '' | 'index' = '',
+  ): Promise<KlineData> {
     return http
-      .get('/kline', { params: { stock_code, market, days } })
+      .get('/kline', { params: { stock_code, market, days, period, adjust, kind } })
       .then((r) => r.data)
   },
 }

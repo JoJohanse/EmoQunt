@@ -635,14 +635,19 @@ async def analyze_factor_api(request: Request):
 
 
 @app.get("/api/kline")
-def get_kline_api(stock_code: str, market: str = "zh_a", days: int = 180):
-    """K线 OHLCV 数据（供首页看板蜡烛图）"""
+def get_kline_api(stock_code: str, market: str = "zh_a", days: int = 180,
+                  period: str = "day", adjust: str = "", kind: str = ""):
+    """K线 OHLCV 数据（供首页看板蜡烛图）
+
+    period=day/week/month；adjust=qfq/hfq/nfq；
+    kind=index 强制按指数取数（000001 这类二义代码用），留空则自动识别。
+    """
     try:
         valid, error = validate_stock_code(stock_code, market=market)
         if not valid:
             return JSONResponse({"error": error}, status_code=400)
         from src.services.kline import get_kline
-        return get_kline(stock_code, market, days)
+        return get_kline(stock_code, market, days, period, adjust or None, kind)
     except Exception as e:
         logger.error(f"获取K线数据失败: {e}", exc_info=True)
         return JSONResponse({"error": "获取K线数据失败，请稍后重试"}, status_code=500)

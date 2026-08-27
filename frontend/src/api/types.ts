@@ -185,6 +185,11 @@ export interface KlineData {
   /** ECharts 蜡烛图格式：[open, close, low, high] */
   ohlcv: [number, number, number, number][]
   volumes: number[]
+  /** 返回的周期（day/week/month，服务端聚合）与实际使用的复权（qfq/hfq/nfq） */
+  period?: 'day' | 'week' | 'month'
+  adjust?: 'qfq' | 'hfq' | 'nfq'
+  /** 数据种类：index=指数（服务端走指数数据链，无复权） */
+  kind?: '' | 'index'
 }
 
 /** 看板可选标的（预设） */
@@ -192,6 +197,8 @@ export interface WatchTarget {
   code: string
   market: Market
   name: string
+  /** 指数标记：kind=index 时行情走指数数据链（000001 等二义代码需要） */
+  kind?: 'index'
 }
 
 // ===== 策略对比 =====
