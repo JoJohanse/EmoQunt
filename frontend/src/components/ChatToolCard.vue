@@ -48,9 +48,9 @@ function deltaStyle(market: Market, chgPct: number): Record<string, string> {
     : { background: '#f0fdf4', color: 'var(--success)' }
 }
 
-/** 卡片内的"在首页打开主图"动作：先确保在自选中（主图标的来源于自选），再跳首页 */
+/** 卡片内的"在首页打开主图"动作：协议收口在 watchlist.openChartOnHome，此处只补导航 */
 function openInHome(code: string, market: 'zh_a' | 'us', name: string, kind?: 'index') {
-  watchlistStore.lastKey = watchlistStore.ensureTracked(code, market, name, kind)
+  watchlistStore.openChartOnHome({ code, market, name, kind })
   router.push('/')
 }
 

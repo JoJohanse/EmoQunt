@@ -40,7 +40,8 @@ const allItems = computed<CmdItem[]>(() => {
     group: '自选股',
     keywords: `${it.code} ${it.name} ${it.market}`,
     action: () => {
-      watchlistStore.lastKey = `${it.code}|${it.market}`
+      // 跳首页预选协议收口走 openChartOnHome（修复旧 `code|market` 两段键格式漂移）
+      watchlistStore.openChartOnHome({ code: it.code, market: it.market, name: it.name, kind: it.kind })
       router.push('/')
     },
   }))

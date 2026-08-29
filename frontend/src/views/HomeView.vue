@@ -533,8 +533,7 @@ function replayTour() {
 }
 // 个股推荐点击：加入自选（若未跟踪）并切换主图（卡片下钻：概览 → 个股主图）
 function openRecInChart(rec: { code: string; name: string }) {
-  watchlistStore.lastKey = watchlistStore.ensureTracked(rec.code, 'zh_a', rec.name)
-  activeKey.value = watchlistStore.lastKey
+  activeKey.value = watchlistStore.openChartOnHome({ code: rec.code, market: 'zh_a', name: rec.name })
 }
 
 // 成交量格式化：亿/万自适应
