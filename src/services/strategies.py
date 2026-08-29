@@ -3,12 +3,58 @@
 原 web_app.py 中 3 个策略列表路由（HTML /strategies、JSON /api/strategies、
 JSON /api/strategies/list）+ detail/create/update/delete 共享同一套底层调用，
 但各写一遍。本模块统一为深接口，路由层变为薄适配器。
+
+策略名列表的进程内 TTL 缓存归本模块所有："谁写谁失效"——create/update/
+delete 等变更函数成功落盘后自动失效，路由层无需（也不应）关心缓存。
 """
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional
 
+from src.utils.ttl_cache import TTLCache
+
 logger = logging.getLogger(__name__)
+
+# 策略名列表进程内缓存（原 web_app._strategy_cache 迁入）
+_STRATEGY_LIST_TTL = 300  # 秒（5 分钟，与原 web_app.CACHE_TIMEOUT 一致）
+_STRATEGY_LIST_CACHE = TTLCache()
+_STRATEGY_LIST_KEY = "user_strategy_names"
+
+
+def _load_strategy_names() -> List[str]:
+    """底层加载用户策略名（无缓存）。失败降级为空列表（与原行为一致）。"""
+    try:
+        from src.Strategy.strategy_manager import load_user_strategies
+        names = list(load_user_strategies().keys())
+        logger.info(f"加载用户策略列表: {names}")
+        return names
+    except Exception as e:
+        logger.error(f"加载用户策略失败: {e}")
+        return []
+
+
+def _invalidate_strategy_list_cache() -> None:
+    """策略名列表缓存失效（本模块变更函数成功落盘后调用）。"""
+    _STRATEGY_LIST_CACHE.invalidate(_STRATEGY_LIST_KEY)
+
+
+def list_strategy_names() -> List[str]:
+    """获取用户策略名列表（仅用户策略，供下拉框/首页），带 5 分钟进程内 TTL 缓存。
+
+    缓存归本模块所有：create/update/delete 成功后自动失效，读方无需关心。
+    """
+    return _STRATEGY_LIST_CACHE.get_or_set(
+        _STRATEGY_LIST_KEY, _load_strategy_names, ttl=_STRATEGY_LIST_TTL
+    )
+
+
+def ensure_loaded() -> None:
+    """启动时预热策略列表缓存（幂等；失败仅记日志，不阻塞启动）。"""
+    try:
+        names = list_strategy_names()
+        logger.info(f"预加载策略完成，共 {len(names)} 个策略")
+    except Exception as e:
+        logger.error(f"预加载策略失败: {e}")
 
 
 def _extract_params(strategy_class, strategy_name: str = "") -> list:
@@ -25,16 +71,6 @@ def _extract_params(strategy_class, strategy_name: str = "") -> list:
         except (AttributeError, TypeError) as e:
             logger.warning(f"获取策略 {strategy_name} 参数时出错: {e}")
     return parameters
-
-
-def list_strategy_names() -> List[str]:
-    """获取缓存的用户策略名列表（仅用户策略，供下拉框/首页）。
-
-    注意：缓存逻辑仍由 web_app.py 的 get_cached_strategies 管理，
-    此函数是底层加载入口（无缓存）。
-    """
-    from src.Strategy.strategy_manager import load_user_strategies
-    return list(load_user_strategies().keys())
 
 
 def list_strategy_details() -> List[Dict]:
@@ -127,6 +163,7 @@ def create_strategy(name: str, description: str, template: str, parameters: list
         "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
     }
     if save_user_strategy(name, config):
+        _invalidate_strategy_list_cache()
         return {"success": True, "name": name}
     return {"error": "保存策略失败"}
 
@@ -155,6 +192,7 @@ def create_from_template(name: str, description: str, template: str) -> Dict:
         "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
     }
     if save_user_strategy(name, config):
+        _invalidate_strategy_list_cache()
         return {"success": True, "name": name, "parameters": base_params}
     return {"error": "保存策略失败"}
 
@@ -176,6 +214,7 @@ def update_strategy(name: str, description: str, template: str, parameters: list
         "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
     }
     if save_user_strategy(name, config):
+        _invalidate_strategy_list_cache()
         return {"success": True, "name": name}
     return {"error": "保存策略失败"}
 
@@ -190,6 +229,7 @@ def delete_strategy(name: str) -> Dict:
     if not is_user_strategy(name):
         return {"error": f"策略 {name} 不存在或不是用户策略"}
     if _delete(name):
+        _invalidate_strategy_list_cache()
         return {"success": True}
     return {"error": f"删除策略 {name} 失败"}
 

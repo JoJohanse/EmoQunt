@@ -35,31 +35,12 @@ logger = get_logger("web_app")
 # ---------------------------------------------------------------------------
 from contextlib import asynccontextmanager
 
-# 策略列表缓存（进程级）
-_strategy_cache = None
-_cache_timestamp = None
-CACHE_TIMEOUT = 300  # 5分钟
-
-
-def _preload_strategies():
-    """预加载策略列表以提高首次访问性能"""
-    global _strategy_cache, _cache_timestamp
-    import time
-    try:
-        from src.services.strategies import list_strategy_names
-        strategies = list_strategy_names()
-        _strategy_cache = strategies
-        _cache_timestamp = time.time()
-        logger.info(f"预加载策略完成，共 {len(strategies)} 个策略")
-    except Exception as e:
-        logger.error(f"预加载策略失败: {e}")
-        _strategy_cache = []
-        _cache_timestamp = time.time()
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _preload_strategies()
+    # 策略列表缓存归 src.services.strategies 所有（读走缓存、变更自动失效）
+    from src.services.strategies import ensure_loaded as _ensure_strategies_loaded
+    _ensure_strategies_loaded()
     # 数据缓存层：懒初始化连接（幂等，失败静默降级），再做连通性日志
     try:
         from src.data.db import healthcheck as _db_healthcheck, init_pool
@@ -131,31 +112,6 @@ async def spa_fallback(full_path: str):
 # ---------------------------------------------------------------------------
 # 辅助函数
 # ---------------------------------------------------------------------------
-def _clear_strategy_cache():
-    global _strategy_cache, _cache_timestamp
-    _strategy_cache = None
-    _cache_timestamp = None
-
-
-def _get_cached_strategies():
-    """获取缓存的策略名列表（仅用户策略，供下拉框）"""
-    global _strategy_cache, _cache_timestamp
-    import time
-    now = time.time()
-    if (_strategy_cache is not None and _cache_timestamp is not None
-            and now - _cache_timestamp < CACHE_TIMEOUT):
-        return _strategy_cache
-    try:
-        from src.services.strategies import list_strategy_names
-        _strategy_cache = list_strategy_names()
-        logger.info(f"加载用户策略列表: {_strategy_cache}")
-    except Exception as e:
-        logger.error(f"加载用户策略失败: {e}")
-        _strategy_cache = []
-    _cache_timestamp = now
-    return _strategy_cache
-
-
 def _api_error(message: str, status_code: int) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"error": message})
 
@@ -181,9 +137,10 @@ def _handle_error(request: Request, error: Exception, operation: str = "操作")
 # ===========================================================================
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
+    from src.services.strategies import list_strategy_names
     from src.services.system import needs_setup_guide
     return templates.TemplateResponse("index.html", {
-        "request": request, "strategies": _get_cached_strategies(),
+        "request": request, "strategies": list_strategy_names(),
         "title": "量化策略回测系统", "nav_active": "home",
         "show_setup_banner": needs_setup_guide(),
     })
@@ -206,12 +163,13 @@ def setup_guide_page(request: Request):
 
 @app.get("/backtest", response_class=HTMLResponse)
 async def backtest_form(request: Request):
+    from src.services.strategies import list_strategy_names
     preselected_strategy = request.query_params.get("strategy_name", "")
     preselected_market = request.query_params.get("market", "zh_a")
     if preselected_market not in ('zh_a', 'us'):
         preselected_market = "zh_a"
     return templates.TemplateResponse("backtest_form.html", {
-        "request": request, "strategies": _get_cached_strategies(),
+        "request": request, "strategies": list_strategy_names(),
         "title": "策略回测", "nav_active": "backtest",
         "preselected_strategy": preselected_strategy,
         "preselected_market": preselected_market,
@@ -438,7 +396,6 @@ async def create_strategy(request: Request):
         result = _create(name, description, template_name, parameters)
         if "error" in result:
             return _api_error(result["error"], 400)
-        _clear_strategy_cache()
         return result
     except Exception as e:
         logger.error(f"创建策略失败: {e}")
@@ -459,7 +416,6 @@ async def create_strategy_from_template(request: Request):
         result = create_from_template(name, description, template_name)
         if "error" in result:
             return _api_error(result["error"], 400)
-        _clear_strategy_cache()
         return result
     except Exception as e:
         logger.error(f"创建策略失败: {e}")
@@ -481,7 +437,6 @@ async def update_strategy(strategy_name: str, request: Request):
         result = _update(strategy_name, description, template, parameters)
         if "error" in result:
             return _api_error(result["error"], 403 if "不存在" in result["error"] else 500)
-        _clear_strategy_cache()
         return result
     except Exception as e:
         logger.error(f"更新策略失败: {e}")
@@ -499,7 +454,6 @@ async def delete_strategy(strategy_name: str):
         result = _delete(strategy_name)
         if "error" in result:
             return _api_error(result["error"], 403 if "不存在" in result["error"] else 500)
-        _clear_strategy_cache()
         return result
     except Exception as e:
         logger.error(f"删除策略失败: {e}")

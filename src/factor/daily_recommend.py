@@ -10,6 +10,8 @@ import logging
 import sys
 import threading
 
+from src.utils.ttl_cache import TTLCache
+
 logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -760,28 +762,25 @@ def generate_daily_recommend(n: int = 10) -> Dict:
         "recommendations": top_n
     }
 
-_cache = None
-_cache_time = None
+# 每日推荐结果进程内缓存（原 _cache/_cache_time 手写时间戳样板收口到 ttl_cache 助手）
+_RECOMMEND_CACHE_TTL = 3600  # 秒
+_RECOMMEND_CACHE = TTLCache()
+_RECOMMEND_CACHE_KEY = "daily_recommend"
 
 def get_cached_recommendation() -> Dict:
-    global _cache, _cache_time
     _ensure_loaded()
-    
-    now = datetime.now()
-    if _cache is None or _cache_time is None or (now - _cache_time).total_seconds() > 3600:
-        _cache = generate_daily_recommend()
-        _cache_time = now
-    
-    return _cache
+
+    return _RECOMMEND_CACHE.get_or_set(
+        _RECOMMEND_CACHE_KEY, generate_daily_recommend, ttl=_RECOMMEND_CACHE_TTL
+    )
 
 def refresh_recommendation() -> Dict:
-    global _cache, _cache_time
     _ensure_loaded()
-    
-    _cache = generate_daily_recommend()
-    _cache_time = datetime.now()
-    
-    return _cache
+
+    value = generate_daily_recommend()
+    _RECOMMEND_CACHE.set(_RECOMMEND_CACHE_KEY, value)
+
+    return value
 
 def get_sentiment_data() -> Dict:
     _ensure_loaded()
