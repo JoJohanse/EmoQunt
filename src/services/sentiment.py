@@ -45,10 +45,8 @@ def refresh_sentiment() -> Dict:
 
     news_list = []
     try:
-        from nes_data.trendradar.trendradar import check_recent_txt_exists, parse_trendradar_txt
-        has_recent, txt_file = check_recent_txt_exists(max_age_seconds=3600)
-        if has_recent:
-            news_list = parse_trendradar_txt(txt_file) or []
+        from src.factor.trendradar import get_recent_news
+        news_list = get_recent_news(max_age=3600) or []
     except Exception:
         news_list = []
 
@@ -84,13 +82,9 @@ def analyze_stock_sentiment(strategy: str, stock_code: str) -> Dict:
 
     # 新闻与情绪因子
     from src.factor.sentiment import calculate_sentiment_factor
-    from nes_data.trendradar.trendradar import check_recent_txt_exists, parse_trendradar_txt
-    has_recent, txt_file = check_recent_txt_exists(max_age_seconds=3600)
-    if has_recent:
-        news_data = parse_trendradar_txt(txt_file)
-        sentiment_result = calculate_sentiment_factor(news_data) if news_data else _get_trendradar_sentiment()
-    else:
-        sentiment_result = _get_trendradar_sentiment()
+    from src.factor.trendradar import get_recent_news
+    news_data = get_recent_news(max_age=3600)
+    sentiment_result = calculate_sentiment_factor(news_data) if news_data else _get_trendradar_sentiment()
 
     # sentiment_weight：保持原有优先级 default > value > 0.3（委托单点，保持行为不变）
     from src.Strategy.strategy_manager import get_user_strategy

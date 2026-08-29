@@ -491,26 +491,13 @@ def get_or_generate_sentiment_data(force_refresh: bool = False) -> Tuple[Optiona
     Returns:
         (sentiment_data, news_data)
     """
-    from nes_data.trendradar.trendradar import (
-        get_latest_trendradar_data, 
-        save_news_to_txt,
-        check_recent_txt_exists,
-        parse_trendradar_txt
-    )
+    from src.factor.trendradar import get_recent_news
     
     news_data = None
     sentiment_data = None
     
-    has_recent, txt_file = check_recent_txt_exists(max_age_seconds=SENTIMENT_CACHE_TIMEOUT)
-    
     if force_refresh:
-        if has_recent and txt_file:
-            news_data = parse_trendradar_txt(txt_file)
-        
-        if news_data is None:
-            news_data = get_latest_trendradar_data(force_crawl=True)
-            if news_data:
-                save_news_to_txt(news_data)
+        news_data = get_recent_news(max_age=SENTIMENT_CACHE_TIMEOUT)
         
         logger.info("强制刷新舆情数据，生成新的分析结果...")
         sentiment_result = calculate_sentiment_factor(news_data)
@@ -531,22 +518,11 @@ def get_or_generate_sentiment_data(force_refresh: bool = False) -> Tuple[Optiona
         sentiment_data = get_latest_sentiment_result()
         
         if sentiment_data is not None:
-            if has_recent and txt_file:
-                news_data = parse_trendradar_txt(txt_file)
-            else:
-                news_data = get_latest_trendradar_data(force_crawl=True)
-                if news_data:
-                    save_news_to_txt(news_data)
+            news_data = get_recent_news(max_age=SENTIMENT_CACHE_TIMEOUT)
         else:
             logger.info("没有今天的舆情结果，正在生成新的分析...")
             
-            if has_recent and txt_file:
-                news_data = parse_trendradar_txt(txt_file)
-            
-            if news_data is None:
-                news_data = get_latest_trendradar_data(force_crawl=True)
-                if news_data:
-                    save_news_to_txt(news_data)
+            news_data = get_recent_news(max_age=SENTIMENT_CACHE_TIMEOUT)
             
             sentiment_result = calculate_sentiment_factor(news_data)
             
