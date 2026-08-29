@@ -5,6 +5,14 @@ import { ElMessage } from 'element-plus'
 import { backtestApi, strategyApi, klineApi } from '@/api'
 import type { BacktestMetrics, BacktestRequest, BacktestResult, BacktestTrade, KlineData, Market, StrategyDetail } from '@/api/types'
 import { chartPalette, deltaTone } from '@/lib/marketColors'
+import {
+  candleItemStyle,
+  chgVsPrevClose,
+  crosshairPointer,
+  fmtPriceNum,
+  klineDataZoom,
+  klineXAxis,
+} from '@/chart/kline'
 import { useBacktestHistoryStore } from '@/stores/backtestHistory'
 import { VChart } from '@/composables/useECharts'
 
@@ -304,14 +312,14 @@ const tradesKlineOption = computed(() => {
   return {
     tooltip: {
       trigger: 'axis',
-      axisPointer: { type: 'cross', label: { backgroundColor: '#6a7985' } },
+      axisPointer: crosshairPointer(),
       formatter(params: any) {
         const arr: any[] = Array.isArray(params) ? params : [params]
         const idx = arr[0]?.dataIndex ?? 0
         const o = k.ohlcv[idx]
         if (!o) return k.dates[idx] ?? ''
-        const prev = idx > 0 ? k.ohlcv[idx - 1]![1] : o[0]
-        const chg = prev ? (o[1] / prev - 1) * 100 : 0
+        // 前收涨跌口径统一走 chart/kline（首根回退为开盘价）
+        const chg = chgVsPrevClose(k.ohlcv, idx).chgPct
         return (
           `<b>${k.dates[idx]}</b><br/>` +
           `开 ${o[0].toFixed(2)} 收 ${o[1].toFixed(2)}<br/>` +
@@ -321,35 +329,18 @@ const tradesKlineOption = computed(() => {
       },
     },
     grid: { left: '3%', right: '4%', top: 34, bottom: 52, containLabel: true },
-    xAxis: {
-      type: 'category',
-      data: k.dates,
-      boundaryGap: true,
-      min: 'dataMin',
-      max: 'dataMax',
-      axisLine: { onZero: false },
-      axisTick: { show: false },
-    },
+    xAxis: klineXAxis({ data: k.dates }),
     yAxis: {
       scale: true,
-      axisLabel: {
-        formatter: (v: number) =>
-          v.toLocaleString('zh-CN', {
-            minimumFractionDigits: Math.abs(v) >= 1000 ? 0 : 2,
-            maximumFractionDigits: Math.abs(v) >= 1000 ? 0 : 2,
-          }),
-      },
+      axisLabel: { formatter: fmtPriceNum },
     },
-    dataZoom: [
-      { type: 'inside', start: 0, end: 100, minValueSpan: 15, zoomOnMouseWheel: true, moveOnMouseMove: true },
-      { type: 'slider', start: 0, end: 100, height: 18, bottom: 12 },
-    ],
+    dataZoom: klineDataZoom({ sliderBottom: 12 }),
     series: [
       {
         name: '日K',
         type: 'candlestick',
         data: k.ohlcv,
-        itemStyle: { color: upColor, color0: downColor, borderColor: upColor, borderColor0: downColor },
+        itemStyle: candleItemStyle(k.market),
         markPoint: { data: markPointData, animation: false },
         // 买入加权平均成本线（对标 Lightweight Charts PriceLine：带标题的价格线）
         ...(cost != null

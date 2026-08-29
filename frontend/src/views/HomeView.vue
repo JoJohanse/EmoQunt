@@ -18,6 +18,16 @@ import type {
 import { useWatchlistStore, targetKey } from '@/stores/watchlist'
 import type { WatchlistItem } from '@/stores/watchlist'
 import { chartPalette, deltaTone, deltaDirection, NEUTRAL_HEX } from '@/lib/marketColors'
+import {
+  candleItemStyle,
+  chgVsPrevClose,
+  crosshairPointer,
+  fmtPriceNum,
+  klineDataZoom,
+  klineXAxis,
+  linkedCrosshair,
+  monthTickConfig,
+} from '@/chart/kline'
 import { useBacktestHistoryStore } from '@/stores/backtestHistory'
 import { useHomeLayoutStore } from '@/stores/homeLayout'
 import { useUiStore } from '@/stores/ui'
@@ -633,32 +643,7 @@ function heatColor(chg: number): string {
   return '#f3f4f6'
 }
 
-// 价格轴格式化：千分位；≥1000 的指数点位省去小数，避免宽标签溢出网格边距被裁剪
-function fmtPriceNum(v: number): string {
-  const dec = Math.abs(v) >= 1000 ? 0 : 2
-  return v.toLocaleString('zh-CN', { minimumFractionDigits: dec, maximumFractionDigits: dec })
-}
-
-// 时间轴刻度本地化（对标 Lightweight Charts tickMarkFormatter）：按月边界取刻度，1月显示年份
-function monthTickConfig(dates: string[]): {
-  interval: (index: number) => boolean
-  formatter: (v: string) => string
-} {
-  let last = ''
-  const flags = dates.map((d) => {
-    const ym = d.slice(0, 7)
-    const show = ym !== last
-    last = ym
-    return show
-  })
-  return {
-    interval: (index: number) => Boolean(flags[index]),
-    formatter: (v: string) => {
-      const [y, m] = v.split('-')
-      return m === '01' ? `${y}年` : `${Number(m)}月`
-    },
-  }
-}
+// 价格/时间轴格式化与 K线图骨架件统一收在 chart/kline（fmtPriceNum/monthTickConfig）
 
 // K线 ECharts 配置：蜡烛图 + 成交量 + 主图叠加(MA/BOLL) + 副图指标(MACD/KDJ/RSI)
 const klineOption = computed(() => {
@@ -712,12 +697,7 @@ const klineOption = computed(() => {
       data: ohlcv,
       barWidth: candleWidth,
       barMinWidth: 1,
-      itemStyle: {
-        color: upColor,
-        color0: downColor,
-        borderColor: upColor,
-        borderColor0: downColor,
-      },
+      itemStyle: candleItemStyle(k.market),
       // 最新价虚线 + 右侧价格标签（TradingView 式）
       markLine: {
         symbol: ['none', 'none'],
@@ -782,20 +762,6 @@ const klineOption = computed(() => {
   }
 
   const monthTicks = monthTickConfig(dates)
-  const xCategory = (gridIndex: number, labelShow: boolean) => ({
-    type: 'category',
-    gridIndex,
-    data: dates,
-    boundaryGap: true,
-    axisLine: { onZero: false },
-    axisTick: { show: false },
-    axisLabel: labelShow
-      ? { show: true, interval: monthTicks.interval, formatter: monthTicks.formatter }
-      : { show: false },
-    splitLine: { show: false },
-    min: 'dataMin',
-    max: 'dataMax',
-  })
 
   return {
     title: {
@@ -806,11 +772,11 @@ const klineOption = computed(() => {
       textStyle: { fontSize: 15, fontWeight: 600 },
       subtextStyle: { fontSize: 11, color: '#9ca3af' },
     },
-    // 多窗格十字光标联动
-    axisPointer: { link: [{ xAxisIndex: 'all' }], label: { backgroundColor: '#6a7985' } },
+    // 多窗格十字光标联动（骨架件见 chart/kline）
+    axisPointer: linkedCrosshair(),
     tooltip: {
       trigger: 'axis',
-      axisPointer: { type: 'cross', label: { backgroundColor: '#6a7985' } },
+      axisPointer: crosshairPointer(),
       // TradingView 式固定数值面板：tooltip 吸顶并水平钳制在图内，消除对蜡烛的遮挡
       position: (point: number[], _params: unknown, _dom: unknown, _rect: unknown, size: { contentSize: number[]; viewSize: number[] }) => {
         const w = size.contentSize[0] ?? 220
@@ -828,8 +794,8 @@ const klineOption = computed(() => {
         const date = dates[idx] ?? ''
         const o = ohlcv[idx]
         if (!o) return date
-        const prev = idx > 0 ? ohlcv[idx - 1]![1] : o[0]
-        const chg = (o[1] / prev - 1) * 100
+        // 前收/涨跌口径统一走 chart/kline（首根回退为开盘价）
+        const { prev, chgPct: chg } = chgVsPrevClose(ohlcv, idx)
         const amp = ((o[3] - o[2]) / prev) * 100
         const valColor = (v: number) => (v > 0 ? upText : v < 0 ? downText : 'inherit')
         const pctStr = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(2)}%`
@@ -896,9 +862,9 @@ const klineOption = computed(() => {
           { left: '7%', right: '4%', top: '81%', height: '12%' },
         ],
     xAxis: [
-      xCategory(0, false),
-      xCategory(1, !hasSub),
-      ...(hasSub ? [xCategory(2, true)] : []),
+      klineXAxis({ data: dates, labelShow: false }),
+      klineXAxis({ data: dates, labelShow: !hasSub, ticks: monthTicks }),
+      ...(hasSub ? [klineXAxis({ data: dates, labelShow: true, ticks: monthTicks })] : []),
     ],
     yAxis: [
       { scale: true, splitArea: { show: true }, axisLabel: { formatter: (v: number) => fmtPriceNum(v) } },
@@ -907,18 +873,12 @@ const klineOption = computed(() => {
         ? [{ gridIndex: 2, scale: true, splitNumber: 2, splitArea: { show: false }, axisLabel: { show: true, fontSize: 10 } }]
         : []),
     ],
-    dataZoom: [
-      {
-        type: 'inside', xAxisIndex: hasSub ? [0, 1, 2] : [0, 1],
-        start: 60, end: 100, minValueSpan: 15,
-        zoomOnMouseWheel: true, moveOnMouseMove: true, preventDefaultMouseMove: true,
-      },
-      {
-        type: 'slider', xAxisIndex: hasSub ? [0, 1, 2] : [0, 1],
-        left: '7%', right: '4%', top: hasSub ? '89%' : '94%', height: 18,
-        start: 60, end: 100,
-      },
-    ],
+    dataZoom: klineDataZoom({
+      xAxisIndex: hasSub ? [0, 1, 2] : [0, 1],
+      start: 60,
+      sliderTop: hasSub ? '89%' : '94%',
+      preventDefaultMouseMove: true,
+    }),
     series,
   }
 })
