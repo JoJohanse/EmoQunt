@@ -2,8 +2,8 @@
 import { ref, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { backtestApi, strategyApi } from '@/api'
-import type { BacktestMetrics, BacktestRequest, BacktestResult, Market, StrategyDetail } from '@/api/types'
+import { backtestApi, strategyApi, klineApi } from '@/api'
+import type { BacktestMetrics, BacktestRequest, BacktestResult, BacktestTrade, KlineData, Market, StrategyDetail } from '@/api/types'
 import { useBacktestHistoryStore } from '@/stores/backtestHistory'
 import { VChart } from '@/composables/useECharts'
 
@@ -240,6 +240,130 @@ const returnsOption = computed(() => {
     ],
   }
 })
+
+// ===== 回测 K 线（买卖点标注，P0-5） =====
+const tradesKline = ref<KlineData | null>(null)
+const loadingTradesKline = ref(false)
+
+// 复权口径与回测核心一致（A股后复权 / 美股前复权），成交价才能与蜡烛对齐
+const tradesKlineAdjust = computed<'qfq' | 'hfq'>(() => (result.value?.market === 'us' ? 'qfq' : 'hfq'))
+
+async function loadTradesKline(r: BacktestResult) {
+  if (!r.dates.length) return
+  loadingTradesKline.value = true
+  try {
+    // 区间模式：按回测区间 ±5 个自然日取数（服务端忽略 days 裁剪），
+    // 保证成交日期与 K 线类目轴一一对应，markPoint 才能打上
+    const shift = (d: string, days: number) => {
+      const t = new Date(d)
+      t.setDate(t.getDate() + days)
+      return t.toISOString().slice(0, 10)
+    }
+    const range = { start: shift(r.dates[0], -5), end: shift(r.dates[r.dates.length - 1], 5) }
+    tradesKline.value = await klineApi.get(r.stock_code, r.market, 30, 'day', tradesKlineAdjust.value, '', range)
+  } catch (e: any) {
+    console.warn('回测K线加载失败', e.message)
+    tradesKline.value = null
+  } finally {
+    loadingTradesKline.value = false
+  }
+}
+
+watch(result, (r) => {
+  if (r) loadTradesKline(r)
+})
+
+const tradesKlineOption = computed(() => {
+  const k = tradesKline.value
+  if (!k || !k.dates.length || !result.value) return {}
+  const trades: BacktestTrade[] = result.value.trades ?? []
+  const isUS = k.market === 'us'
+  // 与 K 线主图一致的涨跌配色：A股红涨绿跌 / 美股绿涨红跌
+  const upColor = isUS ? '#26a69a' : '#ef232a'
+  const downColor = isUS ? '#ef5350' : '#14b143'
+
+  const buys = trades.filter((t) => t.side === 'buy')
+  const cost = buys.length
+    ? buys.reduce((s, t) => s + t.price * t.size, 0) / buys.reduce((s, t) => s + t.size, 0)
+    : null
+
+  const markPointData = trades.slice(0, 200).map((t) => ({
+    coord: [t.date, t.price] as [string, number],
+    symbol: 'arrow',
+    symbolSize: 11,
+    symbolRotate: t.side === 'buy' ? 0 : 180,
+    symbolOffset: t.side === 'buy' ? [0, '130%'] : [0, '-130%'],
+    itemStyle: { color: t.side === 'buy' ? upColor : downColor },
+    label: { show: false },
+  }))
+
+  return {
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'cross', label: { backgroundColor: '#6a7985' } },
+      formatter(params: any) {
+        const arr: any[] = Array.isArray(params) ? params : [params]
+        const idx = arr[0]?.dataIndex ?? 0
+        const o = k.ohlcv[idx]
+        if (!o) return k.dates[idx] ?? ''
+        const prev = idx > 0 ? k.ohlcv[idx - 1]![1] : o[0]
+        const chg = prev ? (o[1] / prev - 1) * 100 : 0
+        return (
+          `<b>${k.dates[idx]}</b><br/>` +
+          `开 ${o[0].toFixed(2)} 收 ${o[1].toFixed(2)}<br/>` +
+          `低 ${o[2].toFixed(2)} 高 ${o[3].toFixed(2)}<br/>` +
+          `涨跌 ${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`
+        )
+      },
+    },
+    grid: { left: '3%', right: '4%', top: 34, bottom: 52, containLabel: true },
+    xAxis: {
+      type: 'category',
+      data: k.dates,
+      boundaryGap: true,
+      min: 'dataMin',
+      max: 'dataMax',
+      axisLine: { onZero: false },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      scale: true,
+      axisLabel: {
+        formatter: (v: number) =>
+          v.toLocaleString('zh-CN', {
+            minimumFractionDigits: Math.abs(v) >= 1000 ? 0 : 2,
+            maximumFractionDigits: Math.abs(v) >= 1000 ? 0 : 2,
+          }),
+      },
+    },
+    dataZoom: [
+      { type: 'inside', start: 0, end: 100, minValueSpan: 15, zoomOnMouseWheel: true, moveOnMouseMove: true },
+      { type: 'slider', start: 0, end: 100, height: 18, bottom: 12 },
+    ],
+    series: [
+      {
+        name: '日K',
+        type: 'candlestick',
+        data: k.ohlcv,
+        itemStyle: { color: upColor, color0: downColor, borderColor: upColor, borderColor0: downColor },
+        markPoint: { data: markPointData, animation: false },
+        // 买入加权平均成本线（对标 Lightweight Charts PriceLine：带标题的价格线）
+        ...(cost != null
+          ? {
+              markLine: {
+                symbol: ['none', 'none'],
+                silent: true,
+                animation: false,
+                lineStyle: { type: 'dotted', width: 1.2, color: '#f59e0b' },
+                label: { formatter: () => `成本均价 ${cost.toFixed(2)}`, color: '#b45309', fontSize: 11 },
+                data: [{ yAxis: +cost.toFixed(2) }],
+              },
+            }
+          : {}),
+      },
+    ],
+  }
+})
 </script>
 
 <template>
@@ -317,6 +441,26 @@ const returnsOption = computed(() => {
           </div>
         </el-col>
       </el-row>
+
+      <div class="section-title"><el-icon><CandlestickChart /></el-icon> 回测 K 线 · 买卖点标注</div>
+      <el-card shadow="never" class="chart-card">
+        <div v-if="loadingTradesKline" style="padding: 16px">
+          <el-skeleton animated :rows="5" />
+        </div>
+        <template v-else>
+          <v-chart
+            v-if="tradesKline && tradesKline.dates.length"
+            class="chart chart-kline"
+            :option="tradesKlineOption"
+            :update-options="{ notMerge: true }"
+            autoresize
+          />
+          <el-empty v-else :image-size="60" description="K线数据加载失败或回测区间无效" />
+        </template>
+        <div v-if="!loadingTradesKline && result && !(result.trades ?? []).length" class="trades-hint">
+          回测期间无成交记录（策略未触发买卖信号）
+        </div>
+      </el-card>
 
       <div class="section-title"><el-icon><TrendCharts /></el-icon> 累计收益曲线</div>
       <el-card shadow="never" class="chart-card">
@@ -434,6 +578,14 @@ const returnsOption = computed(() => {
 .chart {
   height: 380px;
   width: 100%;
+}
+.chart-kline {
+  height: 420px;
+}
+.trades-hint {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  padding: 4px 4px 0;
 }
 .risk-card {
   border-radius: var(--radius);

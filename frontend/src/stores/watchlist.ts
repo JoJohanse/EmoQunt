@@ -25,6 +25,15 @@ const DEFAULT_ITEMS: WatchlistItem[] = [
 ]
 
 /**
+ * 标的唯一键：`code|market|kind`。
+ * 第三段区分二义代码（如 A股 000001 既可能是上证指数也可能是平安银行），
+ * 首页主图选中态、行情缓存、跳转预选全部以此为键。
+ */
+export function targetKey(code: string, market: Market, kind?: '' | 'index'): string {
+  return `${code}|${market}|${kind ?? ''}`
+}
+
+/**
  * 自选股（watchlist），持久化到 localStorage。
  * 对标 Ghostfolio / 雪球等投资应用：自选是首屏第一公民。
  */
@@ -32,28 +41,33 @@ export const useWatchlistStore = defineStore(
   'watchlist',
   () => {
     const items = ref<WatchlistItem[]>([...DEFAULT_ITEMS])
-    /** 首页主图上次查看的标的（键为 `code|market`），持久化 */
+    /** 首页主图上次查看的标的（键为 `code|market|kind`），持久化 */
     const lastKey = ref('')
 
-    function has(code: string, market: Market): boolean {
-      return items.value.some((i) => i.code === code && i.market === market)
+    function has(code: string, market: Market, kind?: 'index'): boolean {
+      return items.value.some(
+        (i) => i.code === code && i.market === market && (i.kind ?? '') === (kind ?? ''),
+      )
     }
 
     /** 添加自选（已存在则返回 false） */
-    function add(code: string, market: Market, name: string): boolean {
+    function add(code: string, market: Market, name: string, kind?: 'index'): boolean {
       const normalized = code.trim()
-      if (!normalized || has(normalized, market)) return false
+      if (!normalized || has(normalized, market, kind)) return false
       items.value.push({
         code: normalized,
         market,
         name: name || normalized,
         addedAt: new Date().toISOString(),
+        kind,
       })
       return true
     }
 
-    function remove(code: string, market: Market) {
-      items.value = items.value.filter((i) => !(i.code === code && i.market === market))
+    function remove(code: string, market: Market, kind?: 'index') {
+      items.value = items.value.filter(
+        (i) => !(i.code === code && i.market === market && (i.kind ?? '') === (kind ?? '')),
+      )
     }
 
     function rename(code: string, market: Market, name: string) {
@@ -61,7 +75,26 @@ export const useWatchlistStore = defineStore(
       if (item) item.name = name || item.code
     }
 
-    return { items, lastKey, has, add, remove, rename }
+    /** 按唯一键查找条目 */
+    function findByKey(key: string): WatchlistItem | undefined {
+      return items.value.find((i) => targetKey(i.code, i.market, i.kind) === key)
+    }
+
+    /**
+     * 确保标的存在于自选并返回其唯一键（供聊天卡片/推荐卡片"在首页打开主图"：
+     * 主图标的来源于自选列表，未跟踪时先加入）。
+     */
+    function ensureTracked(code: string, market: Market, name: string, kind?: 'index'): string {
+      const normalized = code.trim()
+      const found = items.value.find(
+        (i) => i.code === normalized && i.market === market && (i.kind ?? '') === (kind ?? ''),
+      )
+      if (found) return targetKey(found.code, found.market, found.kind)
+      add(normalized, market, name, kind)
+      return targetKey(normalized, market, kind)
+    }
+
+    return { items, lastKey, has, add, remove, rename, findByKey, ensureTracked }
   },
   {
     persist: {

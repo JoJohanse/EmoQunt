@@ -11,6 +11,8 @@ export type HomeWidgetId =
   | 'sectors'
   | 'news'
   | 'recommend'
+  | 'allocation'
+  | 'srchealth'
 
 /** 默认布局顺序（首次使用 / 重置布局时恢复） */
 export const DEFAULT_HOME_ORDER: HomeWidgetId[] = [
@@ -22,6 +24,8 @@ export const DEFAULT_HOME_ORDER: HomeWidgetId[] = [
   'sectors',
   'news',
   'recommend',
+  'allocation',
+  'srchealth',
 ]
 
 /**

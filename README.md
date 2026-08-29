@@ -18,14 +18,15 @@
 - **美股两级回退**：yfinance（主）→ akshare 新浪源
 - **可选 PostgreSQL + Redis 缓存**（`docker-compose.yml` 一键启动，国内源 `docker.m.daocloud.io`，可选 `REDIS_PASSWORD`）：Redis 热缓存 + PG 持久化，读序 Redis → PG → CSV → 网络；不可用时自动静默降级为纯网络模式；PG 支持可选 `psycopg_pool` 连接池与 TTL 分层（当日 300s / 历史 7d±jitter）
 - 行情结果缓存至本地 `stock_data/`；情绪快照位于 `nes_data/sentiment_results/{YYYYMMDD}.json`，并通过 `GET /api/sentiment/calendar` 供首页情绪日历使用（纯本地读取，线程池化，不阻塞事件循环）
+- **数据源健康心跳**：每个取数层在真实发起处记录成败（`GET /api/data/source-health`，进程内存态、每源近 7 次），渲染为首页心跳条，直观解释"为何某股无数据"
 
 ### Vue3 SPA（`/spa/*`，现代化前端）
-- **可折叠分组侧边栏导航**（总览 / 回测研究 / 数据洞察 / 策略管理）+ 面包屑 + **暗色模式**（Element Plus `html.dark` 方案）+ **全局命令面板 `Cmd+K`** + **顶部标签页 Tabs** + **侧边栏收藏**
-- **丰富首页**：功能快捷入口、大盘指数速览条、**自选股面板**（增删、最新价/涨跌幅，A股红涨绿跌·美股绿涨红跌，点击切换主图）、**最近回测**（摘要 + 一键重跑参数回填）、热门板块 / 当日舆情 / 个股推荐、**情绪日历**（`sentiment_results/{YYYYMMDD}.json` 驱动）与 **可拖拽网格布局**（`emoqunt:homeLayout` 持久化）
-- **动态 ECharts 图表**：回测收益/回撤/日收益曲线（可缩放），K 线蜡烛图 + 成交量
+- **可折叠分组侧边栏导航**（总览 / 回测研究 / 数据洞察 / 策略管理）+ 面包屑 + **暗色模式**（Element Plus `html.dark` 方案）+ **全局命令面板 `Cmd+K`** + **顶部标签页 Tabs** + **侧边栏收藏** + **首访导览**（driver.js 七步引导，看过不再弹、可随时重放）
+- **丰富首页**：功能快捷入口、大盘指数速览条（行内 sparkline，点击切换主图）、**自选股面板**（增删、行内 sparkline、最新价数字滚动与涨跌方向闪烁，A股红涨绿跌·美股绿涨红跌，点击切换主图）、**最近回测**（摘要 + 一键重跑参数回填）、热门板块 / 当日舆情（**快讯来源分组过滤** + 来源徽标）/ 个股推荐（点击下钻主图）、**自选分布环图**（市场/当日涨跌/行业三维切换）、**数据源健康心跳条**（各取数源近 7 次成败可视化）、**情绪日历**（`sentiment_results/{YYYYMMDD}.json` 驱动）与 **可拖拽网格布局**（`emoqunt:homeLayout` 持久化）；行情经 **SWR 式轮询**刷新（页面不可见暂停、失败指数退避）
+- **动态 ECharts 图表**：回测收益/回撤/日收益曲线（可缩放）；K 线蜡烛图 + 成交量 + MA/BOLL 叠加 + MACD/KDJ/RSI 副图 + 最新价虚线 + 吸顶固定数值面板 + 月边界刻度；**回测 K 线买卖点标注**（后端 `trades` 透传，B/S 箭头 + 加权成本均价线，K 线区间对齐回测日期）
 - **SPA 独有页面**：策略对比（2~5 策略同台净值对比 + 指标表）、因子分析（IC 序列 / 分层累计收益 / 单调性检验）
-- **浏览器本地持久化**（零依赖 Pinia 插件，`emoqunt:` 前缀 localStorage）：UI 偏好（主题/侧边栏）、自选股、回测历史与上次表单、AI 对话记录、收藏/标签页/首页布局——刷新全部保持
-- **AI 投资助手**：全局抽屉式对话面板，LangGraph ReAct agent，SSE 流式输出、Markdown 渲染、工具调用过程可见
+- **浏览器本地持久化**（零依赖 Pinia 插件，`emoqunt:` 前缀 localStorage）：UI 偏好（主题/侧边栏/导览标记）、自选股、回测历史与上次表单、AI 对话记录、收藏/标签页/首页布局——刷新全部保持
+- **AI 投资助手**：全局抽屉式对话面板，LangGraph ReAct agent，SSE 流式输出、Markdown 渲染、工具调用过程可见，**工具结果卡片化**（Generative UI：行情/指数/舆情/推荐/回测/信号六类结构化卡片 + 查询中骨架，一键跳转首页主图或对应页面）
 
 ### Jinja2 经典版（`/`，服务端渲染）
 - **统一设计系统**：`base.html` + `app.css` 设计令牌，Bootstrap 5.3 + Font Awesome 6
@@ -72,12 +73,15 @@ EmoQunt/
 
 ## 页面预览
 
-> 截图由 `conda run -n qdt python docs/screenshots/_capture.py` 在本机源码服务（`web_app.py` + `db/cache`）上自动采集，亮/暗色、K 线看板、回测结果与策略列表均为 2026-08 迭代后界面（含命令面板、标签页、可拖拽网格、情绪日历与指数行情/K 线增强）。
+> 截图由 `conda run -n qdt python docs/screenshots/_capture.py` 在本机源码服务（`web_app.py` + `db/cache`）上自动采集，均为 2026-08 第四轮迭代后界面（含首访导览、AI 工具结果卡片、回测买卖点标注、自选分布环图、数据源心跳与快讯来源分组）。
 
-### SPA 首页（亮色）——侧边栏导航 / 指数速览 / 自选股 / K 线看板 / 情绪日历
+### SPA 首页（亮色）——10 张可拖拽卡片：快捷入口 / 指数速览（sparkline）/ 市场宽度 / 行情看板 / 行业热力图 / 热门板块 / 快讯来源分组 / 个股推荐 / 自选分布环图 / 数据源心跳 + 情绪日历
 ![SPA 首页（亮色）](docs/screenshots/spa-home-light.png)
 
-### SPA K 线看板——红涨绿跌蜡烛 + MA/BOLL 叠加 + 最新价虚线 + MACD/KDJ/RSI 副图 + 日/周/月与复权切换
+### 首访导览——driver.js 七步引导（看过不再弹，工具栏可重放）
+![首访导览](docs/screenshots/spa-home-tour.png)
+
+### SPA K 线看板——红涨绿跌蜡烛 + MA/BOLL 叠加 + 最新价虚线 + MACD/KDJ/RSI 副图 + 日/周/月与复权切换 + 月边界刻度
 ![SPA K 线看板](docs/screenshots/spa-kline.png)
 
 ### SPA K 线周线——服务端聚合，三窗格联动缩放
@@ -86,8 +90,14 @@ EmoQunt/
 ### SPA 首页（暗色模式）——主题切换后刷新仍保持
 ![SPA 首页（暗色）](docs/screenshots/spa-home-dark.png)
 
-### SPA 回测结果——动态收益/回撤/日收益图表 + 指标卡 + 风险分析
+### SPA 回测结果——绩效指标 + 回测 K 线买卖点标注 + 动态收益/回撤/日收益图表 + 风险分析
 ![SPA 回测结果](docs/screenshots/spa-backtest.png)
+
+### 回测 K 线 · 买卖点标注特写——B/S 箭头按市场约定配色 + 加权成本均价线，K 线区间与回测日期对齐
+![回测 K 线买卖点标注](docs/screenshots/spa-backtest-trades.png)
+
+### AI 工具结果卡片——Generative UI：行情摘要卡片 + 一键"在首页查看主图"
+![AI 工具结果卡片](docs/screenshots/spa-chat-tool-card.png)
 
 ### SPA 策略列表
 ![SPA 策略列表](docs/screenshots/spa-strategies.png)

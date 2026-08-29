@@ -117,7 +117,8 @@ async def stream_agent_events(messages: List[Dict]):
 
     迭代 LangGraph astream_events v2，yield 标准化事件元组：
     - ("token", text)               模型输出 token 增量
-    - ("tool", name, args, result)  工具调用
+    - ("tool_start", name, args)    工具调用开始（前端渲染"查询中"骨架卡片）
+    - ("tool", name, args, result)  工具调用结束
     - ("done",)                     结束
     - ("error", message)            错误
 
@@ -140,13 +141,17 @@ async def stream_agent_events(messages: List[Dict]):
 
             elif kind == "on_tool_start":
                 inp = ev.get("data", {}).get("input", "")
-                tool_args_inflight[nm] = inp if isinstance(inp, str) else str(inp)
+                args = inp if isinstance(inp, str) else str(inp)
+                tool_args_inflight[nm] = args
+                yield ("tool_start", nm, args[:500])
 
             elif kind == "on_tool_end":
                 args = tool_args_inflight.pop(nm, "")
                 out = ev.get("data", {}).get("output", "")
                 result = out.content if hasattr(out, "content") else str(out)
-                yield ("tool", nm, args[:500], result[:800])
+                # result 截断只影响前端展示副本（LLM 已拿到完整结果）；
+                # 舆情/推荐等 JSON 摘要卡片需要比 800 字更大的窗口
+                yield ("tool", nm, args[:500], result[:4000])
 
         yield ("done",)
     except Exception as e:

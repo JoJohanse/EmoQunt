@@ -3,6 +3,8 @@ import { ref, nextTick, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useChatStore } from '@/stores/chat'
 import MarkdownIt from 'markdown-it'
+import ChatToolCard from '@/components/ChatToolCard.vue'
+import { toolCardKind } from '@/components/chat/toolCards'
 
 const store = useChatStore()
 const { messages, loading } = storeToRefs(store)
@@ -61,21 +63,22 @@ watch(
           <el-icon v-else><ChatDotRound /></el-icon>
         </div>
         <div class="bubble-wrap">
-          <!-- 工具调用（折叠） -->
+          <!-- 工具调用：已知工具渲染结果卡片，其余折叠展示原始参数/结果 -->
           <div v-if="msg.toolCalls && msg.toolCalls.length" class="tool-calls">
-            <el-collapse>
-              <el-collapse-item
-                v-for="(tc, j) in msg.toolCalls"
-                :key="j"
-                :title="`🔧 ${tc.name}`"
-                :name="j"
-              >
-                <div class="tool-detail">
-                  <div class="tool-section"><strong>参数：</strong><code>{{ tc.args }}</code></div>
-                  <div class="tool-section"><strong>结果：</strong><pre>{{ tc.result }}</pre></div>
-                </div>
-              </el-collapse-item>
-            </el-collapse>
+            <template v-for="(tc, j) in msg.toolCalls" :key="j">
+              <ChatToolCard v-if="toolCardKind(tc)" :call="tc" />
+              <el-collapse v-else>
+                <el-collapse-item
+                  :title="`🔧 ${tc.name}`"
+                  :name="j"
+                >
+                  <div class="tool-detail">
+                    <div class="tool-section"><strong>参数：</strong><code>{{ tc.args }}</code></div>
+                    <div class="tool-section"><strong>结果：</strong><pre>{{ tc.result }}</pre></div>
+                  </div>
+                </el-collapse-item>
+              </el-collapse>
+            </template>
           </div>
           <!-- 消息内容（Markdown 渲染） -->
           <div class="bubble" :class="msg.role">

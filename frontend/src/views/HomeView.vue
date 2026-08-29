@@ -12,17 +12,25 @@ import type {
   SentimentCalendarItem,
   MarketBreadth,
   SectorBoardData,
+  SourceBeat,
+  SourceHealthData,
 } from '@/api/types'
-import { useWatchlistStore } from '@/stores/watchlist'
+import { useWatchlistStore, targetKey } from '@/stores/watchlist'
+import type { WatchlistItem } from '@/stores/watchlist'
 import { useBacktestHistoryStore } from '@/stores/backtestHistory'
 import { useHomeLayoutStore } from '@/stores/homeLayout'
+import { useUiStore } from '@/stores/ui'
+import { usePolling } from '@/composables/usePolling'
 import { VChart } from '@/composables/useECharts'
 import SentimentCalendar from '@/components/SentimentCalendar.vue'
+import MiniSparkline from '@/components/MiniSparkline.vue'
+import AnimNumber from '@/components/AnimNumber.vue'
 
 const router = useRouter()
 const watchlistStore = useWatchlistStore()
 const historyStore = useBacktestHistoryStore()
 const homeLayoutStore = useHomeLayoutStore()
+const uiStore = useUiStore()
 
 // ===== 仪表盘可拖拽布局（与 stores/homeLayout 保持一致） =====
 const DEFAULT_WIDGETS = [
@@ -34,6 +42,8 @@ const DEFAULT_WIDGETS = [
   { id: 'sectors', title: '热门板块', icon: 'Sunrise' },
   { id: 'news', title: '当日舆情', icon: 'ChatDotRound' },
   { id: 'recommend', title: '个股推荐', icon: 'Star' },
+  { id: 'allocation', title: '自选分布', icon: 'PieChart' },
+  { id: 'srchealth', title: '数据源心跳', icon: 'Monitor' },
 ] as const
 
 type WidgetId = (typeof DEFAULT_WIDGETS)[number]['id']
@@ -161,14 +171,34 @@ function resetKlineZoom() {
   } catch { /* ignore */ }
 }
 
-// 当前标的（键为 `code|market`），上次选择持久化在 watchlist store
-const activeKey = ref(watchlistStore.lastKey || '000001|zh_a')
-const activeTarget = computed(() => {
-  const found = watchlistStore.items.find((t) => `${t.code}|${t.market}` === activeKey.value)
-  return found || watchlistStore.items[0] || INDEX_PRESETS[0]
+// 当前标的（键为 `code|market|kind`，第三段区分上证指数/平安银行这类二义代码），持久化在 watchlist store
+function normKey(key: string): string {
+  if (!key) return ''
+  const parts = key.split('|')
+  if (parts.length >= 3) return key
+  // 旧持久化格式 code|market：按自选条目回填 kind
+  const item = watchlistStore.items.find((i) => i.code === parts[0] && i.market === parts[1])
+  return targetKey(parts[0] ?? '', (parts[1] as Market) ?? 'zh_a', item?.kind)
+}
+function firstItemKey(): string {
+  const first = watchlistStore.items[0]
+  return first ? targetKey(first.code, first.market, first.kind) : '000001|zh_a|index'
+}
+const activeKey = ref(normKey(watchlistStore.lastKey) || firstItemKey())
+const activeTarget = computed<{ code: string; market: Market; name: string; kind?: 'index' } | null>(() => {
+  const found = watchlistStore.findByKey(activeKey.value)
+  if (found) return found
+  // 指数速览卡片可点击切换到未在自选中的预设指数
+  const preset = INDEX_PRESETS.find((i) => targetKey(i.code, i.market, i.kind) === activeKey.value)
+  if (preset) return { code: preset.code, market: preset.market, name: preset.name, kind: preset.kind }
+  return watchlistStore.items[0] ?? null
 })
 /** 是否指数标的：指数无复权概念，禁用复权选择 */
 const isIndexTarget = computed(() => activeTarget.value?.kind === 'index')
+
+function selectIndex(idx: (typeof INDEX_PRESETS)[number]) {
+  activeKey.value = targetKey(idx.code, idx.market, idx.kind)
+}
 
 async function loadKline() {
   if (!activeTarget.value) return
@@ -203,24 +233,34 @@ watch(
 watch(
   () => watchlistStore.items,
   () => {
-    // 自选列表变化后，若当前标的已不存在则回退到第一个
-    if (!watchlistStore.items.some((t) => `${t.code}|${t.market}` === activeKey.value)) {
-      activeKey.value = watchlistStore.items.length
-        ? `${watchlistStore.items[0].code}|${watchlistStore.items[0].market}`
-        : '000001|zh_a'
-    }
+    // 自选列表变化后，若当前标的已不存在（既不在自选也不是指数预设）则回退
+    const stillValid =
+      watchlistStore.findByKey(activeKey.value) ||
+      INDEX_PRESETS.some((i) => targetKey(i.code, i.market, i.kind) === activeKey.value)
+    if (!stillValid) activeKey.value = firstItemKey()
   },
 )
 
-// ===== 自选股行情（最新价 + 涨跌幅） =====
+// ===== 自选股行情（最新价 + 涨跌幅 + 行内走势） =====
 interface Quote {
   code: string
   market: Market
   name: string
   close: number
   chgPct: number
+  /** 最近 30 根收盘价（行内 sparkline 用） */
+  closes: number[]
 }
 const quotes = ref<Record<string, Quote>>({})
+/** 行情刷新闪烁方向（key → 'up'/'down'），短暂高亮后自动清除 */
+const flashMap = ref<Record<string, 'up' | 'down'>>({})
+
+function quoteOf(code: string, market: Market, kind?: 'index'): Quote | undefined {
+  return quotes.value[targetKey(code, market, kind)]
+}
+function flashOf(code: string, market: Market, kind?: 'index'): string {
+  return flashMap.value[targetKey(code, market, kind)] ?? ''
+}
 
 interface QuoteTarget {
   code: string
@@ -231,20 +271,53 @@ interface QuoteTarget {
 
 async function loadQuote(code: string, market: Market, name?: string, kind?: '' | 'index') {
   try {
-    const d = await klineApi.get(code, market, 2, 'day', '', kind ?? '')
+    // 拉 30 根日线：最新价/涨跌 + 行内 sparkline 一次取齐
+    const d = await klineApi.get(code, market, 30, 'day', '', kind ?? '')
     if (!d.ohlcv.length) return
-    const close = d.ohlcv[d.ohlcv.length - 1][1]
-    const prev = d.ohlcv.length > 1 ? d.ohlcv[d.ohlcv.length - 2][1] : close
-    quotes.value[`${code}|${market}`] = {
+    const closes = d.ohlcv.map((o) => o[1])
+    const close = closes[closes.length - 1] ?? 0
+    const prev = closes.length > 1 ? closes[closes.length - 2]! : close
+    const chgPct = prev ? (close / prev - 1) * 100 : 0
+    const key = targetKey(code, market, kind)
+    const old = quotes.value[key]
+    quotes.value[key] = {
       code,
       market,
       name: d.name || name || code,
       close,
-      chgPct: prev ? (close / prev - 1) * 100 : 0,
+      chgPct,
+      closes,
+    }
+    // 价格变化时按方向闪烁一次（SWR 轮询的可见反馈）
+    if (old && old.close !== close) {
+      flashMap.value[key] = close > old.close ? 'up' : 'down'
+      setTimeout(() => delete flashMap.value[key], 900)
     }
   } catch {
     // 单只行情失败静默降级（不阻塞首页）
   }
+}
+
+/** 拉取全部自选 + 指数速览行情（轮询复用） */
+function loadQuotes() {
+  const quoteTargets = new Map<string, QuoteTarget>()
+  for (const i of INDEX_PRESETS) quoteTargets.set(targetKey(i.code, i.market, i.kind), i)
+  for (const it of watchlistStore.items) quoteTargets.set(targetKey(it.code, it.market, it.kind), it)
+  quoteTargets.forEach((t) => loadQuote(t.code, t.market, t.name, t.kind))
+}
+
+// SWR 式轮询：页面不可见暂停、失败指数退避（日线数据 60s 足够）
+usePolling(loadQuotes, { intervalMs: 60_000 })
+// 数据源心跳变化缓慢，5 分钟刷一次
+usePolling(loadSourceHealth, { intervalMs: 300_000 })
+
+/** 行内 sparkline 颜色：按区间涨跌 + 市场配色约定 */
+function sparkColor(item: WatchlistItem): string {
+  const closes = quoteOf(item.code, item.market, item.kind)?.closes ?? []
+  if (closes.length < 2) return '#667eea'
+  const up = (closes[closes.length - 1] ?? 0) >= (closes[0] ?? 0)
+  // 红色条件：A股上涨 或 美股下跌
+  return up === (item.market === 'zh_a') ? '#ef232a' : '#14b143'
 }
 
 // 添加自选：先拉 2 根 K 线校验代码并解析名称
@@ -264,7 +337,7 @@ async function addWatch() {
   }
   adding.value = true
   try {
-    const d = await klineApi.get(code, newMarket.value, 2)
+    const d = await klineApi.get(code, newMarket.value, 30)
     watchlistStore.add(code, newMarket.value, d.name || code)
     await loadQuote(code, newMarket.value, d.name)
     newCode.value = ''
@@ -276,8 +349,8 @@ async function addWatch() {
   }
 }
 
-function removeWatch(code: string, market: Market) {
-  watchlistStore.remove(code, market)
+function removeWatch(code: string, market: Market, kind?: 'index') {
+  watchlistStore.remove(code, market, kind)
 }
 
 // 涨跌徽章（A股红涨绿跌，美股绿涨红跌）
@@ -296,6 +369,78 @@ const breadth = ref<MarketBreadth | null>(null)
 const sectorBoard = ref<SectorBoardData | null>(null)
 const loadingBreadth = ref(false)
 const loadingSectors = ref(false)
+
+// ===== 数据源健康心跳（Uptime Kuma beat bar 模式） =====
+const sourceHealth = ref<SourceHealthData | null>(null)
+
+/** 展示的数据源与顺序（与后端取数链一致；未启用的源显示灰格） */
+const HEALTH_SOURCES: { key: string; label: string }[] = [
+  { key: 'tushare', label: 'Tushare' },
+  { key: 'yfinance', label: 'Yahoo' },
+  { key: 'sina', label: '新浪' },
+  { key: 'eastmoney', label: '东财' },
+  { key: 'baostock', label: 'BaoStock' },
+]
+
+/** 补齐为固定 7 格（旧→新，左侧补灰格） */
+function beatsOf(key: string): (SourceBeat | null)[] {
+  const beats = sourceHealth.value?.sources[key] ?? []
+  const pad = Math.max(0, 7 - beats.length)
+  return [...Array<null>(pad).fill(null), ...beats]
+}
+function beatTitle(b: SourceBeat | null): string {
+  if (!b) return '暂无记录'
+  return `${b.ok ? '成功' : '失败'} · ${dayjs(b.ts * 1000).format('MM-DD HH:mm')}`
+}
+function lastBeatText(key: string): string {
+  const beats = sourceHealth.value?.sources[key] ?? []
+  if (!beats.length) return '—'
+  const last = beats[beats.length - 1]!
+  return `${last.ok ? '✓' : '✗'} ${dayjs(last.ts * 1000).format('HH:mm')}`
+}
+const hasHealthData = computed(() => Object.keys(sourceHealth.value?.sources ?? {}).length > 0)
+
+async function loadSourceHealth() {
+  try {
+    sourceHealth.value = await marketApi.sourceHealth()
+  } catch (e: any) {
+    console.warn('数据源健康加载失败', e.message)
+  }
+}
+
+// ===== 快讯流（来源分组过滤；数据仍来自情绪快照的 news_list） =====
+const newsSourceFilter = ref('全部')
+const newsSources = computed(() => {
+  const sources: string[] = []
+  for (const n of sentiment.value?.news_list || []) {
+    const s = cleanNewsSource(n.source)
+    if (!sources.includes(s)) sources.push(s)
+  }
+  return ['全部', ...sources]
+})
+const filteredNews = computed(() => {
+  const list = sentiment.value?.news_list || []
+  const picked =
+    newsSourceFilter.value === '全部'
+      ? list
+      : list.filter((n) => cleanNewsSource(n.source) === newsSourceFilter.value)
+  return picked.slice(0, 10)
+})
+
+/** 来源徽标配色：按来源名哈希取固定色板 */
+const NEWS_SOURCE_COLORS = ['#667eea', '#10b981', '#f59e0b', '#8b5cf6', '#0ea5e9', '#ec4899']
+
+/** 清洗来源名：trendradar 解析出的来源可能带 [URL:...] 附件或超长，展示与分组统一截净 */
+function cleanNewsSource(source?: string): string {
+  const s = (source || '未知来源').split(' [URL:')[0].split(' [MOBILE:')[0].trim()
+  return (s || '未知来源').slice(0, 16)
+}
+function newsSourceColor(source?: string): string {
+  const s = cleanNewsSource(source)
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0
+  return NEWS_SOURCE_COLORS[h % NEWS_SOURCE_COLORS.length]
+}
 
 const breadthUpPct = computed(() => {
   if (!breadth.value) return 50
@@ -316,10 +461,7 @@ function rerunBacktest(id: string) {
 // ===== 首屏加载 =====
 async function loadAll() {
   // 自选 + 指数速览的行情（并行，失败静默）
-  const quoteTargets = new Map<string, QuoteTarget>()
-  for (const i of INDEX_PRESETS) quoteTargets.set(`${i.code}|${i.market}`, i)
-  for (const it of watchlistStore.items) quoteTargets.set(`${it.code}|${it.market}`, it)
-  quoteTargets.forEach((t) => loadQuote(t.code, t.market, t.name, t.kind))
+  loadQuotes()
   // K线
   await loadKline()
   // 舆情
@@ -345,8 +487,36 @@ async function loadAll() {
   marketApi.sectors().then((d) => (sectorBoard.value = d)).catch((e: any) => {
     console.warn('板块行情加载失败', e.message)
   }).finally(() => (loadingSectors.value = false))
+  // 数据源健康心跳
+  loadSourceHealth()
 }
-onMounted(loadAll)
+onMounted(() => {
+  loadAll()
+  // 首访导览：仅首次进入弹出（ui store 持久化，重放入口在布局工具栏）
+  if (!uiStore.tourDone) {
+    setTimeout(() => {
+      import('@/composables/useHomeTour')
+        .then((m) => m.startHomeTour())
+        .catch(() => {})
+    }, 900)
+  }
+})
+
+// ===== 首访导览重放 + 空态引导 =====
+const newCodeInput = ref<{ focus: () => void } | null>(null)
+function focusWatchInput() {
+  newCodeInput.value?.focus()
+}
+function replayTour() {
+  import('@/composables/useHomeTour')
+    .then((m) => m.startHomeTour())
+    .catch(() => {})
+}
+// 个股推荐点击：加入自选（若未跟踪）并切换主图（卡片下钻：概览 → 个股主图）
+function openRecInChart(rec: { code: string; name: string }) {
+  watchlistStore.lastKey = watchlistStore.ensureTracked(rec.code, 'zh_a', rec.name)
+  activeKey.value = watchlistStore.lastKey
+}
 
 // 工具：计算 MA
 function calcMA(closes: number[], period: number): (number | null)[] {
@@ -459,6 +629,27 @@ function heatColor(chg: number): string {
 function fmtPriceNum(v: number): string {
   const dec = Math.abs(v) >= 1000 ? 0 : 2
   return v.toLocaleString('zh-CN', { minimumFractionDigits: dec, maximumFractionDigits: dec })
+}
+
+// 时间轴刻度本地化（对标 Lightweight Charts tickMarkFormatter）：按月边界取刻度，1月显示年份
+function monthTickConfig(dates: string[]): {
+  interval: (index: number) => boolean
+  formatter: (v: string) => string
+} {
+  let last = ''
+  const flags = dates.map((d) => {
+    const ym = d.slice(0, 7)
+    const show = ym !== last
+    last = ym
+    return show
+  })
+  return {
+    interval: (index: number) => Boolean(flags[index]),
+    formatter: (v: string) => {
+      const [y, m] = v.split('-')
+      return m === '01' ? `${y}年` : `${Number(m)}月`
+    },
+  }
 }
 
 // K线 ECharts 配置：蜡烛图 + 成交量 + 主图叠加(MA/BOLL) + 副图指标(MACD/KDJ/RSI)
@@ -585,6 +776,7 @@ const klineOption = computed(() => {
     )
   }
 
+  const monthTicks = monthTickConfig(dates)
   const xCategory = (gridIndex: number, labelShow: boolean) => ({
     type: 'category',
     gridIndex,
@@ -592,7 +784,9 @@ const klineOption = computed(() => {
     boundaryGap: true,
     axisLine: { onZero: false },
     axisTick: { show: false },
-    axisLabel: { show: labelShow },
+    axisLabel: labelShow
+      ? { show: true, interval: monthTicks.interval, formatter: monthTicks.formatter }
+      : { show: false },
     splitLine: { show: false },
     min: 'dataMin',
     max: 'dataMax',
@@ -612,6 +806,13 @@ const klineOption = computed(() => {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'cross', label: { backgroundColor: '#6a7985' } },
+      // TradingView 式固定数值面板：tooltip 吸顶并水平钳制在图内，消除对蜡烛的遮挡
+      position: (point: number[], _params: unknown, _dom: unknown, _rect: unknown, size: { contentSize: number[]; viewSize: number[] }) => {
+        const w = size.contentSize[0] ?? 220
+        const viewW = size.viewSize[0] ?? 600
+        const x = Math.min(Math.max((point[0] ?? 0) - w / 2, 8), Math.max(8, viewW - w - 8))
+        return [x, 8]
+      },
       backgroundColor: 'rgba(255,255,255,0.97)',
       borderColor: '#e5e7eb',
       borderWidth: 1,
@@ -766,6 +967,92 @@ const heatmapOption = computed(() => {
   }
 })
 
+// ===== 自选分布环图（Wealthfolio holdings 启发：市场/当日涨跌/行业 三维切换） =====
+type AllocDim = 'market' | 'change' | 'sector'
+const allocDim = ref<AllocDim>('market')
+
+// 行业映射来自舆情板块的成分股列表（零新增后端成本；无匹配归入"其他"）
+const sectorByCode = computed(() => {
+  const map = new Map<string, string>()
+  for (const s of sentiment.value?.sectors || []) {
+    for (const st of s.stocks || []) map.set(st.code, s.name)
+  }
+  return map
+})
+
+function allocColor(name: string): string | undefined {
+  const palette: Record<string, string> = {
+    A股: '#667eea',
+    美股: '#10b981',
+    指数: '#8b5cf6',
+    上涨: '#ef232a',
+    平盘: '#9ca3af',
+    下跌: '#14b143',
+    其他: '#cbd5e1',
+  }
+  return palette[name]
+}
+
+const allocationOption = computed(() => {
+  const items = watchlistStore.items
+  if (!items.length) return {}
+  let entries: { name: string; value: number }[] = []
+  if (allocDim.value === 'market') {
+    const groups: Record<string, number> = {}
+    for (const it of items) {
+      const g = it.kind === 'index' ? '指数' : it.market === 'us' ? '美股' : 'A股'
+      groups[g] = (groups[g] || 0) + 1
+    }
+    entries = Object.entries(groups).map(([name, value]) => ({ name, value }))
+  } else if (allocDim.value === 'change') {
+    const counts = { 上涨: 0, 平盘: 0, 下跌: 0 }
+    for (const it of items) {
+      const q = quoteOf(it.code, it.market, it.kind)
+      if (!q) continue
+      if (q.chgPct > 0) counts['上涨'] += 1
+      else if (q.chgPct < 0) counts['下跌'] += 1
+      else counts['平盘'] += 1
+    }
+    entries = Object.entries(counts)
+      .map(([name, value]) => ({ name, value }))
+      .filter((e) => e.value > 0)
+  } else {
+    const groups: Record<string, number> = {}
+    for (const it of items) {
+      if (it.kind === 'index') continue
+      const g = sectorByCode.value.get(it.code) || '其他'
+      groups[g] = (groups[g] || 0) + 1
+    }
+    entries = Object.entries(groups)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8)
+  }
+  if (!entries.length) return {}
+  return {
+    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+    legend: {
+      bottom: 0,
+      type: 'scroll',
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      textStyle: { fontSize: 11 },
+    },
+    series: [
+      {
+        type: 'pie',
+        radius: ['46%', '70%'],
+        center: ['50%', '44%'],
+        avoidLabelOverlap: true,
+        itemStyle: { borderColor: '#fff', borderWidth: 1, borderRadius: 4 },
+        label: { show: false },
+        data: entries.map((e) => ({ ...e, itemStyle: { color: allocColor(e.name) } })),
+      },
+    ],
+  }
+})
+
 const sectorFallbackList = computed(() => {
   const top = recommend.value?.top_sectors
   if (top?.length) return top.map((s) => ({ name: s.name, val: s.sentiment, label: `${s.sentiment}` }))
@@ -793,6 +1080,9 @@ function scoreColor(score: number): string {
     <!-- 布局工具栏 -->
     <div class="layout-toolbar">
       <span class="layout-hint"><el-icon><Rank /></el-icon> 拖动卡片右上角手柄可调整顺序</span>
+      <el-button size="small" text @click="replayTour">
+        <el-icon><QuestionFilled /></el-icon> 新手引导
+      </el-button>
       <el-button size="small" text @click="resetLayout">
         <el-icon><Refresh /></el-icon> 重置布局
       </el-button>
@@ -830,20 +1120,28 @@ function scoreColor(score: number): string {
         </el-row>
       </template>
 
-      <!-- indexes：大盘指数速览 -->
+      <!-- indexes：大盘指数速览（点击卡片在主图查看对应指数） -->
       <template v-else-if="w.id === 'indexes'">
         <el-row :gutter="12" class="index-row">
           <el-col v-for="idx in INDEX_PRESETS" :key="idx.code" :xs="24" :sm="8">
-            <div class="index-card">
+            <div class="index-card" title="点击在主图查看该指数" @click="selectIndex(idx)">
               <span class="index-name">{{ idx.name }}</span>
-              <template v-if="quotes[`${idx.code}|${idx.market}`]">
-                <span class="index-close">{{ quotes[`${idx.code}|${idx.market}`].close.toFixed(2) }}</span>
+              <MiniSparkline
+                :values="quoteOf(idx.code, idx.market, idx.kind)?.closes ?? []"
+                :width="56"
+                :height="20"
+                :color="(quoteOf(idx.code, idx.market, idx.kind)?.chgPct ?? 0) < 0 ? '#14b143' : '#ef232a'"
+              />
+              <template v-if="quoteOf(idx.code, idx.market, idx.kind)">
+                <span class="index-close" :class="flashOf(idx.code, idx.market, idx.kind)">
+                  <AnimNumber :value="quoteOf(idx.code, idx.market, idx.kind)!.close" />
+                </span>
                 <span
                   class="delta-badge"
-                  :style="deltaBadgeStyle(idx.market, quotes[`${idx.code}|${idx.market}`].chgPct)"
+                  :style="deltaBadgeStyle(idx.market, quoteOf(idx.code, idx.market, idx.kind)!.chgPct)"
                 >
-                  {{ quotes[`${idx.code}|${idx.market}`].chgPct >= 0 ? '▲' : '▼' }}
-                  {{ quotes[`${idx.code}|${idx.market}`].chgPct >= 0 ? '+' : '' }}{{ quotes[`${idx.code}|${idx.market}`].chgPct.toFixed(2) }}%
+                  {{ quoteOf(idx.code, idx.market, idx.kind)!.chgPct >= 0 ? '▲' : '▼' }}
+                  {{ quoteOf(idx.code, idx.market, idx.kind)!.chgPct >= 0 ? '+' : '' }}{{ quoteOf(idx.code, idx.market, idx.kind)!.chgPct.toFixed(2) }}%
                 </span>
               </template>
               <el-skeleton v-else animated style="width: 120px; flex: 1">
@@ -956,9 +1254,9 @@ function scoreColor(score: number): string {
                     >
                       <el-option
                         v-for="t in watchlistStore.items"
-                        :key="t.code + t.market"
+                        :key="targetKey(t.code, t.market, t.kind)"
                         :label="`${t.name} (${t.code})`"
-                        :value="`${t.code}|${t.market}`"
+                        :value="targetKey(t.code, t.market, t.kind)"
                       />
                     </el-select>
                   </div>
@@ -991,6 +1289,7 @@ function scoreColor(score: number): string {
               </template>
               <div class="watch-add">
                 <el-input
+                  ref="newCodeInput"
                   v-model="newCode"
                   :placeholder="newMarket === 'us' ? '美股代码，如 AAPL' : '6位代码，如 600938'"
                   size="small"
@@ -1007,22 +1306,31 @@ function scoreColor(score: number): string {
               <div class="watch-list">
                 <div
                   v-for="item in watchlistStore.items"
-                  :key="`${item.code}|${item.market}`"
+                  :key="targetKey(item.code, item.market, item.kind)"
                   class="watch-item"
-                  :class="{ active: activeKey === `${item.code}|${item.market}` }"
-                  @click="activeKey = `${item.code}|${item.market}`"
+                  :class="{ active: activeKey === targetKey(item.code, item.market, item.kind) }"
+                  @click="activeKey = targetKey(item.code, item.market, item.kind)"
                 >
                   <div class="watch-name">
                     <span class="watch-title">{{ item.name }}</span>
                     <code class="watch-code">{{ item.code }}</code>
                   </div>
-                  <template v-if="quotes[`${item.code}|${item.market}`]">
-                    <span class="watch-close">{{ quotes[`${item.code}|${item.market}`].close.toFixed(2) }}</span>
+                  <MiniSparkline
+                    v-if="(quoteOf(item.code, item.market, item.kind)?.closes?.length ?? 0) > 2"
+                    :values="quoteOf(item.code, item.market, item.kind)?.closes ?? []"
+                    :width="60"
+                    :height="20"
+                    :color="sparkColor(item)"
+                  />
+                  <template v-if="quoteOf(item.code, item.market, item.kind)">
+                    <span class="watch-close" :class="flashOf(item.code, item.market, item.kind)">
+                      <AnimNumber :value="quoteOf(item.code, item.market, item.kind)!.close" />
+                    </span>
                     <span
                       class="delta-badge delta-badge-sm"
-                      :style="deltaBadgeStyle(item.market, quotes[`${item.code}|${item.market}`].chgPct)"
+                      :style="deltaBadgeStyle(item.market, quoteOf(item.code, item.market, item.kind)!.chgPct)"
                     >
-                      {{ quotes[`${item.code}|${item.market}`].chgPct >= 0 ? '+' : '' }}{{ quotes[`${item.code}|${item.market}`].chgPct.toFixed(2) }}%
+                      {{ quoteOf(item.code, item.market, item.kind)!.chgPct >= 0 ? '+' : '' }}{{ quoteOf(item.code, item.market, item.kind)!.chgPct.toFixed(2) }}%
                     </span>
                   </template>
                   <el-skeleton v-else animated style="width: 90px">
@@ -1036,7 +1344,7 @@ function scoreColor(score: number): string {
                     circle
                     size="small"
                     title="移除自选"
-                    @click.stop="removeWatch(item.code, item.market)"
+                    @click.stop="removeWatch(item.code, item.market, item.kind)"
                   >
                     <el-icon :size="14"><Close /></el-icon>
                   </el-button>
@@ -1044,8 +1352,10 @@ function scoreColor(score: number): string {
                 <el-empty
                   v-if="!watchlistStore.items.length"
                   :image-size="60"
-                  description="暂无自选，输入代码添加"
-                />
+                  description="暂无自选"
+                >
+                  <el-button type="primary" size="small" @click="focusWatchInput">输入代码添加</el-button>
+                </el-empty>
               </div>
             </el-card>
 
@@ -1089,7 +1399,9 @@ function scoreColor(score: number): string {
                   v-if="!recentBacktests.length"
                   :image-size="60"
                   description="还没有回测记录"
-                />
+                >
+                  <el-button type="primary" size="small" @click="router.push('/backtest')">去运行回测</el-button>
+                </el-empty>
               </div>
             </el-card>
           </el-col>
@@ -1104,7 +1416,10 @@ function scoreColor(score: number): string {
               <span class="section-title" style="margin: 0; border: none; padding: 0">
                 <el-icon><Grid /></el-icon> 行业热力图
               </span>
-              <small v-if="sectorBoard" class="card-updated">{{ sectorBoard.updated_at }}</small>
+              <span class="card-head-right">
+                <small v-if="sectorBoard" class="card-updated">{{ sectorBoard.updated_at }}</small>
+                <router-link to="/sentiment" class="card-more">板块情绪 →</router-link>
+              </span>
             </div>
           </template>
           <div v-if="loadingSectors" style="min-height: 320px; padding: 16px">
@@ -1159,17 +1474,25 @@ function scoreColor(score: number): string {
       <template v-else-if="w.id === 'news'">
         <el-card shadow="never" class="info-card">
           <template #header>
-            <span class="section-title" style="margin: 0; border: none; padding: 0">
-              <el-icon><ChatDotRound /></el-icon> 当日舆情
-            </span>
+            <div class="card-head-row">
+              <span class="section-title" style="margin: 0; border: none; padding: 0">
+                <el-icon><ChatDotRound /></el-icon> 当日舆情
+              </span>
+              <router-link to="/sentiment" class="card-more">舆情分析 →</router-link>
+            </div>
           </template>
           <div class="info-body news-body">
-            <div v-for="(n, i) in (sentiment?.news_list || []).slice(0, 6)" :key="i" class="news-item">
+            <div v-if="newsSources.length > 2" class="news-filter">
+              <el-radio-group v-model="newsSourceFilter" size="small">
+                <el-radio-button v-for="s in newsSources" :key="s" :value="s">{{ s }}</el-radio-button>
+              </el-radio-group>
+            </div>
+            <div v-for="(n, i) in filteredNews" :key="n.id || i" class="news-item">
               <div class="news-source">
-                <el-icon><Link /></el-icon> {{ n.source || '未知来源' }}
+                <span class="news-badge" :style="{ background: newsSourceColor(n.source) }">{{ cleanNewsSource(n.source) }}</span>
                 <span v-if="n.date" class="news-date">{{ n.date }}</span>
               </div>
-              <a v-if="n.url" :href="n.url" target="_blank" class="news-title">{{ n.title }}</a>
+              <a v-if="n.url" :href="n.url" target="_blank" rel="noopener" class="news-title">{{ n.title }}</a>
               <div v-else class="news-title">{{ n.title }}</div>
             </div>
             <el-empty v-if="!sentiment?.news_list?.length" :image-size="60" description="暂无舆情数据" />
@@ -1186,7 +1509,13 @@ function scoreColor(score: number): string {
             </span>
           </template>
           <div class="info-body">
-            <div v-for="r in (recommend?.recommendations || []).slice(0, 6)" :key="r.code" class="rec-item">
+            <div
+              v-for="r in (recommend?.recommendations || []).slice(0, 6)"
+              :key="r.code"
+              class="rec-item"
+              :title="`${r.name} · 点击在主图查看`"
+              @click="openRecInChart(r)"
+            >
               <el-tag :type="r.rank <= 3 ? (r.rank === 1 ? 'warning' : r.rank === 2 ? 'info' : 'danger') : 'info'" effect="dark" round size="small">{{ r.rank }}</el-tag>
               <div class="rec-main">
                 <div class="rec-head">
@@ -1198,6 +1527,63 @@ function scoreColor(score: number): string {
               </div>
             </div>
             <el-empty v-if="!recommend?.recommendations?.length" :image-size="60" description="暂无推荐数据" />
+          </div>
+        </el-card>
+      </template>
+
+      <!-- allocation：自选分布（市场/当日涨跌/行业三维环图） -->
+      <template v-else-if="w.id === 'allocation'">
+        <el-card shadow="never" class="info-card allocation-card">
+          <template #header>
+            <div class="card-head-row">
+              <span class="section-title" style="margin: 0; border: none; padding: 0">
+                <el-icon><PieChart /></el-icon> 自选分布
+              </span>
+              <el-radio-group v-model="allocDim" size="small">
+                <el-radio-button value="market">市场</el-radio-button>
+                <el-radio-button value="change">当日涨跌</el-radio-button>
+                <el-radio-button value="sector">行业</el-radio-button>
+              </el-radio-group>
+            </div>
+          </template>
+          <v-chart
+            v-if="watchlistStore.items.length && Object.keys(allocationOption).length"
+            class="allocation-chart"
+            :option="allocationOption"
+            autoresize
+          />
+          <el-empty v-else :image-size="60" description="添加自选后查看分布" />
+        </el-card>
+      </template>
+
+      <!-- srchealth：数据源心跳（近 7 次取数成败，排查 akshare/网络抖动） -->
+      <template v-else-if="w.id === 'srchealth'">
+        <el-card shadow="never" class="info-card health-card">
+          <template #header>
+            <div class="card-head-row">
+              <span class="section-title" style="margin: 0; border: none; padding: 0">
+                <el-icon><Monitor /></el-icon> 数据源心跳
+              </span>
+              <small class="card-updated">各数据源近 7 次取数</small>
+            </div>
+          </template>
+          <div class="health-body">
+            <div v-for="s in HEALTH_SOURCES" :key="s.key" class="health-row">
+              <span class="health-name">{{ s.label }}</span>
+              <span class="health-beats">
+                <span
+                  v-for="(b, i) in beatsOf(s.key)"
+                  :key="i"
+                  class="health-beat"
+                  :class="b == null ? 'empty' : b.ok ? 'ok' : 'bad'"
+                  :title="beatTitle(b)"
+                ></span>
+              </span>
+              <small class="health-last">{{ lastBeatText(s.key) }}</small>
+            </div>
+            <div v-if="!hasHealthData" class="health-hint">
+              暂无取数记录：查询行情/回测后自动生成（仅统计本进程，重启清零）
+            </div>
           </div>
         </el-card>
       </template>
@@ -1331,6 +1717,12 @@ function scoreColor(score: number): string {
   padding: 10px 16px;
   margin-bottom: 12px;
   min-height: 48px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.index-card:hover {
+  border-color: var(--brand-start);
+  box-shadow: var(--shadow);
 }
 .index-name {
   font-weight: 600;
@@ -1652,5 +2044,126 @@ function scoreColor(score: number): string {
   color: var(--text-muted);
   display: block;
   line-height: 1.4;
+}
+
+/* 卡片头右侧：更新时间 + 下钻入口 */
+.card-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.card-more {
+  font-size: 0.75rem;
+  color: var(--brand-start);
+  text-decoration: none;
+  font-weight: 500;
+}
+.card-more:hover {
+  text-decoration: underline;
+}
+
+/* 推荐行点击下钻 */
+.rec-item {
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 2px 4px;
+  margin-left: -4px;
+  transition: background 0.12s;
+}
+.rec-item:hover {
+  background: var(--bg);
+}
+
+/* 行情刷新闪烁（方向由 flashMap 决定，A股红涨绿跌） */
+.up {
+  animation: flashUp 0.9s ease-out;
+}
+.down {
+  animation: flashDown 0.9s ease-out;
+}
+@keyframes flashUp {
+  0% {
+    color: var(--danger);
+    text-shadow: 0 0 8px rgba(239, 35, 42, 0.45);
+  }
+  100% {
+    text-shadow: none;
+  }
+}
+@keyframes flashDown {
+  0% {
+    color: var(--success);
+    text-shadow: 0 0 8px rgba(20, 178, 67, 0.45);
+  }
+  100% {
+    text-shadow: none;
+  }
+}
+
+/* 自选分布环图 */
+.allocation-chart {
+  height: 260px;
+  width: 100%;
+}
+
+/* 快讯流：来源过滤 + 徽标 */
+.news-filter {
+  margin-bottom: 4px;
+}
+.news-badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  color: #fff;
+  border-radius: 4px;
+  padding: 0 6px;
+  line-height: 16px;
+}
+
+/* 数据源心跳条（beat bar） */
+.health-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.health-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.health-name {
+  width: 68px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.health-beats {
+  display: flex;
+  gap: 3px;
+  flex: 1;
+}
+.health-beat {
+  width: 18px;
+  height: 10px;
+  border-radius: 2px;
+}
+.health-beat.ok {
+  background: #22c55e;
+}
+.health-beat.bad {
+  background: #ef4444;
+}
+.health-beat.empty {
+  background: var(--border);
+}
+.health-last {
+  width: 76px;
+  text-align: right;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+.health-hint {
+  color: var(--text-muted);
+  font-size: 0.75rem;
 }
 </style>

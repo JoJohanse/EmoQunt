@@ -6,6 +6,7 @@ import traceback
 import logging
 from src.utils.paths import PROJECT_ROOT, ensure_dir
 from src.utils.env import get_env
+from src.data.source_health import record as record_source_health
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -325,15 +326,18 @@ class Stock:
                             except Exception as e:
                                 logger.warning(f"yfinance 个股获取异常，准备回退: {e}")
                                 df = pd.DataFrame()
+                            record_source_health('yfinance', df is not None and not df.empty)
                             if df is None or df.empty:
                                 logger.warning("yfinance 返回空数据，回退到 akshare stock_us_daily（新浪源）")
                                 df = ak.stock_us_daily(symbol=ticker, adjust=_adjust_str)
                                 df = self._filter_us_daily_by_date(df, _start, _end)
+                                record_source_health('sina', df is not None and not df.empty)
                             return df
                         else:
                             # A股回退链：Tushare(可选首选) → 新浪源 → 东财源 → baostock
                             if _TUSHARE_TOKEN:
                                 df = self._fetch_ashare_tushare(_start, _end, _adjust_str)
+                                record_source_health('tushare', df is not None and not df.empty)
                             else:
                                 df = pd.DataFrame()
                             if df is None or df.empty:
@@ -347,12 +351,15 @@ class Stock:
                                 except Exception as e:
                                     logger.warning(f"akshare 新浪源获取 {self.stock_code} 失败: {e}，回退到东财源")
                                     df = pd.DataFrame()
+                                record_source_health('sina', df is not None and not df.empty)
                             if df is None or df.empty:
                                 logger.warning("新浪源返回空数据，回退到 akshare stock_zh_a_hist（东财源）")
                                 df = self._fetch_ashare_hist_em(_start, _end, _adjust_str)
+                                record_source_health('eastmoney', df is not None and not df.empty)
                             if df is None or df.empty:
                                 logger.warning("东财源返回空数据，回退到 baostock")
                                 df = self._fetch_ashare_baostock(_start, _end, _adjust_str)
+                                record_source_health('baostock', df is not None and not df.empty)
                             return df
 
                     from src.data.provider import KlineProvider
@@ -732,12 +739,14 @@ def get_index_data(index_code: str = '000300', start_date: str = '', end_date: s
                 except Exception as e:
                     logger.warning(f"Tushare 指数获取 {index_code} 失败: {e}，回退到免费链")
                     df_inner = pd.DataFrame()
+                record_source_health('tushare', df_inner is not None and not df_inner.empty)
             if df_inner is None or df_inner.empty:
                 try:
                     df_inner = ak.stock_zh_index_daily(symbol=symbol)
                 except Exception as e:
                     logger.warning(f"akshare 新浪指数源获取 {index_code} 失败: {e}，回退到东财源")
                     df_inner = pd.DataFrame()
+                record_source_health('sina', df_inner is not None and not df_inner.empty)
             if df_inner is None or df_inner.empty:
                 logger.warning("新浪指数源返回空数据，回退到 akshare stock_zh_index_daily_em（东财源）")
                 try:
@@ -749,6 +758,7 @@ def get_index_data(index_code: str = '000300', start_date: str = '', end_date: s
                 except Exception as e:
                     logger.warning(f"akshare 东财指数源获取 {index_code} 失败: {e}，回退到 baostock")
                     df_inner = pd.DataFrame()
+                record_source_health('eastmoney', df_inner is not None and not df_inner.empty)
             if df_inner is None or df_inner.empty:
                 logger.warning("东财指数源返回空数据，回退到 baostock")
                 try:
@@ -765,6 +775,7 @@ def get_index_data(index_code: str = '000300', start_date: str = '', end_date: s
                 except Exception as e:
                     logger.warning(f"baostock 指数获取 {index_code} 失败: {e}")
                     df_inner = pd.DataFrame()
+                record_source_health('baostock', df_inner is not None and not df_inner.empty)
             # 本地日期过滤（Provider 重命名前为小写 date）
             if df_inner is not None and not df_inner.empty and 'date' in df_inner.columns:
                 try:
@@ -875,10 +886,12 @@ def get_us_index_data(index_code: str = 'SP500', start_date: str = '', end_date:
             except Exception as e:
                 logger.warning(f"yfinance 指数获取异常，准备回退: {e}")
                 df_inner = pd.DataFrame()
+            record_source_health('yfinance', df_inner is not None and not df_inner.empty)
             if df_inner is None or df_inner.empty:
                 logger.warning("yfinance 指数数据为空，回退到 akshare index_us_stock_sina（新浪源）")
                 symbol = US_INDEX_SYMBOLS.get(str(index_code).upper(), index_code)
                 df_inner = ak.index_us_stock_sina(symbol=symbol)
+                record_source_health('sina', df_inner is not None and not df_inner.empty)
                 if df_inner is None or df_inner.empty:
                     print(f"美股指数 {index_code} 返回空数据")
                     return pd.DataFrame()

@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 
 /**
- * UI 偏好（暗色主题、侧边栏折叠），持久化到 localStorage。
+ * UI 偏好（暗色主题、侧边栏折叠、首访导览标记），持久化到 localStorage。
  * 刷新后保持用户的界面习惯（对标管理后台模板的通行做法）。
  */
 export const useUiStore = defineStore(
@@ -10,6 +10,8 @@ export const useUiStore = defineStore(
   () => {
     const theme = ref<'light' | 'dark'>('light')
     const sidebarCollapsed = ref(false)
+    /** 首页首访导览是否已完成（完成或手动关闭都算），避免反复打扰 */
+    const tourDone = ref(false)
 
     function toggleTheme() {
       theme.value = theme.value === 'dark' ? 'light' : 'dark'
@@ -27,7 +29,7 @@ export const useUiStore = defineStore(
       { immediate: true },
     )
 
-    return { theme, sidebarCollapsed, toggleTheme, toggleSidebar }
+    return { theme, sidebarCollapsed, tourDone, toggleTheme, toggleSidebar }
   },
-  { persist: { pick: ['theme', 'sidebarCollapsed'] } },
+  { persist: { pick: ['theme', 'sidebarCollapsed', 'tourDone'] } },
 )

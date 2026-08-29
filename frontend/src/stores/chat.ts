@@ -53,9 +53,23 @@ export const useChatStore = defineStore(
         (evt: SseEvent) => {
           if (evt.type === 'token') {
             assistantMsg.content += evt.content
+          } else if (evt.type === 'tool_start') {
+            // 工具开始执行：先渲染"查询中"骨架卡片
+            assistantMsg.toolCalls = assistantMsg.toolCalls || []
+            assistantMsg.toolCalls.push({ name: evt.name, args: evt.args, result: '', pending: true })
           } else if (evt.type === 'tool') {
             assistantMsg.toolCalls = assistantMsg.toolCalls || []
-            assistantMsg.toolCalls.push({ name: evt.name, args: evt.args, result: evt.result })
+            // 优先回填同名 pending 调用（tool_start → tool 的状态机）
+            const pending = [...assistantMsg.toolCalls]
+              .reverse()
+              .find((c) => c.pending && c.name === evt.name)
+            if (pending) {
+              pending.args = evt.args || pending.args
+              pending.result = evt.result
+              pending.pending = false
+            } else {
+              assistantMsg.toolCalls.push({ name: evt.name, args: evt.args, result: evt.result })
+            }
           } else if (evt.type === 'error') {
             assistantMsg.error = evt.content
           }
@@ -73,6 +87,13 @@ export const useChatStore = defineStore(
       assistantMsg.streaming = false
       loading.value = false
       abortCtrl = null
+      // 流结束后仍未回填结果的工具调用标记为失败（骨架卡片转错误态）
+      for (const c of assistantMsg.toolCalls || []) {
+        if (c.pending) {
+          c.pending = false
+          c.failed = true
+        }
+      }
     }
   }
 

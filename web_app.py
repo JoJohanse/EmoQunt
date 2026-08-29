@@ -636,18 +636,21 @@ async def analyze_factor_api(request: Request):
 
 @app.get("/api/kline")
 def get_kline_api(stock_code: str, market: str = "zh_a", days: int = 180,
-                  period: str = "day", adjust: str = "", kind: str = ""):
+                  period: str = "day", adjust: str = "", kind: str = "",
+                  start_date: str = "", end_date: str = ""):
     """K线 OHLCV 数据（供首页看板蜡烛图）
 
     period=day/week/month；adjust=qfq/hfq/nfq；
-    kind=index 强制按指数取数（000001 这类二义代码用），留空则自动识别。
+    kind=index 强制按指数取数（000001 这类二义代码用），留空则自动识别；
+    start_date 提供时进入区间模式（忽略 days 裁剪），供回测买卖点对齐历史区间。
     """
     try:
         valid, error = validate_stock_code(stock_code, market=market)
         if not valid:
             return JSONResponse({"error": error}, status_code=400)
         from src.services.kline import get_kline
-        return get_kline(stock_code, market, days, period, adjust or None, kind)
+        return get_kline(stock_code, market, days, period, adjust or None, kind,
+                         start_date=start_date, end_date=end_date)
     except Exception as e:
         logger.error(f"获取K线数据失败: {e}", exc_info=True)
         return JSONResponse({"error": "获取K线数据失败，请稍后重试"}, status_code=500)
@@ -765,17 +768,40 @@ def get_market_breadth_api():
         return JSONResponse({"error": "获取市场宽度失败，请稍后重试"}, status_code=500)
 
 
+@app.get("/api/data/source-health")
+def get_source_health_api():
+    """数据源健康心跳（各数据源最近 7 次取数成败，供首页心跳条）。
+
+    进程内存态：仅记录本进程真实发起过的取数（未启用的源无记录），重启清零。
+    """
+    try:
+        from src.data.source_health import snapshot
+        return {"sources": snapshot()}
+    except Exception as e:
+        logger.error(f"获取数据源健康失败: {e}", exc_info=True)
+        return JSONResponse({"error": "获取数据源健康失败"}, status_code=500)
+
+
 # ===========================================================================
 # AI 投资助手（SSE 流式 + 同步）
 # ===========================================================================
 @app.post("/api/agent/chat")
 async def agent_chat(request: Request):
-    """AI 投资助手对话（SSE 流式）"""
+    """AI 投资助手对话（SSE 流式）
+
+    注意：请求体必须在返回 StreamingResponse **之前**读完——
+    若把 await request.json() 放进响应生成器，在 BaseHTTPMiddleware
+    之下 body 将永远不可读（挂起直至客户端断开，ClientDisconnect）。
+    """
+    import json as _json
+    try:
+        payload = await request.json()
+        messages = payload.get("messages", [])
+    except Exception:
+        messages = []
+
     async def event_stream():
-        import json as _json
         try:
-            payload = await request.json()
-            messages = payload.get("messages", [])
             if not messages:
                 yield 'data: {"type":"error","content":"消息不能为空"}\n\n'
                 return
@@ -784,16 +810,17 @@ async def agent_chat(request: Request):
             async for evt in stream_agent_events(messages):
                 if evt[0] == "token":
                     yield "data: " + _json.dumps({"type": "token", "content": evt[1]}, ensure_ascii=False) + "\n\n"
+                elif evt[0] == "tool_start":
+                    yield "data: " + _json.dumps({"type": "tool_start", "name": evt[1], "args": evt[2]}, ensure_ascii=False) + "\n\n"
                 elif evt[0] == "tool":
-                    payload = {"type": "tool", "name": evt[1], "args": evt[2], "result": evt[3]}
-                    yield "data: " + _json.dumps(payload, ensure_ascii=False) + "\n\n"
+                    tool_payload = {"type": "tool", "name": evt[1], "args": evt[2], "result": evt[3]}
+                    yield "data: " + _json.dumps(tool_payload, ensure_ascii=False) + "\n\n"
                 elif evt[0] == "done":
                     yield 'data: {"type":"done"}\n\n'
                 elif evt[0] == "error":
                     yield 'data: ' + _json.dumps({"type": "error", "content": evt[1]}, ensure_ascii=False) + '\n\n'
         except Exception as e:
             logger.exception("Agent SSE 失败")
-            import json as _json
             # SSE 错误通道同样不回显异常细节，只给用户可理解的提示
             yield 'data: ' + _json.dumps(
                 {"type": "error", "content": "AI 助手服务异常，请稍后重试"},

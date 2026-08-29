@@ -365,6 +365,31 @@ class USStockCommInfo(bt.CommInfoBase):
         return amount * self.p.commission_rate
 
 
+class _TradeRecorder(bt.Analyzer):
+    """逐笔成交记录器（回测 K 线买卖点标注的数据源）。
+
+    通过 notify_order 捕获 broker 已成交订单：含滑点时 executed.price 才是
+    真实成交价。size>0 为买入、<0 为卖出；日期取成交 bar 的日期。
+    """
+
+    def __init__(self):
+        self.trades = []
+
+    def notify_order(self, order):
+        try:
+            if order.status != order.Completed or not order.executed.size:
+                return
+            dt = order.executed.dt or order.created.dt
+            self.trades.append({
+                "date": bt.num2date(dt).strftime("%Y-%m-%d"),
+                "side": "buy" if order.executed.size > 0 else "sell",
+                "price": round(float(order.executed.price), 4),
+                "size": round(abs(float(order.executed.size)), 2),
+            })
+        except Exception:
+            # 单条订单记录失败不影响回测主流程
+            pass
+
 
 def calculate_strategy_metrics(
     portfolio_values: pd.Series,
@@ -541,6 +566,7 @@ def _run_backtest_core(
     if slippage_enabled_cfg or True:
         cerebro.broker.set_slippage_perc(perc=slippage_rate)
     cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='tradeanalyzer')
+    cerebro.addanalyzer(_TradeRecorder, _name='traderecorder')
     cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharperatio')
     cerebro.addanalyzer(bt.analyzers.DrawDown, _name='drawdown')
     cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
@@ -636,6 +662,15 @@ def _run_backtest_core(
     except Exception as e:
         logger.warning(f"tradeanalyzer 提取失败: {e}")
 
+    # 逐笔成交（前端回测 K 线买卖点标注数据源），封顶防止极端高频策略撑爆响应
+    trades = []
+    try:
+        rec = strat.analyzers.getbyname('traderecorder')
+        if rec is not None:
+            trades = list(getattr(rec, "trades", []) or [])[:500]
+    except Exception as e:
+        logger.warning(f"成交记录提取失败: {e}")
+
     metrics_raw = calculate_strategy_metrics(
         equity_full, win_rate_override=win_rate_real,
         profit_loss_ratio_override=profit_loss_real,
@@ -689,6 +724,7 @@ def _run_backtest_core(
         "alpha": alpha,
         "beta": beta,
         "info_ratio": info_ratio,
+        "trades": trades,
         "performance_report": performance_report,
         "risk_report": risk_report,
     }
@@ -879,4 +915,5 @@ def run_backtest_json(
         "benchmark_curve": [_safe(v, 4) for v in benchmark_curve] if benchmark_curve else [],
         "drawdown": [_safe(v, 6) for v in drawdown.tolist()],
         "daily_returns": [_safe(v, 6) for v in daily_returns.tolist()],
+        "trades": core.get("trades", []),
     }

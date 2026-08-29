@@ -79,6 +79,18 @@ export interface RiskReport {
   risk_limits: Record<string, number>
 }
 
+/** 逐笔成交（回测 K 线买卖点标注，来自后端 _TradeRecorder） */
+export interface BacktestTrade {
+  /** 成交日期 YYYY-MM-DD */
+  date: string
+  /** buy=买入，sell=卖出 */
+  side: 'buy' | 'sell'
+  /** 成交价（含滑点后的真实成交价） */
+  price: number
+  /** 成交数量（股/股数，绝对值） */
+  size: number
+}
+
 /** 回测响应（JSON） */
 export interface BacktestResult {
   strategy_name: string
@@ -92,6 +104,8 @@ export interface BacktestResult {
   benchmark_curve?: number[] // 基准净值（可选）
   drawdown: number[] // 回撤序列
   daily_returns: number[] // 日收益率
+  /** 逐笔成交（买卖点标注；后端截断至 500 条） */
+  trades?: BacktestTrade[]
 }
 
 /** 板块情绪得分 */
@@ -125,6 +139,7 @@ export interface SentimentCalendarItem {
 
 /** 新闻条目 */
 export interface NewsItem {
+  id?: string
   title: string
   source?: string
   url?: string
@@ -174,6 +189,18 @@ export interface MarketBreadth {
   total_sectors: number
   top_sector: { name: string; chg_pct: number }
   updated_at: string
+}
+
+/** 单次数据源取数心跳 */
+export interface SourceBeat {
+  ok: boolean
+  /** Unix 秒 */
+  ts: number
+}
+
+/** 数据源健康（/api/data/source-health，进程内存态，未启用的源无记录） */
+export interface SourceHealthData {
+  sources: Record<string, SourceBeat[]>
 }
 
 /** K 线 OHLCV 数据（首页看板蜡烛图） */
@@ -309,11 +336,16 @@ export interface ToolCallEvent {
   name: string
   args: string
   result: string
+  /** true=工具执行中（tool_start 已到、结果未回），卡片渲染骨架 */
+  pending?: boolean
+  /** true=流被取消/出错时仍未拿到结果 */
+  failed?: boolean
 }
 
 /** SSE 事件类型 */
 export type SseEvent =
   | { type: 'token'; content: string }
+  | { type: 'tool_start'; name: string; args: string }
   | { type: 'tool'; name: string; args: string; result: string }
   | { type: 'done' }
   | { type: 'error'; content: string }

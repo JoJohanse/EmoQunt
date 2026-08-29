@@ -18,14 +18,15 @@ An intelligent quantitative-investment backtesting platform driven by sentiment 
 - **US two-tier fallback**: yfinance (primary) → akshare Sina.
 - **Optional PostgreSQL + Redis cache** (one-command `docker-compose.yml` via domestic mirror `docker.m.daocloud.io`, optional `REDIS_PASSWORD`): Redis hot cache + PG persistence, read order Redis → PG → CSV → network; silently degrades to pure network mode when unavailable. PG supports optional `psycopg_pool` connection pool + tiered TTL (today 300s / history 7d ±jitter).
 - Market data is cached locally under `stock_data/`; sentiment snapshots live at `nes_data/sentiment_results/{YYYYMMDD}.json` and feed the homepage sentiment calendar via `GET /api/sentiment/calendar` (local-only, threadpooled).
+- **Data-source health beats**: every fetch layer records success/failure where the request is actually made (`GET /api/data/source-health`, in-process, last 7 attempts per source), rendered as the homepage heartbeat bar.
 
 ### Vue3 SPA (`/spa/*`, modern frontend)
-- **Collapsible grouped sidebar navigation** (Overview / Backtest Research / Data Insights / Strategy Management) + breadcrumbs + **dark mode** (Element Plus `html.dark`) + **global command palette `Cmd+K`** + **top tab bar** + **sidebar favorites**.
-- **Rich homepage**: quick action entries, market index strip, **watchlist panel** (add/remove, live price & change — red-up/green-down for A-shares, green-up/red-down for US; click to switch the main chart), **recent backtests** (summary + one-click re-run with parameter refill), top sectors / news / recommendations, **sentiment calendar** (driven by `sentiment_results/{YYYYMMDD}.json`) and **draggable grid layout** (persisted as `emoqunt:homeLayout`).
-- **Dynamic ECharts**: zoomable equity/drawdown/daily-return charts; candlestick + volume K-line board.
+- **Collapsible grouped sidebar navigation** (Overview / Backtest Research / Data Insights / Strategy Management) + breadcrumbs + **dark mode** (Element Plus `html.dark`) + **global command palette `Cmd+K`** + **top tab bar** + **sidebar favorites** + **first-visit tour** (driver.js, 7 steps, shown once with a replay button).
+- **Rich homepage**: quick action entries, market index strip (inline sparklines; click to open the main chart), **watchlist panel** (add/remove, inline sparklines, animated price & change flash — red-up/green-down for A-shares, green-up/red-down for US; click to switch the main chart), **recent backtests** (summary + one-click re-run with parameter refill), top sectors / news (**news source filter tabs** + source badges) / recommendations (click to drill into the main chart), **allocation donut** (market / daily change / industry dimensions), **data-source health heartbeat bar**, **sentiment calendar** (driven by `sentiment_results/{YYYYMMDD}.json`) and **draggable grid layout** (persisted as `emoqunt:homeLayout`); quotes refresh via **SWR-style polling** (paused when hidden, exponential backoff on failures).
+- **Dynamic ECharts**: zoomable equity/drawdown/daily-return charts; candlestick + volume K-line board with MA/BOLL overlays, MACD/KDJ/RSI sub-panels, last-price line, pinned tooltip panel and month-boundary ticks; **backtest trade markers** (backend `trades` passthrough, B/S arrows + weighted average-cost line, chart range aligned with the backtest dates).
 - **SPA-exclusive pages**: strategy comparison (2–5 strategies overlaid with a metrics table) and factor analysis (IC series / quantile cumulative returns / monotonicity).
-- **Browser-local persistence** (zero-dependency Pinia plugin, `emoqunt:`-prefixed localStorage): UI preferences (theme/sidebar), watchlist, backtest history & last form, AI chat history, favorites/tabs/home layout — all survive a refresh.
-- **AI investment assistant**: global drawer chat panel, LangGraph ReAct agent, SSE streaming, Markdown rendering, visible tool calls.
+- **Browser-local persistence** (zero-dependency Pinia plugin, `emoqunt:`-prefixed localStorage): UI preferences (theme/sidebar/tour flag), watchlist, backtest history & last form, AI chat history, favorites/tabs/home layout — all survive a refresh.
+- **AI investment assistant**: global drawer chat panel, LangGraph ReAct agent, SSE streaming, Markdown rendering, visible tool calls, and **tool-result cards** (Generative UI: quote/index/sentiment/recommendation/backtest/signal cards with a pending skeleton; one click opens the chart on the homepage or the related page).
 
 ### Classic Jinja2 Frontend (`/`, server-rendered)
 - **Unified design system**: `base.html` + `app.css` design tokens, Bootstrap 5.3 + Font Awesome 6.
@@ -72,16 +73,31 @@ EmoQunt/
 
 ## Page Previews
 
-> Screenshots are captured locally via `conda run -n qdt python docs/screenshots/_capture.py` against the source stack (`web_app.py` + `db/cache`); light/dark home, backtest results and strategy list are from the 2026-08 iteration (with command palette, tab bar, draggable grid and sentiment calendar).
+> Screenshots are captured locally via `conda run -n qdt python docs/screenshots/_capture.py` against the source stack (`web_app.py` + `db/cache`); all shots are from the 2026-08 round-4 iteration (first-visit tour, AI tool-result cards, backtest trade markers, allocation donut, data-source heartbeats, news source filter).
 
-### SPA Home (light) — sidebar nav / index strip / watchlist / K-line board / sentiment calendar
+### SPA Home (light) — 10 draggable cards: quick entries / index strip (sparklines) / market breadth / K-line board / sector heatmap / top sectors / news source filter / recommendations / allocation donut / source heartbeats + sentiment calendar
 ![SPA Home (light)](docs/screenshots/spa-home-light.png)
+
+### First-visit tour — driver.js, 7 steps (shown once, replayable from the layout toolbar)
+![First-visit tour](docs/screenshots/spa-home-tour.png)
+
+### SPA K-line board — candles + MA/BOLL overlays + last-price line + MACD/KDJ/RSI sub-panels + period/adjust switching + month-boundary ticks
+![SPA K-line board](docs/screenshots/spa-kline.png)
+
+### SPA K-line (weekly) — server-side aggregation, three linked panes
+![SPA K-line weekly](docs/screenshots/spa-kline-week.png)
 
 ### SPA Home (dark mode) — persists across reloads
 ![SPA Home (dark)](docs/screenshots/spa-home-dark.png)
 
-### SPA Backtest Result — dynamic equity/drawdown/return charts + metric cards + risk panel
+### SPA Backtest Result — metrics + backtest K-line trade markers + dynamic equity/drawdown/return charts + risk panel
 ![SPA Backtest Result](docs/screenshots/spa-backtest.png)
+
+### Backtest K-line trade markers — B/S arrows with market-aware colors + weighted average-cost line, aligned with the backtest date range
+![Backtest trade markers](docs/screenshots/spa-backtest-trades.png)
+
+### AI tool-result card — Generative UI: quote card with one-click "open on homepage"
+![AI tool-result card](docs/screenshots/spa-chat-tool-card.png)
 
 ### SPA Strategy List
 ![SPA Strategy List](docs/screenshots/spa-strategies.png)

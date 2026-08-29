@@ -10,6 +10,7 @@ import type {
   KlineData,
   MarketBreadth,
   SectorBoardData,
+  SourceHealthData,
   SentimentCalendarItem,
   SentimentData,
   StrategyDetail,
@@ -92,7 +93,7 @@ export const factorApi = {
   },
 }
 
-/** K 线 API（首页看板蜡烛图；period=day/week/month 服务端聚合，adjust=qfq/hfq/nfq，kind=index 走指数链） */
+/** K 线 API（首页看板蜡烛图；period=day/week/month 服务端聚合，adjust=qfq/hfq/nfq，kind=index 走指数链；提供 range 时进入区间模式，供回测买卖点对齐历史区间） */
 export const klineApi = {
   get(
     stock_code: string,
@@ -101,9 +102,15 @@ export const klineApi = {
     period: 'day' | 'week' | 'month' = 'day',
     adjust: 'qfq' | 'hfq' | 'nfq' | '' = '',
     kind: '' | 'index' = '',
+    range?: { start: string; end: string },
   ): Promise<KlineData> {
     return http
-      .get('/kline', { params: { stock_code, market, days, period, adjust, kind } })
+      .get('/kline', {
+        params: {
+          stock_code, market, days, period, adjust, kind,
+          ...(range ? { start_date: range.start, end_date: range.end } : {}),
+        },
+      })
       .then((r) => r.data)
   },
 }
@@ -139,6 +146,10 @@ export const marketApi = {
   },
   sectors(): Promise<SectorBoardData> {
     return http.get('/market/sectors').then((r) => r.data)
+  },
+  /** 数据源健康心跳（进程内存态，未启用的源无记录） */
+  sourceHealth(): Promise<SourceHealthData> {
+    return http.get('/data/source-health').then((r) => r.data)
   },
 }
 
