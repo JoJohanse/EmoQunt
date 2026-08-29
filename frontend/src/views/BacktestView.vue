@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { backtestApi, strategyApi, klineApi } from '@/api'
 import type { BacktestMetrics, BacktestRequest, BacktestResult, BacktestTrade, KlineData, Market, StrategyDetail } from '@/api/types'
+import { chartPalette, deltaTone } from '@/lib/marketColors'
 import { useBacktestHistoryStore } from '@/stores/backtestHistory'
 import { VChart } from '@/composables/useECharts'
 
@@ -101,20 +102,23 @@ async function runBacktest() {
 const metricCards = computed(() => {
   if (!result.value) return []
   const m = result.value.metrics
+  const market = result.value.market
   const fmtPct = (v: number) => (v * 100).toFixed(2) + '%'
   const fmtNum = (v: number) => v.toFixed(2)
+  // 正/负收益的语义色调：A股红涨绿跌 / 美股绿涨红跌（此前固定绿涨，A股正收益误显示为绿）
+  const retTone = (v: number) => deltaTone(market, v >= 0 ? 'up' : 'down')
   const opt = (key: keyof BacktestMetrics, label: string, fmt: (v: number) => string, type: (v: number) => 'success' | 'danger' | 'neutral', group: string) =>
     m[key] !== undefined ? [{ label, value: fmt(m[key] as number), type: type(m[key] as number), group }] : []
   return [
-    { label: '总收益率', value: fmtPct(m.总收益率), type: m.总收益率 >= 0 ? 'success' : 'danger', group: 'return' },
-    { label: '年化收益率', value: fmtPct(m.年化收益率), type: m.年化收益率 >= 0 ? 'success' : 'danger', group: 'return' },
-    { label: '夏普比率', value: fmtNum(m.夏普比率), type: m.夏普比率 >= 0 ? 'success' : 'danger', group: 'return' },
+    { label: '总收益率', value: fmtPct(m.总收益率), type: retTone(m.总收益率), group: 'return' },
+    { label: '年化收益率', value: fmtPct(m.年化收益率), type: retTone(m.年化收益率), group: 'return' },
+    { label: '夏普比率', value: fmtNum(m.夏普比率), type: retTone(m.夏普比率), group: 'return' },
     { label: '最大回撤', value: fmtPct(m.最大回撤), type: 'danger', group: 'risk' },
     { label: '胜率', value: fmtPct(m.胜率), type: 'neutral', group: 'return' },
     { label: '盈亏比', value: fmtNum(m.盈亏比), type: m.盈亏比 >= 1 ? 'success' : 'danger', group: 'return' },
-    ...(m.Alpha !== undefined ? [{ label: 'Alpha', value: fmtPct(m.Alpha), type: m.Alpha >= 0 ? 'success' : 'danger', group: 'benchmark' }] : []),
+    ...(m.Alpha !== undefined ? [{ label: 'Alpha', value: fmtPct(m.Alpha), type: retTone(m.Alpha), group: 'benchmark' }] : []),
     ...(m.Beta !== undefined ? [{ label: 'Beta', value: fmtNum(m.Beta), type: 'neutral', group: 'benchmark' }] : []),
-    ...(m.信息比率 !== undefined ? [{ label: '信息比率', value: fmtNum(m.信息比率), type: m.信息比率 >= 0 ? 'success' : 'danger', group: 'benchmark' }] : []),
+    ...(m.信息比率 !== undefined ? [{ label: '信息比率', value: fmtNum(m.信息比率), type: retTone(m.信息比率), group: 'benchmark' }] : []),
     // 完整绩效报告新增指标（可选）
     ...opt('年化波动率', '年化波动率', fmtPct, (v) => (v <= 0.25 ? 'success' : 'danger'), 'risk'),
     ...opt('卡玛比率', '卡玛比率', fmtNum, (v) => (v >= 1 ? 'success' : 'danger'), 'return'),
@@ -219,6 +223,8 @@ const drawdownOption = computed(() => {
 const returnsOption = computed(() => {
   if (!result.value) return {}
   const r = result.value
+  // 日收益柱涨跌色按回测市场取 token：A股红涨绿跌 / 美股绿涨红跌（此前固定绿涨）
+  const { up, down } = chartPalette(r.market)
   return {
     tooltip: { trigger: 'axis', valueFormatter: (v: number) => (v * 100).toFixed(2) + '%' },
     grid: { left: '3%', right: '3%', bottom: '15%', containLabel: true },
@@ -234,7 +240,7 @@ const returnsOption = computed(() => {
         type: 'bar',
         data: r.daily_returns.map((v) => ({
           value: v,
-          itemStyle: { color: v >= 0 ? '#28a745' : '#dc3545' },
+          itemStyle: { color: v >= 0 ? up : down },
         })),
       },
     ],
@@ -277,10 +283,8 @@ const tradesKlineOption = computed(() => {
   const k = tradesKline.value
   if (!k || !k.dates.length || !result.value) return {}
   const trades: BacktestTrade[] = result.value.trades ?? []
-  const isUS = k.market === 'us'
-  // 与 K 线主图一致的涨跌配色：A股红涨绿跌 / 美股绿涨红跌
-  const upColor = isUS ? '#26a69a' : '#ef232a'
-  const downColor = isUS ? '#ef5350' : '#14b143'
+  // 与 K 线主图一致的涨跌配色：A股红涨绿跌 / 美股绿涨红跌（token 见 lib/marketColors）
+  const { up: upColor, down: downColor } = chartPalette(k.market)
 
   const buys = trades.filter((t) => t.side === 'buy')
   const cost = buys.length

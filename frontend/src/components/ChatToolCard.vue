@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
-import type { ToolCallEvent } from '@/api/types'
+import type { Market, ToolCallEvent } from '@/api/types'
 import { useWatchlistStore } from '@/stores/watchlist'
+import { deltaTone, deltaDirection, scoreColor } from '@/lib/marketColors'
 import { parseToolResult, TOOL_LABELS } from '@/components/chat/toolCards'
 
 /**
@@ -38,14 +39,13 @@ const quote = computed(() => {
   }
 })
 
-/** A股红涨绿跌 / 美股绿涨红跌 的 Delta 徽章配色 */
-function deltaStyle(market: string, chgPct: number): Record<string, string> {
-  if (chgPct === 0) return { background: 'var(--neutral)', color: '#fff' }
-  const up = chgPct > 0
-  if (market === 'zh_a') {
-    return up ? { background: '#fef2f2', color: 'var(--danger)' } : { background: '#f0fdf4', color: 'var(--success)' }
-  }
-  return up ? { background: '#f0fdf4', color: 'var(--success)' } : { background: '#fef2f2', color: 'var(--danger)' }
+/** A股红涨绿跌 / 美股绿涨红跌 的 Delta 徽章配色（方向→色调映射收拢在 lib/marketColors） */
+function deltaStyle(market: Market, chgPct: number): Record<string, string> {
+  const tone = deltaTone(market, deltaDirection(chgPct))
+  if (tone === 'neutral') return { background: 'var(--neutral)', color: '#fff' }
+  return tone === 'danger'
+    ? { background: '#fef2f2', color: 'var(--danger)' }
+    : { background: '#f0fdf4', color: 'var(--success)' }
 }
 
 /** 卡片内的"在首页打开主图"动作：先确保在自选中（主图标的来源于自选），再跳首页 */
@@ -77,12 +77,7 @@ function signalTag(signal: string): { text: string; type: 'danger' | 'success' |
   return { text: '观望', type: 'info' }
 }
 
-function scoreColor(v: number): string {
-  if (v >= 70) return '#28a745'
-  if (v >= 60) return '#667eea'
-  if (v >= 45) return '#f59e0b'
-  return '#dc3545'
-}
+// 评分色（≥70 绿 / ≥60 紫 / ≥45 橙）收拢在 lib/marketColors，此处直接消费
 
 // ===== 推荐卡片（get_daily_recommendations） =====
 const recommends = computed(() => {
@@ -102,11 +97,12 @@ const recommends = computed(() => {
 const backtest = computed(() => {
   const d = data.value
   if (d == null || d.total_return_pct === undefined) return null
-  const zhA = d.market !== 'us'
+  const market: Market = d.market === 'us' ? 'us' : 'zh_a'
   const cell = (label: string, value: number, unit: string, positive: boolean | null) => ({
     label,
     value: `${value.toFixed(2)}${unit}`,
-    cls: positive === null ? '' : (zhA ? (positive ? 'up' : 'down') : (positive ? 'down' : 'up')),
+    // cls 的 up/down 为「红/绿」渲染类：A股涨=红(up)、美股涨=绿(down)，方向→色调映射走 lib/marketColors
+    cls: positive === null ? '' : deltaTone(market, positive ? 'up' : 'down') === 'danger' ? 'up' : 'down',
   })
   return {
     strategy: String(d.strategy ?? ''),

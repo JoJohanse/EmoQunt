@@ -17,6 +17,7 @@ import type {
 } from '@/api/types'
 import { useWatchlistStore, targetKey } from '@/stores/watchlist'
 import type { WatchlistItem } from '@/stores/watchlist'
+import { chartPalette, deltaTone, deltaDirection, NEUTRAL_HEX } from '@/lib/marketColors'
 import { useBacktestHistoryStore } from '@/stores/backtestHistory'
 import { useHomeLayoutStore } from '@/stores/homeLayout'
 import { useUiStore } from '@/stores/ui'
@@ -311,13 +312,19 @@ usePolling(loadQuotes, { intervalMs: 60_000 })
 // 数据源心跳变化缓慢，5 分钟刷一次
 usePolling(loadSourceHealth, { intervalMs: 300_000 })
 
-/** 行内 sparkline 颜色：按区间涨跌 + 市场配色约定 */
+/** 行内 sparkline 颜色：按区间涨跌取市场涨跌色（A股红涨绿跌 / 美股绿涨红跌） */
 function sparkColor(item: WatchlistItem): string {
   const closes = quoteOf(item.code, item.market, item.kind)?.closes ?? []
   if (closes.length < 2) return '#667eea'
   const up = (closes[closes.length - 1] ?? 0) >= (closes[0] ?? 0)
-  // 红色条件：A股上涨 或 美股下跌
-  return up === (item.market === 'zh_a') ? '#ef232a' : '#14b143'
+  const { up: upColor, down: downColor } = chartPalette(item.market)
+  return up ? upColor : downColor
+}
+
+/** 指数速览 sparkline 颜色：按当日涨跌取市场涨跌色（收拢模板内联三元） */
+function chgSparkColor(market: Market, chgPct: number | undefined): string {
+  const { up, down } = chartPalette(market)
+  return (chgPct ?? 0) < 0 ? down : up
 }
 
 // 添加自选：先拉 2 根 K 线校验代码并解析名称
@@ -353,12 +360,13 @@ function removeWatch(code: string, market: Market, kind?: 'index') {
   watchlistStore.remove(code, market, kind)
 }
 
-// 涨跌徽章（A股红涨绿跌，美股绿涨红跌）
+// 涨跌徽章（A股红涨绿跌，美股绿涨红跌；方向→色调语义映射收拢在 lib/marketColors）
 function deltaBadgeStyle(market: Market, chgPct: number): Record<string, string> {
-  if (chgPct === 0) return { background: 'var(--neutral)', color: '#fff' }
-  const up = chgPct > 0
-  if (market === 'zh_a') return up ? { background: '#fef2f2', color: 'var(--danger)', border: '1px solid #fecaca' } : { background: '#f0fdf4', color: 'var(--success)', border: '1px solid #bbf7d0' }
-  return up ? { background: '#f0fdf4', color: 'var(--success)', border: '1px solid #bbf7d0' } : { background: '#fef2f2', color: 'var(--danger)', border: '1px solid #fecaca' }
+  const tone = deltaTone(market, deltaDirection(chgPct))
+  if (tone === 'neutral') return { background: 'var(--neutral)', color: '#fff' }
+  return tone === 'danger'
+    ? { background: '#fef2f2', color: 'var(--danger)', border: '1px solid #fecaca' }
+    : { background: '#f0fdf4', color: 'var(--success)', border: '1px solid #bbf7d0' }
 }
 
 // ===== 情绪日历 =====
@@ -656,12 +664,9 @@ function monthTickConfig(dates: string[]): {
 const klineOption = computed(() => {
   if (!kline.value || !kline.value.dates.length) return {}
   const k = kline.value
-  // A股红涨绿跌；美股绿涨红跌
+  // A股红涨绿跌；美股绿涨红跌（市场配色 token 见 lib/marketColors）
   const isUS = k.market === 'us'
-  const upColor = isUS ? '#26a69a' : '#ef232a'
-  const downColor = isUS ? '#ef5350' : '#14b143'
-  const upText = isUS ? '#059669' : '#dc2626'
-  const downText = isUS ? '#dc2626' : '#059669'
+  const { up: upColor, down: downColor, upText, downText } = chartPalette(k.market)
 
   const dates = k.dates
   const ohlcv = k.ohlcv
@@ -981,13 +986,15 @@ const sectorByCode = computed(() => {
 })
 
 function allocColor(name: string): string | undefined {
+  // 涨跌分组沿用 A股涨跌 token（"当日涨跌"视图固定按 A股红涨绿跌语义展示）
+  const zh = chartPalette('zh_a')
   const palette: Record<string, string> = {
     A股: '#667eea',
     美股: '#10b981',
     指数: '#8b5cf6',
-    上涨: '#ef232a',
-    平盘: '#9ca3af',
-    下跌: '#14b143',
+    上涨: zh.up,
+    平盘: NEUTRAL_HEX,
+    下跌: zh.down,
     其他: '#cbd5e1',
   }
   return palette[name]
@@ -1130,7 +1137,7 @@ function scoreColor(score: number): string {
                 :values="quoteOf(idx.code, idx.market, idx.kind)?.closes ?? []"
                 :width="56"
                 :height="20"
-                :color="(quoteOf(idx.code, idx.market, idx.kind)?.chgPct ?? 0) < 0 ? '#14b143' : '#ef232a'"
+                :color="chgSparkColor(idx.market, quoteOf(idx.code, idx.market, idx.kind)?.chgPct)"
               />
               <template v-if="quoteOf(idx.code, idx.market, idx.kind)">
                 <span class="index-close" :class="flashOf(idx.code, idx.market, idx.kind)">
