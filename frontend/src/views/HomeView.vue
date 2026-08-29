@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
 import { klineApi, sentimentApi, recommendApi, marketApi } from '@/api'
@@ -29,6 +30,8 @@ import {
   monthTickConfig,
 } from '@/chart/kline'
 import { useBacktestHistoryStore } from '@/stores/backtestHistory'
+import { useKlinePrefsStore } from '@/stores/klinePrefs'
+import type { KlinePeriod, KlineAdjust } from '@/stores/klinePrefs'
 import { calcMA, calcBOLL, calcMACD, calcKDJ, calcRSI } from '@/lib/indicators'
 import { useHomeLayoutStore } from '@/stores/homeLayout'
 import { useUiStore } from '@/stores/ui'
@@ -131,46 +134,13 @@ const recommend = ref<DailyRecommendData | null>(null)
 const loadingKline = ref(false)
 const klineChartRef = ref<InstanceType<typeof VChart> | null>(null)
 
-// ===== K线工具栏偏好（周期/复权/主图叠加/副图指标），持久化到 localStorage =====
-function loadPref<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key)
-    if (raw !== null) return JSON.parse(raw) as T
-  } catch { /* ignore */ }
-  return fallback
-}
-function savePref(key: string, value: unknown) {
-  try { localStorage.setItem(key, JSON.stringify(value)) } catch { /* quota */ }
-}
-
-type KlinePeriod = 'day' | 'week' | 'month'
-type KlineAdjust = 'qfq' | 'hfq' | 'nfq'
-type OverlayMode = 'none' | 'ma' | 'boll'
-type SubIndicator = 'none' | 'macd' | 'kdj' | 'rsi'
-
-const PERIOD_KEY = 'emoqunt:kline_period'
-const ADJUST_KEY = 'emoqunt:kline_adjust'
-const OVERLAY_KEY = 'emoqunt:kline_overlay'
-const SUB_KEY = 'emoqunt:kline_sub'
+// ===== K线工具栏偏好（周期/复权/主图叠加/副图指标），收在 stores/klinePrefs =====
+// （persist 插件持久化 + 旧裸键迁移；storeToRefs 保持既有 .value 写法与模板 v-model 不变）
+const { period: klinePeriod, adjust: klineAdjust, overlay: klineOverlay, sub: klineSub } =
+  storeToRefs(useKlinePrefsStore())
 
 const PERIOD_LABELS: Record<KlinePeriod, string> = { day: '日线', week: '周线', month: '月线' }
 const ADJUST_LABELS: Record<KlineAdjust, string> = { qfq: '前复权', hfq: '后复权', nfq: '不复权' }
-
-const klinePeriod = ref(loadPref<KlinePeriod>(PERIOD_KEY, 'day'))
-// 兼容旧「MA 开关」：kline_ma=false 迁移为主图叠加=无
-const klineOverlayInit = loadPref<OverlayMode | ''>(OVERLAY_KEY, '')
-const klineOverlay = ref<OverlayMode>(
-  klineOverlayInit === 'ma' || klineOverlayInit === 'boll' || klineOverlayInit === 'none'
-    ? klineOverlayInit
-    : (loadPref('emoqunt:kline_ma', true) ? 'ma' : 'none'),
-)
-const klineAdjust = ref(loadPref(ADJUST_KEY, 'qfq') as KlineAdjust)
-const klineSub = ref(loadPref(SUB_KEY, 'macd') as SubIndicator)
-
-watch(klinePeriod, (v) => savePref(PERIOD_KEY, v))
-watch(klineOverlay, (v) => savePref(OVERLAY_KEY, v))
-watch(klineAdjust, (v) => savePref(ADJUST_KEY, v))
-watch(klineSub, (v) => savePref(SUB_KEY, v))
 
 function resetKlineZoom() {
   try {
