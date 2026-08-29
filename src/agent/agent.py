@@ -5,7 +5,7 @@ LLM 配置独立于情绪分析：读取 AGENT_* 环境变量（回退到 LLM_* 
 
 import logging
 import os
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -122,7 +122,7 @@ async def stream_agent_events(messages: List[Dict]):
     - ("done",)                     结束
     - ("error", message)            错误
 
-    web_app.py 的 SSE 路由直接消费此生成器；旧的回调式 run_agent_stream 也委托于此。
+    web_app.py 的 SSE 路由直接消费此生成器。
     """
     agent = build_agent()
     lc_messages = _to_lc_messages(messages)
@@ -157,19 +157,3 @@ async def stream_agent_events(messages: List[Dict]):
     except Exception as e:
         logger.exception("Agent stream_agent_events 失败")
         yield ("error", str(e))
-
-
-async def run_agent_stream(
-    messages: List[Dict],
-    on_token: Optional[Callable[[str], None]] = None,
-    on_tool: Optional[Callable[[str, str, str], None]] = None,
-):
-    """流式运行 agent（回调式接口，委托于 stream_agent_events）。
-
-    保留以兼容现有调用者；web_app.py SSE 路由应直接用 stream_agent_events。
-    """
-    async for evt in stream_agent_events(messages):
-        if evt[0] == "token" and on_token:
-            on_token(evt[1])
-        elif evt[0] == "tool" and on_tool:
-            on_tool(evt[1], evt[2], evt[3])

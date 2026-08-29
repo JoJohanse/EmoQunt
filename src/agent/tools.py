@@ -133,29 +133,35 @@ def run_backtest(strategy_name: str, stock_code: str, start_date: str, end_date:
         initial_capital: 初始资金，默认 100000。
     """
     try:
-        from src.backtest.backtest_manager import run_backtest_json
-        result = run_backtest_json(
-            strategy_name=strategy_name, stock_code=stock_code,
-            start_date=start_date, end_date=end_date,
-            initial_capital=initial_capital, market=market,
-        )
+        from src.services.backtest import run_json, validate_backtest_params
+        # 统一经 services.backtest 校验入口（与双前端路由共用同一校验链/默认基准映射）
+        params, error = validate_backtest_params({
+            "strategy_name": strategy_name, "stock_code": stock_code,
+            "start_date": start_date, "end_date": end_date,
+            "initial_capital": initial_capital, "market": market,
+        })
+        if error:
+            return _err(error)
+        result = run_json(**params)
         m = result.get("metrics", {})
-        # 摘要：仅指标，不含完整时序（太长）
+        # 摘要：仅指标，不含完整时序（太长）；键名为 LLM 友好的 *_pct 形态，
+        # 底层数值转换统一走 serialize.safe_float
+        from src.utils.serialize import safe_float
         summary = {
-            "strategy": strategy_name, "stock": stock_code, "market": market,
-            "total_return_pct": round(m.get("总收益率", 0) * 100, 2),
-            "annual_return_pct": round(m.get("年化收益率", 0) * 100, 2),
-            "sharpe": round(m.get("夏普比率", 0), 3),
-            "max_drawdown_pct": round(m.get("最大回撤", 0) * 100, 2),
-            "win_rate_pct": round(m.get("胜率", 0) * 100, 2),
-            "profit_loss_ratio": round(m.get("盈亏比", 0), 3),
+            "strategy": strategy_name, "stock": stock_code, "market": params["market"],
+            "total_return_pct": round(safe_float(m.get("总收益率", 0)) * 100, 2),
+            "annual_return_pct": round(safe_float(m.get("年化收益率", 0)) * 100, 2),
+            "sharpe": round(safe_float(m.get("夏普比率", 0)), 3),
+            "max_drawdown_pct": round(safe_float(m.get("最大回撤", 0)) * 100, 2),
+            "win_rate_pct": round(safe_float(m.get("胜率", 0)) * 100, 2),
+            "profit_loss_ratio": round(safe_float(m.get("盈亏比", 0)), 3),
         }
         if "Alpha" in m:
-            summary["alpha_pct"] = round(m["Alpha"] * 100, 2)
+            summary["alpha_pct"] = round(safe_float(m["Alpha"]) * 100, 2)
         if "Beta" in m:
-            summary["beta"] = round(m["Beta"], 3)
+            summary["beta"] = round(safe_float(m["Beta"]), 3)
         if "信息比率" in m:
-            summary["info_ratio"] = round(m["信息比率"], 3)
+            summary["info_ratio"] = round(safe_float(m["信息比率"]), 3)
         return _json(summary)
     except Exception as e:
         logger.exception("run_backtest tool failed")

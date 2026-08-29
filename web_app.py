@@ -22,8 +22,8 @@ load_env()
 from src.utils.paths import get_logs_dir, get_output_dir, get_web_dir, get_frontend_dist_dir, ensure_dir
 from src.utils.logger import get_logger
 from src.utils.validators import (
-    validate_stock_code, validate_date_range, validate_initial_capital,
-    validate_commission_rate, validate_strategy_name, sanitize_string,
+    validate_stock_code, validate_date_range,
+    validate_strategy_name, sanitize_string,
     ValidationError,
 )
 
@@ -230,44 +230,30 @@ def run_backtest(
     market: str = Form("zh_a"),
 ):
     """运行策略回测（HTML 结果页）"""
+    from src.services.backtest import normalize_market, run_with_charts, validate_backtest_params
+
     strategy_name = sanitize_string(strategy_name, 50)
     stock_code = sanitize_string(stock_code, 10)
-    market = market if market in ('zh_a', 'us') else 'zh_a'
+    market = normalize_market(market)
     logger.info(f"收到回测请求 - 策略: {strategy_name}, 股票: {stock_code}, 市场: {market}")
     try:
-        # 校验
-        for fn, arg, label in [
-            (validate_strategy_name, strategy_name, "策略名称"),
-            (validate_stock_code, stock_code, "股票代码"),
-        ]:
-            valid, error = fn(arg, market=market) if fn is validate_stock_code else fn(arg)
-            if not valid:
-                raise ValidationError(error)
-        valid, error = validate_date_range(start_date, end_date)
-        if not valid:
+        # 校验统一走 services.backtest（错误文案与响应形状与既有行为逐字一致）
+        params, error = validate_backtest_params({
+            "strategy_name": strategy_name, "stock_code": stock_code,
+            "start_date": start_date, "end_date": end_date,
+            "initial_capital": initial_capital,
+            "commission_rate": commission_rate, "market": market,
+        })
+        if error:
             raise ValidationError(error)
-        valid, error = validate_initial_capital(initial_capital)
-        if not valid:
-            raise ValidationError(error)
-        valid, error = validate_commission_rate(commission_rate)
-        if not valid:
-            raise ValidationError(error)
-
-        from src.backtest.backtest_manager import run_backtest_with_charts
-        benchmark_index = "SP500" if market == 'us' else "000300"
-        result = run_backtest_with_charts(
-            strategy_name=strategy_name, stock_code=stock_code,
-            start_date=start_date, end_date=end_date,
-            initial_capital=initial_capital, commission_rate=commission_rate,
-            output_dir=output_dir, benchmark_index=benchmark_index, market=market,
-        )
+        result = run_with_charts(output_dir=output_dir, **params)
         return templates.TemplateResponse("backtest_result.html", {
-            "request": request, "strategy_name": strategy_name,
+            "request": request, "strategy_name": params["strategy_name"],
             "performance_data": result["performance_data"],
             "equity_chart_url": result["equity_chart_url"],
             "drawdown_chart_url": result["drawdown_chart_url"],
             "dashboard_url": result["dashboard_url"],
-            "title": "回测结果", "nav_active": "backtest", "market": market,
+            "title": "回测结果", "nav_active": "backtest", "market": params["market"],
         })
     except ValidationError as e:
         return _handle_error(request, e, "回测参数验证")
@@ -524,41 +510,12 @@ async def delete_strategy(strategy_name: str):
 async def run_backtest_api(request: Request):
     """运行回测（JSON 时序，供 Vue3 ECharts）"""
     try:
+        from src.services.backtest import run_json, validate_backtest_params
         payload = await request.json()
-        strategy_name = sanitize_string(str(payload.get("strategy_name", "")), 50)
-        stock_code = sanitize_string(str(payload.get("stock_code", "")), 10)
-        market = payload.get("market", "zh_a")
-        if market not in ("zh_a", "us"):
-            market = "zh_a"
-        start_date = str(payload.get("start_date", ""))
-        end_date = str(payload.get("end_date", ""))
-        initial_capital = float(payload.get("initial_capital", 100000.0))
-        commission_rate = float(payload.get("commission_rate", 0.0003))
-
-        # 完整校验（修复原 JSON 路径漏校验资金/佣金的问题）
-        for fn, arg in [(validate_strategy_name, strategy_name), (validate_stock_code, stock_code)]:
-            valid, error = fn(arg, market=market) if fn is validate_stock_code else fn(arg)
-            if not valid:
-                return JSONResponse({"error": error}, status_code=400)
-        valid, error = validate_date_range(start_date, end_date)
-        if not valid:
+        params, error = validate_backtest_params(payload)
+        if error:
             return JSONResponse({"error": error}, status_code=400)
-        valid, error = validate_initial_capital(initial_capital)
-        if not valid:
-            return JSONResponse({"error": error}, status_code=400)
-        valid, error = validate_commission_rate(commission_rate)
-        if not valid:
-            return JSONResponse({"error": error}, status_code=400)
-
-        from src.backtest.backtest_manager import run_backtest_json
-        benchmark_index = "SP500" if market == "us" else "000300"
-        return await run_in_threadpool(
-            run_backtest_json,
-            strategy_name=strategy_name, stock_code=stock_code,
-            start_date=start_date, end_date=end_date,
-            initial_capital=initial_capital, commission_rate=commission_rate,
-            benchmark_index=benchmark_index, market=market,
-        )
+        return await run_in_threadpool(run_json, **params)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
@@ -571,35 +528,13 @@ async def run_backtest_api(request: Request):
 async def compare_strategies_api(request: Request):
     """策略对比：在同一标的上运行多个策略，返回对齐净值曲线 + 指标表（Vue3）。"""
     try:
-        payload = await request.json()
-        names = payload.get("strategy_names") or []
-        if not isinstance(names, list) or not names:
-            return JSONResponse({"error": "strategy_names 必须是非空数组"}, status_code=400)
-        names = [sanitize_string(str(n), 50) for n in names][:5]
-        stock_code = sanitize_string(str(payload.get("stock_code", "")), 10)
-        market = payload.get("market", "zh_a")
-        if market not in ("zh_a", "us"):
-            market = "zh_a"
-        start_date = str(payload.get("start_date", ""))
-        end_date = str(payload.get("end_date", ""))
-        initial_capital = float(payload.get("initial_capital", 100000.0))
-        commission_rate = float(payload.get("commission_rate", 0.0003))
-
-        valid, error = validate_stock_code(stock_code, market=market)
-        if not valid:
-            return JSONResponse({"error": error}, status_code=400)
-        valid, error = validate_date_range(start_date, end_date)
-        if not valid:
-            return JSONResponse({"error": error}, status_code=400)
-
+        from src.services.backtest import validate_compare_params
         from src.services.strategy_compare import compare_strategies
-        return await run_in_threadpool(
-            compare_strategies,
-            strategy_names=names, stock_code=stock_code,
-            start_date=start_date, end_date=end_date,
-            market=market, initial_capital=initial_capital,
-            commission_rate=commission_rate,
-        )
+        payload = await request.json()
+        params, error = validate_compare_params(payload)
+        if error:
+            return JSONResponse({"error": error}, status_code=400)
+        return await run_in_threadpool(compare_strategies, **params)
     except Exception as e:
         logger.error(f"策略对比API失败: {e}", exc_info=True)
         return JSONResponse({"error": "策略对比失败，请稍后重试"}, status_code=500)
@@ -805,7 +740,7 @@ async def agent_chat(request: Request):
             if not messages:
                 yield 'data: {"type":"error","content":"消息不能为空"}\n\n'
                 return
-            from src.agent.agent import stream_agent_events
+            from src.agent import stream_agent_events
             # 消费统一事件生成器（薄适配器：仅把元组格式化为 SSE）
             async for evt in stream_agent_events(messages):
                 if evt[0] == "token":

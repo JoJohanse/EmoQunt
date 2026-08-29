@@ -40,12 +40,14 @@ def compare_strategies(
     """
     from src.backtest.backtest_manager import _run_backtest_core
 
+    from src.services.backtest import default_benchmark_index
+
     if not strategy_names:
         return {"error": "未提供策略列表"}
     if len(strategy_names) > MAX_STRATEGIES:
         return {"error": f"最多同时对比 {MAX_STRATEGIES} 个策略"}
 
-    benchmark_index = "SP500" if market == "us" else "000300"
+    benchmark_index = default_benchmark_index(market)
     sd = start_date.replace("-", "")
     ed = end_date.replace("-", "")
 

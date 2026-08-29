@@ -6,6 +6,7 @@
 
 服务模块：
     - strategies: 策略列表/详情/创建/更新/删除（双前端共享）
+    - backtest: 回测参数校验/市场归一/运行委托（双前端 + agent 共用）
     - sentiment: 舆情数据获取/刷新（双前端共享）
     - recommend: 每日推荐获取/刷新（双前端共享）
     - kline: K线 OHLCV 数据获取
