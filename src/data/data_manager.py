@@ -6,13 +6,111 @@ import traceback
 import logging
 from src.utils.paths import PROJECT_ROOT, ensure_dir
 from src.utils.env import get_env
-from src.data.source_health import record as record_source_health
+from src.data.fetch_runner import run_source_chain
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 # Tushare Pro token（可选 A 股数据源；留空则该层静默跳过，回退到免费链）
 _TUSHARE_TOKEN = get_env("TUSHARE_TOKEN", "")
+
+
+# ---------------------------------------------------------------------------
+# 各数据源返回结果的共享归一化辅助（成对重复逻辑各保留一份）
+# ---------------------------------------------------------------------------
+
+def _normalize_tushare_daily(df: pd.DataFrame) -> pd.DataFrame:
+    """Tushare 日线结果归一化：trade_date/vol 列名 → date/volume，数值化，amount 千元→元。
+
+    个股（pro.daily/pro_bar）与指数（index_daily）共用。
+
+    :param df: Tushare 原始返回（trade_date/vol/amount(千元) 等列）
+    :return: 小写英文列名 (date/open/high/low/close/volume/amount) DataFrame
+    """
+    col_map = {'trade_date': 'date', 'vol': 'volume'}
+    col_map = {k: v for k, v in col_map.items() if k in df.columns}
+    df = df.rename(columns=col_map)
+    for col in ('open', 'high', 'low', 'close', 'volume', 'amount'):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    # amount: 千元 → 元（与 akshare 单位对齐）
+    if 'amount' in df.columns:
+        df['amount'] = df['amount'] * 1000.0
+    return df
+
+
+def _normalize_baostock_daily(df: pd.DataFrame) -> pd.DataFrame:
+    """baostock 日线结果归一化：字符串数值转 float，volume 股→手（/100）。
+
+    个股与指数共用。
+
+    :param df: baostock 原始返回（数值字段全为字符串，volume 单位为股）
+    :return: 数值化后的 DataFrame
+    """
+    for col in ('open', 'high', 'low', 'close', 'volume', 'amount'):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    # baostock volume 单位是股，转为手（与 akshare 一致）
+    if 'volume' in df.columns:
+        df['volume'] = df['volume'] / 100.0
+    return df
+
+
+def _yf_date_range(start_date: str, end_date: str) -> 'tuple[str, str]':
+    """'YYYYMMDD' → yfinance 所需的 'YYYY-MM-DD' 起止参数。
+
+    yfinance 的 end 是排他的，故 end +1 天以包含当天。
+
+    :return: (yf_start, yf_end)；空串转换为 None
+    """
+    yf_start = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:8]}" if start_date else None
+    if end_date:
+        yf_end_dt = pd.to_datetime(end_date, format='%Y%m%d') + pd.Timedelta(days=1)
+        yf_end = yf_end_dt.strftime('%Y-%m-%d')
+    else:
+        yf_end = None
+    return yf_start, yf_end
+
+
+def _normalize_yf_history(df: pd.DataFrame) -> pd.DataFrame:
+    """yfinance history() 结果归一化：reset_index、去除时区、列名小写。
+
+    个股与指数共用，输出小写英文列名以复用下游 rename_map。
+
+    :param df: yfinance Ticker.history() 原始返回（大写列名 + tz-aware Date 索引）
+    :return: 小写列名 (date/open/high/low/close/volume) DataFrame
+    """
+    df = df.reset_index()
+    date_col = 'Date' if 'Date' in df.columns else df.columns[0]
+    df[date_col] = pd.to_datetime(df[date_col]).dt.tz_localize(None)
+    df.columns = df.columns.str.lower()
+    return df
+
+
+def _filter_df_by_date_range(df: pd.DataFrame, start_date: str, end_date: str) -> pd.DataFrame:
+    """本地日期过滤（'date' 列，含端点）：解析 → 过滤 → 按日期升序 → 重置索引。
+
+    新浪源（stock_us_daily / index_us_stock_sina）不支持 start/end 参数，
+    取全量后由本函数兜底过滤；对已落在范围内的数据（如 yfinance 结果）为幂等操作。
+
+    :param df: 含 'date' 列的 DataFrame
+    :param start_date: 起始 'YYYYMMDD'，空串表示不限
+    :param end_date: 结束 'YYYYMMDD'，空串表示不限
+    :return: 过滤后的 DataFrame；df 为 None/空或无 'date' 列时原样返回，
+             日期解析失败时返回未过滤的原数据
+    """
+    if df is None or df.empty or 'date' not in df.columns:
+        return df
+    try:
+        df['date'] = pd.to_datetime(df['date'])
+        if start_date:
+            df = df[df['date'] >= pd.to_datetime(start_date)]
+        if end_date:
+            df = df[df['date'] <= pd.to_datetime(end_date)]
+        return df.sort_values('date').reset_index(drop=True)
+    except Exception:
+        return df
+
 
 class Stock:
     def __init__(self, stock_code, market='zh_a'):
@@ -74,16 +172,7 @@ class Stock:
         :param end_date: 结束日期 'YYYYMMDD'
         :return: 过滤后的 DataFrame
         """
-        if df is None or df.empty or 'date' not in df.columns:
-            return df
-        try:
-            dates = pd.to_datetime(df['date'])
-            start = pd.to_datetime(start_date, format='%Y%m%d')
-            end = pd.to_datetime(end_date, format='%Y%m%d')
-            mask = (dates >= start) & (dates <= end)
-            return df[mask].reset_index(drop=True)
-        except Exception:
-            return df
+        return _filter_df_by_date_range(df, start_date, end_date)
 
     def _fetch_ashare_hist_em(self, start_date: str, end_date: str, adjust_str: str) -> pd.DataFrame:
         """通过 akshare 东方财富源 (stock_zh_a_hist) 获取 A 股个股日线（回退源1）。
@@ -155,17 +244,8 @@ class Stock:
             if df is None or df.empty:
                 return pd.DataFrame()
             # Tushare 列：trade_date(YYYYMMDD)/open/high/low/close/vol(手)/amount(千元)/...
-            # 归一化到下游统一的小写英文列名
-            col_map = {'trade_date': 'date', 'vol': 'volume'}
-            col_map = {k: v for k, v in col_map.items() if k in df.columns}
-            df = df.rename(columns=col_map)
-            # amount: 千元 → 元（与 akshare 单位对齐）
-            if 'amount' in df.columns:
-                df['amount'] = pd.to_numeric(df['amount'], errors='coerce') * 1000.0
-            for col in ('open', 'high', 'low', 'close', 'volume'):
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-            return df
+            # 归一化到下游统一的小写英文列名（与指数链共用）
+            return _normalize_tushare_daily(df)
         except Exception as e:
             logger.warning(f"Tushare 获取 {self.stock_code} 失败: {e}")
             return pd.DataFrame()
@@ -188,13 +268,8 @@ class Stock:
             )
             if df is None or df.empty:
                 return pd.DataFrame()
-            # baostock volume 单位是股，转为手（与 akshare 一致）
-            for col in ('open', 'high', 'low', 'close', 'volume', 'amount'):
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-            if 'volume' in df.columns:
-                df['volume'] = df['volume'] / 100.0
-            return df
+            # 字符串数值转 float、volume 股→手（与指数链共用）
+            return _normalize_baostock_daily(df)
         except Exception as e:
             logger.warning(f"baostock 获取 {self.stock_code} 失败: {e}")
             return pd.DataFrame()
@@ -218,12 +293,7 @@ class Stock:
             return pd.DataFrame()
 
         try:
-            yf_start = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:8]}" if start_date else None
-            if end_date:
-                yf_end_dt = pd.to_datetime(end_date, format='%Y%m%d') + pd.Timedelta(days=1)
-                yf_end = yf_end_dt.strftime('%Y-%m-%d')
-            else:
-                yf_end = None
+            yf_start, yf_end = _yf_date_range(start_date, end_date)
 
             auto_adjust = adjust_str in ('qfq', 'hfq')
             logger.info(f"yfinance: 获取 {ticker} 日线 ({yf_start} ~ {yf_end}, auto_adjust={auto_adjust})")
@@ -236,12 +306,7 @@ class Stock:
             if df is None or df.empty:
                 return pd.DataFrame()
 
-            df = df.reset_index()
-            date_col = 'Date' if 'Date' in df.columns else df.columns[0]
-            df[date_col] = pd.to_datetime(df[date_col]).dt.tz_localize(None)
-            df.columns = df.columns.str.lower()
-
-            return df
+            return _normalize_yf_history(df)
         except Exception as e:
             logger.warning(f"yfinance 获取 {ticker} 失败: {e}")
             return pd.DataFrame()
@@ -274,7 +339,7 @@ class Stock:
             print(f"获取股票名称失败: {e}")
             return None
     
-    def get_stock_data(self, start_date='', end_date=None, adjust='nfq', type='daily', period='1') -> tuple[pd.DataFrame, str]:
+    def get_stock_data(self, start_date='', end_date=None, adjust='nfq', type='daily', period='1') -> pd.DataFrame:
         """
         先查找本地股票数据文件， 若不存在则使用akshare获取
         使用akshare获取股票历史数据（支持日线和分钟级数据）
@@ -283,7 +348,7 @@ class Stock:
         :param adjust: 复权类型，可选值为：默认'nfq'(不复权), 'qfq'(前复权), 'hfq'(后复权)
         :param type: 数据类型，可选值为：'daily'(日线数据), 'minute'(分钟级数据)
         :param period: 数据周期，可选值为：'1', '5', '15', '30', '60' 分钟的数据 (仅分钟级数据有效)
-        :return: 股票历史数据DataFrame, 保存的数据文件名
+        :return: 股票历史数据DataFrame（中文列名契约）；失败/无数据返回空 DataFrame
         """
         try:
             # 检查本地股票数据文件是否存在
@@ -301,7 +366,7 @@ class Stock:
             if os.path.exists(file_path):
                 # 读取本地股票数据文件
                 stock_data = pd.read_csv(file_path)
-                return stock_data, file_name
+                return stock_data
             else:
                 # 定义复权类型映射（A股与美股通用）
                 adjust_map = {
@@ -321,64 +386,50 @@ class Stock:
                         if self.market == 'us':
                             ticker = self.get_code_without_prefix()
                             # 优先 yfinance（支持 start/end，更可靠），失败回退 akshare 新浪源
-                            try:
-                                df = self._fetch_us_stock_yf(ticker, _start, _end, _adjust_str)
-                            except Exception as e:
-                                logger.warning(f"yfinance 个股获取异常，准备回退: {e}")
-                                df = pd.DataFrame()
-                            record_source_health('yfinance', df is not None and not df.empty)
-                            if df is None or df.empty:
-                                logger.warning("yfinance 返回空数据，回退到 akshare stock_us_daily（新浪源）")
-                                df = ak.stock_us_daily(symbol=ticker, adjust=_adjust_str)
-                                df = self._filter_us_daily_by_date(df, _start, _end)
-                                record_source_health('sina', df is not None and not df.empty)
-                            return df
+                            # （stock_us_daily 不支持 start/end，取全量后本地过滤）
+                            chain = [
+                                ('yfinance', lambda: self._fetch_us_stock_yf(
+                                    ticker, _start, _end, _adjust_str)),
+                                ('sina', lambda: self._filter_us_daily_by_date(
+                                    ak.stock_us_daily(symbol=ticker, adjust=_adjust_str),
+                                    _start, _end)),
+                            ]
                         else:
                             # A股回退链：Tushare(可选首选) → 新浪源 → 东财源 → baostock
+                            chain = []
                             if _TUSHARE_TOKEN:
-                                df = self._fetch_ashare_tushare(_start, _end, _adjust_str)
-                                record_source_health('tushare', df is not None and not df.empty)
-                            else:
-                                df = pd.DataFrame()
-                            if df is None or df.empty:
-                                try:
-                                    df = ak.stock_zh_a_daily(
-                                        symbol=self.stock_code,
-                                        start_date=_start,
-                                        end_date=_end,
-                                        adjust=_adjust_str
-                                    )
-                                except Exception as e:
-                                    logger.warning(f"akshare 新浪源获取 {self.stock_code} 失败: {e}，回退到东财源")
-                                    df = pd.DataFrame()
-                                record_source_health('sina', df is not None and not df.empty)
-                            if df is None or df.empty:
-                                logger.warning("新浪源返回空数据，回退到 akshare stock_zh_a_hist（东财源）")
-                                df = self._fetch_ashare_hist_em(_start, _end, _adjust_str)
-                                record_source_health('eastmoney', df is not None and not df.empty)
-                            if df is None or df.empty:
-                                logger.warning("东财源返回空数据，回退到 baostock")
-                                df = self._fetch_ashare_baostock(_start, _end, _adjust_str)
-                                record_source_health('baostock', df is not None and not df.empty)
-                            return df
+                                chain.append(('tushare', lambda: self._fetch_ashare_tushare(
+                                    _start, _end, _adjust_str)))
+                            chain.append(('sina', lambda: ak.stock_zh_a_daily(
+                                symbol=self.stock_code,
+                                start_date=_start,
+                                end_date=_end,
+                                adjust=_adjust_str,
+                            )))
+                            chain.append(('eastmoney', lambda: self._fetch_ashare_hist_em(
+                                _start, _end, _adjust_str)))
+                            chain.append(('baostock', lambda: self._fetch_ashare_baostock(
+                                _start, _end, _adjust_str)))
+                        return run_source_chain(
+                            chain, logger=logger, context=f"个股 {self.stock_code} 日线")
 
                     from src.data.provider import KlineProvider
                     provider = KlineProvider()
-                    stock_data, prov_file = provider.fetch_daily(
+                    stock_data, _ = provider.fetch_daily(
                         code_without_prefix, self.market, adjust,
                         start_date, end_date, fetcher=_daily_fetcher,
                     )
                     if stock_data is None or stock_data.empty:
                         print(f"akshare返回空数据，检查股票代码或日期范围")
-                        return pd.DataFrame(), ''
+                        return pd.DataFrame()
                     print(f"成功获取数据，数据行数: {len(stock_data)}")
                     print(f"数据列名: {stock_data.columns.tolist()}")
-                    return stock_data, prov_file
+                    return stock_data
                 elif type == 'minute':
                     # 获取分钟级数据（仅 A 股支持）
                     if self.market == 'us':
                         print("错误：美股暂不支持分钟级数据")
-                        return pd.DataFrame(), ''
+                        return pd.DataFrame()
                     print(f"正在获取{self.stock_code}的历史数据（分钟级）")
                     stock_data = ak.stock_zh_a_minute(
                         symbol=self.stock_code,
@@ -388,17 +439,17 @@ class Stock:
                 else:
                     # 处理无效的type参数
                     print(f"错误：无效的数据类型 {type}，请使用 'daily' 或 'minute'")
-                    return pd.DataFrame(), ''
-            
+                    return pd.DataFrame()
+
             # 分钟级后处理（日线已由 KlineProvider 完成重命名/回填并提前返回）
             # 检查返回的数据是否为空
             if stock_data is None or stock_data.empty:
                 print(f"akshare返回空数据，检查股票代码或日期范围")
-                return pd.DataFrame(), ''
-            
+                return pd.DataFrame()
+
             print(f"成功获取数据，数据行数: {len(stock_data)}")
             print(f"数据列名: {stock_data.columns.tolist()}")
-            
+
             # 处理数据：删除可能存在的不需要的'index'列
             if 'index' in stock_data.columns:
                 stock_data = stock_data.drop('index', axis=1)
@@ -410,11 +461,11 @@ class Stock:
             # 重命名列
             stock_data = stock_data.rename(columns=rename_map)
 
-            return stock_data, file_name
+            return stock_data
         except Exception as e:
             print(f"获取股票历史数据失败: {e}")
             traceback.print_exc()
-            return pd.DataFrame(), ''
+            return pd.DataFrame()
     
     def get_stock_info(self):
         """
@@ -718,76 +769,30 @@ def get_index_data(index_code: str = '000300', start_date: str = '', end_date: s
 
         def _ashare_index_fetcher(_start, _end, _adjust_str):
             print(f"正在获取指数 {index_code} 的日线数据，日期范围: {_start} 至 {_end}")
-            # 0) Tushare
-            df_inner = pd.DataFrame()
+            # 回退链：Tushare(可选首选) → 新浪 → 东财 → baostock
+            chain = []
             if _TUSHARE_TOKEN:
-                try:
+                def _tushare_index():
                     import tushare as ts
                     ts.set_token(_TUSHARE_TOKEN)
                     pro = ts.pro_api()
                     idx_ts_code = f"{symbol[2:]}.{symbol[:2].upper()}"
-                    raw = pro.index_daily(ts_code=idx_ts_code, start_date=_start, end_date=_end)
-                    if raw is not None and not raw.empty:
-                        col_map = {'trade_date': 'date', 'vol': 'volume'}
-                        col_map = {k: v for k, v in col_map.items() if k in raw.columns}
-                        df_inner = raw.rename(columns=col_map)
-                        for col in ('open', 'high', 'low', 'close', 'volume', 'amount'):
-                            if col in df_inner.columns:
-                                df_inner[col] = pd.to_numeric(df_inner[col], errors='coerce')
-                        if 'amount' in df_inner.columns:
-                            df_inner['amount'] = df_inner['amount'] * 1000.0
-                except Exception as e:
-                    logger.warning(f"Tushare 指数获取 {index_code} 失败: {e}，回退到免费链")
-                    df_inner = pd.DataFrame()
-                record_source_health('tushare', df_inner is not None and not df_inner.empty)
-            if df_inner is None or df_inner.empty:
-                try:
-                    df_inner = ak.stock_zh_index_daily(symbol=symbol)
-                except Exception as e:
-                    logger.warning(f"akshare 新浪指数源获取 {index_code} 失败: {e}，回退到东财源")
-                    df_inner = pd.DataFrame()
-                record_source_health('sina', df_inner is not None and not df_inner.empty)
-            if df_inner is None or df_inner.empty:
-                logger.warning("新浪指数源返回空数据，回退到 akshare stock_zh_index_daily_em（东财源）")
-                try:
-                    df_inner = ak.stock_zh_index_daily_em(
-                        symbol=symbol,
-                        start_date=_start or '19900101',
-                        end_date=_end or '20500101',
-                    )
-                except Exception as e:
-                    logger.warning(f"akshare 东财指数源获取 {index_code} 失败: {e}，回退到 baostock")
-                    df_inner = pd.DataFrame()
-                record_source_health('eastmoney', df_inner is not None and not df_inner.empty)
-            if df_inner is None or df_inner.empty:
-                logger.warning("东财指数源返回空数据，回退到 baostock")
-                try:
-                    df_inner = _baostock_query(
-                        symbol, _start, _end, adjust_str='',
-                        fields="date,open,high,low,close,volume,amount",
-                    )
-                    if df_inner is not None and not df_inner.empty:
-                        for col in ('open', 'high', 'low', 'close', 'volume', 'amount'):
-                            if col in df_inner.columns:
-                                df_inner[col] = pd.to_numeric(df_inner[col], errors='coerce')
-                        if 'volume' in df_inner.columns:
-                            df_inner['volume'] = df_inner['volume'] / 100.0
-                except Exception as e:
-                    logger.warning(f"baostock 指数获取 {index_code} 失败: {e}")
-                    df_inner = pd.DataFrame()
-                record_source_health('baostock', df_inner is not None and not df_inner.empty)
+                    return _normalize_tushare_daily(
+                        pro.index_daily(ts_code=idx_ts_code, start_date=_start, end_date=_end))
+                chain.append(('tushare', _tushare_index))
+            chain.append(('sina', lambda: ak.stock_zh_index_daily(symbol=symbol)))
+            chain.append(('eastmoney', lambda: ak.stock_zh_index_daily_em(
+                symbol=symbol,
+                start_date=_start or '19900101',
+                end_date=_end or '20500101',
+            )))
+            chain.append(('baostock', lambda: _normalize_baostock_daily(_baostock_query(
+                symbol, _start, _end, adjust_str='',
+                fields="date,open,high,low,close,volume,amount",
+            ))))
+            df_inner = run_source_chain(chain, logger=logger, context=f"指数 {index_code} 日线")
             # 本地日期过滤（Provider 重命名前为小写 date）
-            if df_inner is not None and not df_inner.empty and 'date' in df_inner.columns:
-                try:
-                    df_inner['date'] = pd.to_datetime(df_inner['date'])
-                    if _start:
-                        df_inner = df_inner[df_inner['date'] >= pd.to_datetime(_start)]
-                    if _end:
-                        df_inner = df_inner[df_inner['date'] <= pd.to_datetime(_end)]
-                    df_inner = df_inner.sort_values('date').reset_index(drop=True)
-                except Exception:
-                    pass
-            return df_inner
+            return _filter_df_by_date_range(df_inner, _start, _end)
 
         from src.data.provider import KlineProvider
         provider = KlineProvider()
@@ -833,12 +838,7 @@ def _fetch_us_index_yf(index_code: str = 'SP500', start_date: str = '', end_date
 
     try:
         symbol = US_INDEX_YF_SYMBOLS.get(str(index_code).upper(), index_code)
-        yf_start = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:8]}" if start_date else None
-        if end_date:
-            yf_end_dt = pd.to_datetime(end_date, format='%Y%m%d') + pd.Timedelta(days=1)
-            yf_end = yf_end_dt.strftime('%Y-%m-%d')
-        else:
-            yf_end = None
+        yf_start, yf_end = _yf_date_range(start_date, end_date)
 
         logger.info(f"yfinance: 获取指数 {symbol} 日线 ({yf_start} ~ {yf_end})")
         df = yf.Ticker(symbol).history(
@@ -850,12 +850,7 @@ def _fetch_us_index_yf(index_code: str = 'SP500', start_date: str = '', end_date
         if df is None or df.empty:
             return pd.DataFrame()
 
-        df = df.reset_index()
-        date_col = 'Date' if 'Date' in df.columns else df.columns[0]
-        df[date_col] = pd.to_datetime(df[date_col]).dt.tz_localize(None)
-        df.columns = df.columns.str.lower()
-
-        return df
+        return _normalize_yf_history(df)
     except Exception as e:
         logger.warning(f"yfinance 获取指数 {index_code} 失败: {e}")
         return pd.DataFrame()
@@ -881,28 +876,16 @@ def get_us_index_data(index_code: str = 'SP500', start_date: str = '', end_date:
 
         def _us_index_fetcher(_start, _end, _adjust_str):
             print(f"正在获取美股指数 {index_code} 的日线数据，日期范围: {_start} 至 {_end}")
-            try:
-                df_inner = _fetch_us_index_yf(index_code, _start, _end)
-            except Exception as e:
-                logger.warning(f"yfinance 指数获取异常，准备回退: {e}")
-                df_inner = pd.DataFrame()
-            record_source_health('yfinance', df_inner is not None and not df_inner.empty)
-            if df_inner is None or df_inner.empty:
-                logger.warning("yfinance 指数数据为空，回退到 akshare index_us_stock_sina（新浪源）")
-                symbol = US_INDEX_SYMBOLS.get(str(index_code).upper(), index_code)
-                df_inner = ak.index_us_stock_sina(symbol=symbol)
-                record_source_health('sina', df_inner is not None and not df_inner.empty)
-                if df_inner is None or df_inner.empty:
-                    print(f"美股指数 {index_code} 返回空数据")
-                    return pd.DataFrame()
-                if 'date' in df_inner.columns:
-                    df_inner['date'] = pd.to_datetime(df_inner['date'])
-                    if _start:
-                        df_inner = df_inner[df_inner['date'] >= pd.to_datetime(_start)]
-                    if _end:
-                        df_inner = df_inner[df_inner['date'] <= pd.to_datetime(_end)]
-                    df_inner = df_inner.sort_values('date').reset_index(drop=True)
-            return df_inner
+            # 回退链：yfinance（主源）→ akshare 新浪源
+            chain = [
+                ('yfinance', lambda: _fetch_us_index_yf(index_code, _start, _end)),
+                ('sina', lambda: ak.index_us_stock_sina(
+                    symbol=US_INDEX_SYMBOLS.get(str(index_code).upper(), index_code))),
+            ]
+            df_inner = run_source_chain(chain, logger=logger, context=f"美股指数 {index_code} 日线")
+            # 新浪源 index_us_stock_sina 不支持 start/end，统一本地日期过滤
+            # （yfinance 结果已落在请求范围内，过滤为幂等操作）
+            return _filter_df_by_date_range(df_inner, _start, _end)
 
         from src.data.provider import KlineProvider
         provider = KlineProvider()

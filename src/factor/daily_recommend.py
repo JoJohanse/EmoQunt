@@ -251,8 +251,8 @@ def get_stock_data(stock_code: str, days: int = 30) -> Optional[pd.DataFrame]:
         # 取 days×2 个日历日的数据，确保覆盖足够交易日（评分需 ~30 个交易日）
         end_date = datetime.now().strftime('%Y%m%d')
         start_date = (datetime.now() - timedelta(days=int(days * 2))).strftime('%Y%m%d')
-        df, _ = stock.get_stock_data(start_date=start_date, end_date=end_date,
-                                     adjust='qfq', type='daily')
+        df = stock.get_stock_data(start_date=start_date, end_date=end_date,
+                                  adjust='qfq', type='daily')
         if df is None or df.empty:
             logger.warning(f"未获取到股票 {stock_code} 的数据（所有数据源均失败）")
             return None

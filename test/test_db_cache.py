@@ -253,7 +253,7 @@ class TestStockIntegrationDBHit:
              patch.object(Stock, '_fetch_ashare_tushare') as mock_ts, \
              patch.object(Stock, '_fetch_ashare_hist_em') as mock_em, \
              patch.object(Stock, '_fetch_ashare_baostock') as mock_bs:
-            df, _ = stock.get_stock_data('20240101', '20240131', adjust='hfq', type='daily')
+            df = stock.get_stock_data('20240101', '20240131', adjust='hfq', type='daily')
 
         assert mock_get.called, "应查询 DB 缓存"
         assert not mock_sina.called, "DB 命中时不应触网络"
