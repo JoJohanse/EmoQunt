@@ -33,6 +33,13 @@ export function targetKey(code: string, market: Market, kind?: '' | 'index'): st
   return `${code}|${market}|${kind ?? ''}`
 }
 
+/** A 股代码归一：每日推荐/工具结果常带 .SZ/.SH 交易所后缀，自选与主图统一用裸 6 位代码 */
+function normalizeCode(code: string, market: Market): string {
+  const trimmed = code.trim()
+  if (market === 'us') return trimmed.toUpperCase()
+  return trimmed.replace(/\.(SZ|SH|BJ)$/i, '')
+}
+
 /**
  * 自选股（watchlist），持久化到 localStorage。
  * 对标 Ghostfolio / 雪球等投资应用：自选是首屏第一公民。
@@ -50,9 +57,9 @@ export const useWatchlistStore = defineStore(
       )
     }
 
-    /** 添加自选（已存在则返回 false） */
+    /** 添加自选（已存在则返回 false；A 股代码自动剥交易所后缀） */
     function add(code: string, market: Market, name: string, kind?: 'index'): boolean {
-      const normalized = code.trim()
+      const normalized = normalizeCode(code, market)
       if (!normalized || has(normalized, market, kind)) return false
       items.value.push({
         code: normalized,
@@ -85,7 +92,7 @@ export const useWatchlistStore = defineStore(
      * 主图标的来源于自选列表，未跟踪时先加入）。
      */
     function ensureTracked(code: string, market: Market, name: string, kind?: 'index'): string {
-      const normalized = code.trim()
+      const normalized = normalizeCode(code, market)
       const found = items.value.find(
         (i) => i.code === normalized && i.market === market && (i.kind ?? '') === (kind ?? ''),
       )

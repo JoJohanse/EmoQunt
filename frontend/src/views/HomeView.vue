@@ -757,9 +757,11 @@ const klineOption = computed(() => {
           { left: '7%', right: '4%', top: '81%', height: '12%' },
         ],
     xAxis: [
-      klineXAxis({ data: dates, labelShow: false }),
-      klineXAxis({ data: dates, labelShow: !hasSub, ticks: monthTicks }),
-      ...(hasSub ? [klineXAxis({ data: dates, labelShow: true, ticks: monthTicks })] : []),
+      // gridIndex 必须与 yAxis 各窗格一一对应（缺省全落 grid 0 会触发
+      // 「xAxis and yAxis must use the same grid」，整个 option 渲染失败）
+      klineXAxis({ data: dates, gridIndex: 0, labelShow: false }),
+      klineXAxis({ data: dates, gridIndex: 1, labelShow: !hasSub, ticks: monthTicks }),
+      ...(hasSub ? [klineXAxis({ data: dates, gridIndex: 2, labelShow: true, ticks: monthTicks })] : []),
     ],
     yAxis: [
       { scale: true, splitArea: { show: true }, axisLabel: { formatter: (v: number) => fmtPriceNum(v) } },
