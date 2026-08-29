@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { recommendApi } from '@/api'
 import type { DailyRecommendData, RecommendedStock } from '@/api/types'
+import { recommendScoreColor } from '@/lib/marketColors'
 
 const data = ref<DailyRecommendData | null>(null)
 const loading = ref(false)
@@ -74,8 +75,8 @@ function scoreType(score: number): string {
       <el-table-column label="综合评分" width="180">
         <template #default="{ row }">
           <div style="display:flex;align-items:center;gap:8px">
-            <el-progress :percentage="row.score" :color="row.score >= 70 ? '#28a745' : row.score >= 60 ? '#667eea' : '#f59e0b'" :stroke-width="10" :show-text="false" style="flex:1" />
-            <strong :style="{ color: row.score >= 70 ? '#28a745' : row.score >= 60 ? '#667eea' : '#f59e0b' }">{{ row.score }}</strong>
+            <el-progress :percentage="row.score" :color="recommendScoreColor(row.score)" :stroke-width="10" :show-text="false" style="flex:1" />
+            <strong :style="{ color: recommendScoreColor(row.score) }">{{ row.score }}</strong>
           </div>
         </template>
       </el-table-column>

@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { sentimentApi } from '@/api'
 import type { SentimentData } from '@/api/types'
+import { sectorColor } from '@/lib/marketColors'
 
 const data = ref<SentimentData | null>(null)
 const loading = ref(false)
@@ -19,12 +20,6 @@ async function load(refresh = false) {
   }
 }
 onMounted(() => load())
-
-function sectorColor(sentiment: number): string {
-  if (sentiment >= 70) return '#28a745'
-  if (sentiment <= 40) return '#dc3545'
-  return '#6c757d'
-}
 </script>
 
 <template>

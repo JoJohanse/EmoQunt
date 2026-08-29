@@ -18,7 +18,14 @@ import type {
 } from '@/api/types'
 import { useWatchlistStore, targetKey } from '@/stores/watchlist'
 import type { WatchlistItem } from '@/stores/watchlist'
-import { chartPalette, deltaTone, deltaDirection, NEUTRAL_HEX } from '@/lib/marketColors'
+import {
+  chartPalette,
+  deltaTone,
+  deltaDirection,
+  NEUTRAL_HEX,
+  sectorColor,
+  recommendScoreColor,
+} from '@/lib/marketColors'
 import {
   candleItemStyle,
   chgVsPrevClose,
@@ -918,16 +925,7 @@ const sectorFallbackList = computed(() => {
   return [] as { name: string; val: number; label: string }[]
 })
 
-function sectorColor(sentiment: number): string {
-  if (sentiment >= 70) return '#28a745'
-  if (sentiment <= 40) return '#dc3545'
-  return '#6c757d'
-}
-function scoreColor(score: number): string {
-  if (score >= 70) return '#28a745'
-  if (score >= 60) return '#667eea'
-  return '#f59e0b'
-}
+// 板块情绪三档色 sectorColor / 推荐列表评分三档色 recommendScoreColor 统一收在 lib/marketColors
 </script>
 
 <template>
@@ -1376,7 +1374,7 @@ function scoreColor(score: number): string {
                 <div class="rec-head">
                   <span class="rec-name">{{ r.name }}</span>
                   <code class="rec-code">{{ r.code }}</code>
-                  <span class="rec-score" :style="{ color: scoreColor(r.score) }">{{ r.score }}</span>
+                  <span class="rec-score" :style="{ color: recommendScoreColor(r.score) }">{{ r.score }}</span>
                 </div>
                 <small class="rec-reason">{{ r.reason }}</small>
               </div>
