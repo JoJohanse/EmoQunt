@@ -7,7 +7,8 @@ import type { Market } from '@/api/types'
  * 两个出口按消费场景区分，禁止混用：
  *   - chartPalette：ECharts hex（画布内无法解析 CSS 变量），供图表序列/迷你走势线用；
  *   - deltaColor / deltaTone：CSS 侧（var(--danger)/var(--success)/var(--neutral)），供 DOM 徽章/文字用。
- * 评分色 scoreColor 与涨跌方向无关，单独命名，勿与涨跌方向色混用。
+ * 评分色 scoreColor 与涨跌方向无关，单独命名，勿与涨跌方向色混用；
+ * 板块情绪三档 sectorColor、推荐列表三档 recommendScoreColor 亦为独立语义，各自命名，勿互相混并。
  */
 
 /** ECharts 蜡烛/柱状的涨跌 hex（沿用既有视觉值） */
@@ -80,4 +81,26 @@ export function scoreColor(v: number): string {
   if (v >= 60) return '#667eea'
   if (v >= 45) return '#f59e0b'
   return '#dc3545'
+}
+
+/**
+ * 板块情绪分三档色：≥70 绿(#28a745) / ≤40 红(#dc3545) / 其余灰(#6c757d)。
+ * 与 scoreColor 是不同语义：这是板块情绪的三档口径（40-70 为中性灰，无紫/橙档），
+ * 勿混并。消费方：首页「热门板块」、舆情分析、情绪日历。
+ */
+export function sectorColor(v: number): string {
+  if (v >= 70) return '#28a745'
+  if (v <= 40) return '#dc3545'
+  return '#6c757d'
+}
+
+/**
+ * 每日推荐列表评分三档色：≥70 绿(#28a745) / ≥60 紫(#667eea) / 其余橙(#f59e0b)。
+ * 与四档 scoreColor 的差异：<60 一律橙、不落红档（scoreColor 对 <45 返回红）。
+ * 推荐列表两处消费（首页「个股推荐」/「每日推荐」）历史口径即此三档，按零视觉变化收拢。
+ */
+export function recommendScoreColor(v: number): string {
+  if (v >= 70) return '#28a745'
+  if (v >= 60) return '#667eea'
+  return '#f59e0b'
 }

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { SentimentCalendarItem } from '@/api/types'
+import { sectorColor } from '@/lib/marketColors'
 
 /**
  * 情绪日历：用 el-calendar 展示历史情绪快照。
- * 有快照的日期显示最强板块情绪分（颜色规则与首页板块一致：>=70 绿、<=40 红、其余灰），
+ * 有快照的日期显示最强板块情绪分（三档色收在 lib/marketColors 的 sectorColor：>=70 绿、<=40 红、其余灰），
  * 无快照日期留白。点击有数据的日期时 emit select(date)。
  */
 const props = defineProps<{
@@ -28,13 +29,6 @@ const byDate = computed(() => {
 /** 当前选中的日期（用于 el-calendar 定位月份，点选有快照日期时触发展开） */
 const selected = ref<Date | null>(null)
 
-/** 情绪颜色（与 HomeView 的 sectorColor 规则一致） */
-function sentimentColor(sentiment: number): string {
-  if (sentiment >= 70) return '#28a745'
-  if (sentiment <= 40) return '#dc3545'
-  return '#6c757d'
-}
-
 function handleSelect(date: string) {
   const item = byDate.value.get(date)
   if (item) emit('select', date)
@@ -56,7 +50,7 @@ function handleSelect(date: string) {
           <div v-if="byDate.has(data.day)" class="cal-dot-area">
             <span
               class="cal-dot"
-              :style="{ background: sentimentColor(byDate.get(data.day)!.top_sentiment) }"
+              :style="{ background: sectorColor(byDate.get(data.day)!.top_sentiment) }"
               :title="`${byDate.get(data.day)!.top_sector_name} · ${byDate.get(data.day)!.top_sentiment}`"
             />
           </div>
