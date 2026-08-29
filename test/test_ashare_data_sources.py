@@ -383,7 +383,7 @@ class TestAshareStockFallback:
         mock_sina.return_value = _make_sina_daily_df()
         from src.data.data_manager import Stock
         stock = Stock('000001', market='zh_a')
-        df, _ = stock.get_stock_data('20240101', '20240131', adjust='hfq', type='daily')
+        df = stock.get_stock_data('20240101', '20240131', adjust='hfq', type='daily')
 
         assert mock_sina.called
         assert not mock_em.called, "新浪源成功时不应回退到东财"
@@ -406,7 +406,7 @@ class TestAshareStockFallback:
         })
         from src.data.data_manager import Stock
         stock = Stock('000001', market='zh_a')
-        df, _ = stock.get_stock_data('20240101', '20240131', adjust='hfq', type='daily')
+        df = stock.get_stock_data('20240101', '20240131', adjust='hfq', type='daily')
 
         assert mock_sina.called
         assert mock_em.called, "新浪源空时应回退到东财"
@@ -425,7 +425,7 @@ class TestAshareStockFallback:
         mock_bs.return_value = _make_baostock_df()
         from src.data.data_manager import Stock
         stock = Stock('000001', market='zh_a')
-        df, _ = stock.get_stock_data('20240101', '20240131', adjust='hfq', type='daily')
+        df = stock.get_stock_data('20240101', '20240131', adjust='hfq', type='daily')
 
         assert mock_em.called, "应尝试东财源"
         assert mock_bs.called, "新浪和东财都空时应回退到 baostock"
@@ -446,7 +446,7 @@ class TestAshareStockFallback:
         })
         from src.data.data_manager import Stock
         stock = Stock('000001', market='zh_a')
-        df, _ = stock.get_stock_data('20240101', '20240131', adjust='hfq', type='daily')
+        df = stock.get_stock_data('20240101', '20240131', adjust='hfq', type='daily')
 
         assert mock_em.called, "新浪源异常时应回退到东财"
         assert not mock_bs.called
@@ -464,7 +464,7 @@ class TestAshareStockFallback:
         mock_bs.return_value = pd.DataFrame()
         from src.data.data_manager import Stock
         stock = Stock('000001', market='zh_a')
-        df, _ = stock.get_stock_data('20240101', '20240131', adjust='hfq', type='daily')
+        df = stock.get_stock_data('20240101', '20240131', adjust='hfq', type='daily')
 
         assert df.empty
 
@@ -478,7 +478,7 @@ class TestAshareStockFallback:
         mock_sina.return_value = _make_sina_daily_df()
         from src.data.data_manager import Stock
         stock = Stock('000001', market='zh_a')
-        df, _ = stock.get_stock_data('20240101', '20240131', adjust='hfq', type='daily')
+        df = stock.get_stock_data('20240101', '20240131', adjust='hfq', type='daily')
 
         for col in ('时间', '开盘', '最高', '最低', '收盘', '成交量'):
             assert col in df.columns, f"缺少中文列: {col}"
@@ -495,7 +495,7 @@ class TestAshareStockFallback:
         mock_ts.return_value = _make_sina_daily_df()
         from src.data.data_manager import Stock
         stock = Stock('000001', market='zh_a')
-        df, _ = stock.get_stock_data('20240101', '20240131', adjust='hfq', type='daily')
+        df = stock.get_stock_data('20240101', '20240131', adjust='hfq', type='daily')
 
         assert mock_ts.called, "应首选 Tushare"
         assert not mock_sina.called, "Tushare 成功时不应回退到新浪"
@@ -517,7 +517,7 @@ class TestAshareStockFallback:
         mock_sina.return_value = _make_sina_daily_df()
         from src.data.data_manager import Stock
         stock = Stock('000001', market='zh_a')
-        df, _ = stock.get_stock_data('20240101', '20240131', adjust='hfq', type='daily')
+        df = stock.get_stock_data('20240101', '20240131', adjust='hfq', type='daily')
 
         assert mock_ts.called, "应先试 Tushare"
         assert mock_sina.called, "Tushare 空时应回退到新浪"

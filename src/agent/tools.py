@@ -41,8 +41,8 @@ def get_stock_quote(stock_code: str, market: str = "zh_a", days: int = 30) -> st
         from datetime import datetime, timedelta
         end = datetime.now().strftime("%Y%m%d")
         start = (datetime.now() - timedelta(days=days * 2 + 30)).strftime("%Y%m%d")
-        df, _ = stock.get_stock_data(start_date=start, end_date=end,
-                                     adjust="qfq" if market == "us" else "hfq", type="daily")
+        df = stock.get_stock_data(start_date=start, end_date=end,
+                                  adjust="qfq" if market == "us" else "hfq", type="daily")
         if df is None or df.empty:
             return _err(f"无法获取 {stock_code} 的行情数据")
         df = df.tail(days).reset_index(drop=True)

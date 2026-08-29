@@ -573,7 +573,7 @@ def _run_backtest_core(
     cerebro.addanalyzer(bt.analyzers.TimeReturn, _name='timereturn')
 
     stock = Stock(stock_code, market=market)
-    stock_data, _ = stock.get_stock_data(
+    stock_data = stock.get_stock_data(
         start_date=start_date.replace('-', ''),
         end_date=end_date.replace('-', ''),
         adjust='qfq' if market == 'us' else 'hfq',

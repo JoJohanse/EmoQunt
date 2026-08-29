@@ -125,7 +125,7 @@ def get_kline(stock_code: str, market: str = "zh_a", days: int = 180,
         name = INDEX_NAMES.get(stock_code, "")
     else:
         stock = Stock(stock_code, market=market)
-        df, _ = stock.get_stock_data(
+        df = stock.get_stock_data(
             start_date=start_date, end_date=end_date,
             adjust=adjust, type='daily',
         )

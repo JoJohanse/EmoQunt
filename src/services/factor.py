@@ -77,7 +77,7 @@ def _fetch_one(code: str, start_date: str, end_date: str) -> pd.DataFrame:
     try:
         from src.data.data_manager import Stock
         stock = Stock(code, market="zh_a")
-        df, _ = stock.get_stock_data(
+        df = stock.get_stock_data(
             start_date=start_date, end_date=end_date, adjust="qfq", type="daily",
         )
         if df is None or df.empty or "时间" not in df.columns:
