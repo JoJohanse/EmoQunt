@@ -24,6 +24,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.data.data_manager import Stock
 from src.data.columns import DATE, OPEN, HIGH, LOW, CLOSE, VOLUME
+from src.utils.serialize import safe_float, safe_metric
 
 # 绩效指标唯一事实来源为 calculate_strategy_metrics，PerformanceAnalyzer.generate_report 为旧报告视图
 class PerformanceAnalyzer:
@@ -458,6 +459,24 @@ def calculate_strategy_metrics(
         }
 
 
+def _extract_trade_won_lost(ta) -> Tuple[int, int, float, float]:
+    """从 TradeAnalyzer 提取已平仓交易的盈/亏笔数与盈/亏金额（容错：结构异常记 0）。
+
+    :param ta: tradeanalyzer 分析器实例（falsy 时直接返回全 0）
+    :return: (won_count, lost_count, won_pnl_total, lost_pnl_total_abs)
+    """
+    if not ta:
+        return 0, 0, 0.0, 0.0
+    rep = ta.get_analysis()
+    won = rep.get('won', {})
+    lost = rep.get('lost', {})
+    wn = won.get('total', 0) if isinstance(won, dict) else 0
+    ln = lost.get('total', 0) if isinstance(lost, dict) else 0
+    wp = won.get('pnl', {}).get('total', 0) if isinstance(won.get('pnl'), dict) else 0
+    lp = abs(lost.get('pnl', {}).get('total', 0)) if isinstance(lost.get('pnl'), dict) else 0
+    return wn, ln, wp, lp
+
+
 def _build_enrichment_reports(daily_returns, equity, strat, initial_capital, perf_analyzer=None):
     """生成完整绩效报告 + 事后风险报告（激活 PerformanceAnalyzer / RiskManager）。
 
@@ -480,22 +499,12 @@ def _build_enrichment_reports(daily_returns, equity, strat, initial_capital, per
         pa = perf_analyzer or PerformanceAnalyzer(daily_returns.dropna())
         try:
             # 注入真实交易级胜负，使胜率/盈亏比准确（generate_report 默认用日线正收益日启发式）
-            if strat is not None:
-                ta = strat.analyzers.getbyname('tradeanalyzer')
-            else:
-                ta = None
-            if ta:
-                rep = ta.get_analysis()
-                won = rep.get('won', {})
-                lost = rep.get('lost', {})
-                wn = won.get('total', 0) if isinstance(won, dict) else 0
-                ln = lost.get('total', 0) if isinstance(lost, dict) else 0
-                pa_report = pa.generate_report()
-                if wn + ln > 0:
-                    pa_report['胜率'] = pa.calculate_win_rate(wn, ln)
-                performance_report = pa_report
-            else:
-                performance_report = pa.generate_report()
+            ta = strat.analyzers.getbyname('tradeanalyzer') if strat is not None else None
+            wn, ln, _wp, _lp = _extract_trade_won_lost(ta)
+            pa_report = pa.generate_report()
+            if wn + ln > 0:
+                pa_report['胜率'] = pa.calculate_win_rate(wn, ln)
+            performance_report = pa_report
         except Exception as e:
             logger.warning(f"生成完整绩效报告失败（降级）: {e}")
             performance_report = pa.generate_report()
@@ -549,22 +558,15 @@ def _run_backtest_core(
 
     logger = logging.getLogger(__name__)
 
-    # 读取 backtest 配置默认值
-    try:
-        from config.config_loader import get
-        slippage_enabled_cfg = get('backtest.slippage_enabled', False)
-    except Exception:
-        slippage_enabled_cfg = False
-
     cerebro = bt.Cerebro()
     cerebro.broker.setcash(initial_capital)
     if market == 'us':
         cerebro.broker.addcommissioninfo(USStockCommInfo(commission_rate=commission_rate))
     else:
         cerebro.broker.addcommissioninfo(AShareCommInfo(commission_rate=commission_rate))
-    # 滑点：保持原有行为（slippage_enabled_cfg or True 恒为 True，始终启用）
-    if slippage_enabled_cfg or True:
-        cerebro.broker.set_slippage_perc(perc=slippage_rate)
+    # 滑点始终启用（与既有行为一致：原实现读 config 后 `slippage_enabled_cfg or True` 恒为真，
+    # backtest.slippage_enabled 死旋钮已随 config.yaml 一并移除）
+    cerebro.broker.set_slippage_perc(perc=slippage_rate)
     cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name='tradeanalyzer')
     cerebro.addanalyzer(_TradeRecorder, _name='traderecorder')
     cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharperatio')
@@ -647,18 +649,11 @@ def _run_backtest_core(
     profit_loss_real = None
     try:
         ta = strat.analyzers.getbyname('tradeanalyzer')
-        if ta:
-            rep = ta.get_analysis()
-            won = rep.get('won', {})
-            lost = rep.get('lost', {})
-            wn = won.get('total', 0) if isinstance(won, dict) else 0
-            ln = lost.get('total', 0) if isinstance(lost, dict) else 0
-            if wn + ln > 0:
-                win_rate_real = wn / (wn + ln)
-                wp = won.get('pnl', {}).get('total', 0) if isinstance(won.get('pnl'), dict) else 0
-                lp = abs(lost.get('pnl', {}).get('total', 0)) if isinstance(lost.get('pnl'), dict) else 0
-                if lp > 0:
-                    profit_loss_real = wp / lp
+        wn, ln, wp, lp = _extract_trade_won_lost(ta)
+        if wn + ln > 0:
+            win_rate_real = wn / (wn + ln)
+            if lp > 0:
+                profit_loss_real = wp / lp
     except Exception as e:
         logger.warning(f"tradeanalyzer 提取失败: {e}")
 
@@ -730,6 +725,101 @@ def _run_backtest_core(
     }
 
 
+def _format_metrics_percent(
+    metrics_raw: Dict,
+    alpha: Optional[float] = None,
+    beta: Optional[float] = None,
+    info_ratio: Optional[float] = None,
+) -> Dict:
+    """图表路径（run_backtest_with_charts）的指标格式化：百分比字符串/两位小数。
+
+    底层统一走 serialize.safe_float（NaN/inf → 0.0），键集合与既有 Jinja2
+    模板契约一致：Alpha/Beta/信息比率 仅在有值时输出。
+    """
+    m = metrics_raw or {}
+    formatted = {
+        "总收益率": f"{safe_float(m.get('总收益率', 0)):.2%}",
+        "年化收益率": f"{safe_float(m.get('年化收益率', 0)):.2%}",
+        "夏普比率": round(safe_float(m.get('夏普比率', 0)), 2),
+        "最大回撤": f"{safe_float(m.get('最大回撤', 0)):.2%}",
+        "胜率": f"{safe_float(m.get('胜率', 0)):.2%}",
+        "盈亏比": round(safe_float(m.get('盈亏比', 0)), 2),
+    }
+    if alpha is not None and beta is not None:
+        formatted["Alpha"] = f"{safe_float(alpha):.2%}"
+        formatted["Beta"] = round(safe_float(beta), 2)
+    if info_ratio is not None:
+        formatted["信息比率"] = round(safe_float(info_ratio), 2)
+    return formatted
+
+
+def _format_metrics_json(
+    metrics_raw: Dict,
+    performance_report: Optional[Dict],
+    risk_report: Optional[Dict],
+    alpha: Optional[float] = None,
+    beta: Optional[float] = None,
+    info_ratio: Optional[float] = None,
+) -> Tuple[Dict, Optional[Dict]]:
+    """把 _run_backtest_core 的指标产物格式化为 JSON 契约（run_backtest_json 专用）。
+
+    键集合与数值必须与既有 SPA 契约逐字一致（frontend/src/api/types.ts 与
+    localStorage 回测存档依赖这些中文键）。所有数值统一经 serialize 的
+    safe-float（NaN/inf → 0.0），datetime/Timestamp → 'YYYY-MM-DD'。
+
+    :return: (metrics, risk_report_formatted)，risk_report 无数据时为 None
+    """
+    m = metrics_raw or {}
+    metrics = {
+        "总收益率": safe_float(m.get("总收益率", 0), 6),
+        "年化收益率": safe_float(m.get("年化收益率", 0), 6),
+        "夏普比率": safe_float(m.get("夏普比率", 0), 4),
+        "最大回撤": safe_float(m.get("最大回撤", 0), 6),
+        "胜率": safe_float(m.get("胜率", 0), 6),
+        "盈亏比": safe_float(m.get("盈亏比", 0), 4),
+    }
+    if alpha is not None:
+        metrics["Alpha"] = safe_float(alpha, 6)
+    if beta is not None:
+        metrics["Beta"] = safe_float(beta, 4)
+    if info_ratio is not None:
+        metrics["信息比率"] = safe_float(info_ratio, 4)
+
+    # ---- 追加完整绩效报告的新增指标（波动率/卡玛/下行差/VaR/CVaR/交易统计）----
+    pr = performance_report or {}
+    for k in ("年化波动率", "卡玛比率", "下行标准差", "VaR (95%)", "CVaR (95%)",
+              "交易次数", "盈利交易数", "亏损交易数", "平均盈利", "平均亏损",
+              "最大回撤开始时间", "最大回撤结束时间"):
+        if k in pr and pr[k] is not None:
+            metrics[k] = safe_metric(pr[k], 6)
+
+    # ---- 风险报告（顶层字段，前端单独渲染风险面板）----
+    formatted_risk = None
+    if risk_report:
+        rr = risk_report
+        formatted_risk = {
+            "portfolio_value": safe_float(rr.get("portfolio_value", 0), 2),
+            "current_drawdown": safe_float(rr.get("current_drawdown", 0), 6),
+            "max_drawdown_limit": safe_float(rr.get("max_drawdown_limit", 0), 4),
+            "volatility": safe_float(rr.get("volatility", 0), 6),
+            "sharpe_ratio": safe_float(rr.get("sharpe_ratio", 0), 4),
+            "blacklist_count": int(rr.get("blacklist_count", 0) or 0),
+            "var_analysis": {
+                "historical_var": safe_float((rr.get("var_analysis") or {}).get("historical_var", 0), 2),
+                "parametric_var": safe_float((rr.get("var_analysis") or {}).get("parametric_var", 0), 2),
+                "cvar": safe_float((rr.get("var_analysis") or {}).get("cvar", 0), 2),
+                "confidence_level": safe_float((rr.get("var_analysis") or {}).get("confidence_level", 0.95), 2),
+            },
+            "stress_test": {
+                k: safe_float(v, 2) for k, v in (rr.get("stress_test") or {}).items()
+            },
+            "risk_limits": {
+                k: safe_float(v, 4) for k, v in (rr.get("risk_limits") or {}).items()
+            },
+        }
+    return metrics, formatted_risk
+
+
 def run_backtest_with_charts(
     strategy_name: str,
     stock_code: str,
@@ -739,7 +829,6 @@ def run_backtest_with_charts(
     commission_rate: float = 0.0003,
     output_dir: str = "output",
     benchmark_index: str = "000300",
-    use_ashare_costs: bool = True,
     slippage_rate: float = 0.0005,
     apply_sentiment_filter: bool = True,
     market: str = "zh_a",
@@ -759,19 +848,9 @@ def run_backtest_with_charts(
     )
 
     m = core["metrics_raw"]
-    formatted_performance = {
-        "总收益率": f"{m.get('总收益率', 0):.2%}",
-        "年化收益率": f"{m.get('年化收益率', 0):.2%}",
-        "夏普比率": round(m.get('夏普比率', 0), 2),
-        "最大回撤": f"{m.get('最大回撤', 0):.2%}",
-        "胜率": f"{m.get('胜率', 0):.2%}",
-        "盈亏比": round(m.get('盈亏比', 0), 2),
-    }
-    if core["alpha"] is not None and core["beta"] is not None:
-        formatted_performance["Alpha"] = f"{core['alpha']:.2%}"
-        formatted_performance["Beta"] = round(core["beta"], 2)
-    if core["info_ratio"] is not None:
-        formatted_performance["信息比率"] = round(core["info_ratio"], 2)
+    formatted_performance = _format_metrics_percent(
+        m, alpha=core["alpha"], beta=core["beta"], info_ratio=core["info_ratio"],
+    )
 
     daily_returns = core["daily_returns"]
     benchmark_returns = core["benchmark_returns"]
@@ -828,75 +907,10 @@ def run_backtest_json(
         market=market, apply_sentiment_filter=False,  # JSON 路径不用情绪过滤（与原行为一致）
     )
 
-    def _safe(v, nd=6):
-        try:
-            f = float(v)
-            if not np.isfinite(f):
-                return 0.0
-            return round(f, nd)
-        except (TypeError, ValueError):
-            return 0.0
-
-    def _safe_any(v, nd=6):
-        """序列化任意指标值：数值→_safe，datetime/Timestamp→ISO str，其它→原值。
-
-        注意 pd.Timestamp 不是 datetime 的子类，需单独判断；
-        PerformanceAnalyzer 的最大回撤起止时间可能是 Timestamp。
-        """
-        if isinstance(v, (datetime, pd.Timestamp)):
-            return pd.Timestamp(v).strftime('%Y-%m-%d')
-        if isinstance(v, (int, float, np.floating, np.integer)):
-            return _safe(v, nd)
-        return v
-
-    m = core["metrics_raw"]
-    metrics = {
-        "总收益率": _safe(m.get("总收益率", 0), 6),
-        "年化收益率": _safe(m.get("年化收益率", 0), 6),
-        "夏普比率": _safe(m.get("夏普比率", 0), 4),
-        "最大回撤": _safe(m.get("最大回撤", 0), 6),
-        "胜率": _safe(m.get("胜率", 0), 6),
-        "盈亏比": _safe(m.get("盈亏比", 0), 4),
-    }
-    if core["alpha"] is not None:
-        metrics["Alpha"] = _safe(core["alpha"], 6)
-    if core["beta"] is not None:
-        metrics["Beta"] = _safe(core["beta"], 4)
-    if core["info_ratio"] is not None:
-        metrics["信息比率"] = _safe(core["info_ratio"], 4)
-
-    # ---- 追加完整绩效报告的新增指标（波动率/卡玛/下行差/VaR/CVaR/交易统计）----
-    pr = core.get("performance_report") or {}
-    for k in ("年化波动率", "卡玛比率", "下行标准差", "VaR (95%)", "CVaR (95%)",
-              "交易次数", "盈利交易数", "亏损交易数", "平均盈利", "平均亏损",
-              "最大回撤开始时间", "最大回撤结束时间"):
-        if k in pr and pr[k] is not None:
-            metrics[k] = _safe_any(pr[k], 6)
-
-    # ---- 风险报告（顶层字段，前端单独渲染风险面板）----
-    rr = core.get("risk_report")
-    risk_report = None
-    if rr:
-        risk_report = {
-            "portfolio_value": _safe(rr.get("portfolio_value", 0), 2),
-            "current_drawdown": _safe(rr.get("current_drawdown", 0), 6),
-            "max_drawdown_limit": _safe(rr.get("max_drawdown_limit", 0), 4),
-            "volatility": _safe(rr.get("volatility", 0), 6),
-            "sharpe_ratio": _safe(rr.get("sharpe_ratio", 0), 4),
-            "blacklist_count": int(rr.get("blacklist_count", 0) or 0),
-            "var_analysis": {
-                "historical_var": _safe((rr.get("var_analysis") or {}).get("historical_var", 0), 2),
-                "parametric_var": _safe((rr.get("var_analysis") or {}).get("parametric_var", 0), 2),
-                "cvar": _safe((rr.get("var_analysis") or {}).get("cvar", 0), 2),
-                "confidence_level": _safe((rr.get("var_analysis") or {}).get("confidence_level", 0.95), 2),
-            },
-            "stress_test": {
-                k: _safe(v, 2) for k, v in (rr.get("stress_test") or {}).items()
-            },
-            "risk_limits": {
-                k: _safe(v, 4) for k, v in (rr.get("risk_limits") or {}).items()
-            },
-        }
+    metrics, risk_report = _format_metrics_json(
+        core["metrics_raw"], core.get("performance_report"), core.get("risk_report"),
+        alpha=core["alpha"], beta=core["beta"], info_ratio=core["info_ratio"],
+    )
 
     daily_returns = core["daily_returns"]
     equity = core["equity"]
@@ -911,9 +925,9 @@ def run_backtest_json(
         "metrics": metrics,
         "risk_report": risk_report,
         "dates": dates,
-        "equity_curve": [_safe(v, 2) for v in equity.tolist()],
-        "benchmark_curve": [_safe(v, 4) for v in benchmark_curve] if benchmark_curve else [],
-        "drawdown": [_safe(v, 6) for v in drawdown.tolist()],
-        "daily_returns": [_safe(v, 6) for v in daily_returns.tolist()],
+        "equity_curve": [safe_float(v, 2) for v in equity.tolist()],
+        "benchmark_curve": [safe_float(v, 4) for v in benchmark_curve] if benchmark_curve else [],
+        "drawdown": [safe_float(v, 6) for v in drawdown.tolist()],
+        "daily_returns": [safe_float(v, 6) for v in daily_returns.tolist()],
         "trades": core.get("trades", []),
     }

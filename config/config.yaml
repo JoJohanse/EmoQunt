@@ -47,8 +47,8 @@ backtest:
   initial_capital: 100000.0
   # 默认佣金费率
   commission_rate: 0.001
-  # 是否启用滑点模拟
-  slippage_enabled: false
+  # 滑点始终启用（与既有行为一致）；原 slippage_enabled 开关从未真正生效（回测侧恒为真），已移除
+  # slippage_enabled: false
   # 滑点比例
   slippage_rate: 0.0005
 
