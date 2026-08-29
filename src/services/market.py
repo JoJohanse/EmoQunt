@@ -8,30 +8,21 @@
   交易日统计，失败时置 None 不阻塞整体。
 - 东财行情快照（spot_em）与乐咕活跃度接口在部分网络环境不可达，故不作为依赖。
 
-进程内 TTL 缓存 5 分钟（与 web_app._strategy_cache 同思路），避免首页多次刷新
+进程内 TTL 缓存 5 分钟（src.utils.ttl_cache 助手），避免首页多次刷新
 反复打数据源。板块 DataFrame 本身也做短 TTL 缓存，避免冷缓存时 breadth 与
 sectors 并行请求各打一次 THS 全量爬取。
 """
 import concurrent.futures
 import logging
-import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+
+from src.utils.ttl_cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
 _CACHE_TTL = 300  # 秒
-_CACHE: Dict[str, tuple[float, Any]] = {}
-
-
-def _cached(key: str, fn):
-    """简单进程内 TTL 缓存；命中返回缓存值，否则执行 fn 并写回。"""
-    hit = _CACHE.get(key)
-    if hit and time.time() - hit[0] < _CACHE_TTL:
-        return hit[1]
-    value = fn()
-    _CACHE[key] = (time.time(), value)
-    return value
+_CACHE = TTLCache()
 
 
 def _to_num(value, default: float = 0.0):
@@ -93,12 +84,7 @@ def _load_sector_df():
 
 def _get_sector_df_cached():
     """带 TTL 的板块 DataFrame 单例，供两个对外函数共享，避免冷缓存双爬。"""
-    hit = _CACHE.get("_ths_df")
-    if hit and time.time() - hit[0] < _CACHE_TTL:
-        return hit[1]
-    df = _load_sector_df()
-    _CACHE["_ths_df"] = (time.time(), df)
-    return df
+    return _CACHE.get_or_set("_ths_df", _load_sector_df, ttl=_CACHE_TTL)
 
 
 def get_sector_board() -> Dict[str, Any]:
@@ -128,7 +114,7 @@ def get_sector_board() -> Dict[str, Any]:
         }
 
     try:
-        return _cached("sector_board", _fetch)
+        return _CACHE.get_or_set("sector_board", _fetch, ttl=_CACHE_TTL)
     except Exception as e:
         logger.error(f"获取行业板块行情失败: {e}", exc_info=True)
         raise
@@ -174,7 +160,7 @@ def get_market_breadth() -> Dict[str, Any]:
         }
 
     try:
-        return _cached("market_breadth", _fetch)
+        return _CACHE.get_or_set("market_breadth", _fetch, ttl=_CACHE_TTL)
     except Exception as e:
         logger.error(f"获取市场宽度失败: {e}", exc_info=True)
         raise
