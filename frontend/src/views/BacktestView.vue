@@ -4,6 +4,15 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { backtestApi, strategyApi, klineApi } from '@/api'
 import type { BacktestMetrics, BacktestRequest, BacktestResult, BacktestTrade, KlineData, Market, StrategyDetail } from '@/api/types'
+import { chartPalette, deltaTone } from '@/lib/marketColors'
+import {
+  candleItemStyle,
+  chgVsPrevClose,
+  crosshairPointer,
+  fmtPriceNum,
+  klineDataZoom,
+  klineXAxis,
+} from '@/chart/kline'
 import { useBacktestHistoryStore } from '@/stores/backtestHistory'
 import { VChart } from '@/composables/useECharts'
 
@@ -101,20 +110,23 @@ async function runBacktest() {
 const metricCards = computed(() => {
   if (!result.value) return []
   const m = result.value.metrics
+  const market = result.value.market
   const fmtPct = (v: number) => (v * 100).toFixed(2) + '%'
   const fmtNum = (v: number) => v.toFixed(2)
+  // 正/负收益的语义色调：A股红涨绿跌 / 美股绿涨红跌（此前固定绿涨，A股正收益误显示为绿）
+  const retTone = (v: number) => deltaTone(market, v >= 0 ? 'up' : 'down')
   const opt = (key: keyof BacktestMetrics, label: string, fmt: (v: number) => string, type: (v: number) => 'success' | 'danger' | 'neutral', group: string) =>
     m[key] !== undefined ? [{ label, value: fmt(m[key] as number), type: type(m[key] as number), group }] : []
   return [
-    { label: '总收益率', value: fmtPct(m.总收益率), type: m.总收益率 >= 0 ? 'success' : 'danger', group: 'return' },
-    { label: '年化收益率', value: fmtPct(m.年化收益率), type: m.年化收益率 >= 0 ? 'success' : 'danger', group: 'return' },
-    { label: '夏普比率', value: fmtNum(m.夏普比率), type: m.夏普比率 >= 0 ? 'success' : 'danger', group: 'return' },
+    { label: '总收益率', value: fmtPct(m.总收益率), type: retTone(m.总收益率), group: 'return' },
+    { label: '年化收益率', value: fmtPct(m.年化收益率), type: retTone(m.年化收益率), group: 'return' },
+    { label: '夏普比率', value: fmtNum(m.夏普比率), type: retTone(m.夏普比率), group: 'return' },
     { label: '最大回撤', value: fmtPct(m.最大回撤), type: 'danger', group: 'risk' },
     { label: '胜率', value: fmtPct(m.胜率), type: 'neutral', group: 'return' },
     { label: '盈亏比', value: fmtNum(m.盈亏比), type: m.盈亏比 >= 1 ? 'success' : 'danger', group: 'return' },
-    ...(m.Alpha !== undefined ? [{ label: 'Alpha', value: fmtPct(m.Alpha), type: m.Alpha >= 0 ? 'success' : 'danger', group: 'benchmark' }] : []),
+    ...(m.Alpha !== undefined ? [{ label: 'Alpha', value: fmtPct(m.Alpha), type: retTone(m.Alpha), group: 'benchmark' }] : []),
     ...(m.Beta !== undefined ? [{ label: 'Beta', value: fmtNum(m.Beta), type: 'neutral', group: 'benchmark' }] : []),
-    ...(m.信息比率 !== undefined ? [{ label: '信息比率', value: fmtNum(m.信息比率), type: m.信息比率 >= 0 ? 'success' : 'danger', group: 'benchmark' }] : []),
+    ...(m.信息比率 !== undefined ? [{ label: '信息比率', value: fmtNum(m.信息比率), type: retTone(m.信息比率), group: 'benchmark' }] : []),
     // 完整绩效报告新增指标（可选）
     ...opt('年化波动率', '年化波动率', fmtPct, (v) => (v <= 0.25 ? 'success' : 'danger'), 'risk'),
     ...opt('卡玛比率', '卡玛比率', fmtNum, (v) => (v >= 1 ? 'success' : 'danger'), 'return'),
@@ -219,6 +231,8 @@ const drawdownOption = computed(() => {
 const returnsOption = computed(() => {
   if (!result.value) return {}
   const r = result.value
+  // 日收益柱涨跌色按回测市场取 token：A股红涨绿跌 / 美股绿涨红跌（此前固定绿涨）
+  const { up, down } = chartPalette(r.market)
   return {
     tooltip: { trigger: 'axis', valueFormatter: (v: number) => (v * 100).toFixed(2) + '%' },
     grid: { left: '3%', right: '3%', bottom: '15%', containLabel: true },
@@ -234,7 +248,7 @@ const returnsOption = computed(() => {
         type: 'bar',
         data: r.daily_returns.map((v) => ({
           value: v,
-          itemStyle: { color: v >= 0 ? '#28a745' : '#dc3545' },
+          itemStyle: { color: v >= 0 ? up : down },
         })),
       },
     ],
@@ -277,10 +291,8 @@ const tradesKlineOption = computed(() => {
   const k = tradesKline.value
   if (!k || !k.dates.length || !result.value) return {}
   const trades: BacktestTrade[] = result.value.trades ?? []
-  const isUS = k.market === 'us'
-  // 与 K 线主图一致的涨跌配色：A股红涨绿跌 / 美股绿涨红跌
-  const upColor = isUS ? '#26a69a' : '#ef232a'
-  const downColor = isUS ? '#ef5350' : '#14b143'
+  // 与 K 线主图一致的涨跌配色：A股红涨绿跌 / 美股绿涨红跌（token 见 lib/marketColors）
+  const { up: upColor, down: downColor } = chartPalette(k.market)
 
   const buys = trades.filter((t) => t.side === 'buy')
   const cost = buys.length
@@ -300,14 +312,14 @@ const tradesKlineOption = computed(() => {
   return {
     tooltip: {
       trigger: 'axis',
-      axisPointer: { type: 'cross', label: { backgroundColor: '#6a7985' } },
+      axisPointer: crosshairPointer(),
       formatter(params: any) {
         const arr: any[] = Array.isArray(params) ? params : [params]
         const idx = arr[0]?.dataIndex ?? 0
         const o = k.ohlcv[idx]
         if (!o) return k.dates[idx] ?? ''
-        const prev = idx > 0 ? k.ohlcv[idx - 1]![1] : o[0]
-        const chg = prev ? (o[1] / prev - 1) * 100 : 0
+        // 前收涨跌口径统一走 chart/kline（首根回退为开盘价）
+        const chg = chgVsPrevClose(k.ohlcv, idx).chgPct
         return (
           `<b>${k.dates[idx]}</b><br/>` +
           `开 ${o[0].toFixed(2)} 收 ${o[1].toFixed(2)}<br/>` +
@@ -317,35 +329,18 @@ const tradesKlineOption = computed(() => {
       },
     },
     grid: { left: '3%', right: '4%', top: 34, bottom: 52, containLabel: true },
-    xAxis: {
-      type: 'category',
-      data: k.dates,
-      boundaryGap: true,
-      min: 'dataMin',
-      max: 'dataMax',
-      axisLine: { onZero: false },
-      axisTick: { show: false },
-    },
+    xAxis: klineXAxis({ data: k.dates }),
     yAxis: {
       scale: true,
-      axisLabel: {
-        formatter: (v: number) =>
-          v.toLocaleString('zh-CN', {
-            minimumFractionDigits: Math.abs(v) >= 1000 ? 0 : 2,
-            maximumFractionDigits: Math.abs(v) >= 1000 ? 0 : 2,
-          }),
-      },
+      axisLabel: { formatter: fmtPriceNum },
     },
-    dataZoom: [
-      { type: 'inside', start: 0, end: 100, minValueSpan: 15, zoomOnMouseWheel: true, moveOnMouseMove: true },
-      { type: 'slider', start: 0, end: 100, height: 18, bottom: 12 },
-    ],
+    dataZoom: klineDataZoom({ sliderBottom: 12 }),
     series: [
       {
         name: '日K',
         type: 'candlestick',
         data: k.ohlcv,
-        itemStyle: { color: upColor, color0: downColor, borderColor: upColor, borderColor0: downColor },
+        itemStyle: candleItemStyle(k.market),
         markPoint: { data: markPointData, animation: false },
         // 买入加权平均成本线（对标 Lightweight Charts PriceLine：带标题的价格线）
         ...(cost != null

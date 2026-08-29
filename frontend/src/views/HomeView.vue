@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
 import { klineApi, sentimentApi, recommendApi, marketApi } from '@/api'
@@ -17,7 +18,21 @@ import type {
 } from '@/api/types'
 import { useWatchlistStore, targetKey } from '@/stores/watchlist'
 import type { WatchlistItem } from '@/stores/watchlist'
+import { chartPalette, deltaTone, deltaDirection, NEUTRAL_HEX } from '@/lib/marketColors'
+import {
+  candleItemStyle,
+  chgVsPrevClose,
+  crosshairPointer,
+  fmtPriceNum,
+  klineDataZoom,
+  klineXAxis,
+  linkedCrosshair,
+  monthTickConfig,
+} from '@/chart/kline'
 import { useBacktestHistoryStore } from '@/stores/backtestHistory'
+import { useKlinePrefsStore } from '@/stores/klinePrefs'
+import type { KlinePeriod, KlineAdjust } from '@/stores/klinePrefs'
+import { calcMA, calcBOLL, calcMACD, calcKDJ, calcRSI } from '@/lib/indicators'
 import { useHomeLayoutStore } from '@/stores/homeLayout'
 import { useUiStore } from '@/stores/ui'
 import { usePolling } from '@/composables/usePolling'
@@ -119,46 +134,13 @@ const recommend = ref<DailyRecommendData | null>(null)
 const loadingKline = ref(false)
 const klineChartRef = ref<InstanceType<typeof VChart> | null>(null)
 
-// ===== K线工具栏偏好（周期/复权/主图叠加/副图指标），持久化到 localStorage =====
-function loadPref<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key)
-    if (raw !== null) return JSON.parse(raw) as T
-  } catch { /* ignore */ }
-  return fallback
-}
-function savePref(key: string, value: unknown) {
-  try { localStorage.setItem(key, JSON.stringify(value)) } catch { /* quota */ }
-}
-
-type KlinePeriod = 'day' | 'week' | 'month'
-type KlineAdjust = 'qfq' | 'hfq' | 'nfq'
-type OverlayMode = 'none' | 'ma' | 'boll'
-type SubIndicator = 'none' | 'macd' | 'kdj' | 'rsi'
-
-const PERIOD_KEY = 'emoqunt:kline_period'
-const ADJUST_KEY = 'emoqunt:kline_adjust'
-const OVERLAY_KEY = 'emoqunt:kline_overlay'
-const SUB_KEY = 'emoqunt:kline_sub'
+// ===== K线工具栏偏好（周期/复权/主图叠加/副图指标），收在 stores/klinePrefs =====
+// （persist 插件持久化 + 旧裸键迁移；storeToRefs 保持既有 .value 写法与模板 v-model 不变）
+const { period: klinePeriod, adjust: klineAdjust, overlay: klineOverlay, sub: klineSub } =
+  storeToRefs(useKlinePrefsStore())
 
 const PERIOD_LABELS: Record<KlinePeriod, string> = { day: '日线', week: '周线', month: '月线' }
 const ADJUST_LABELS: Record<KlineAdjust, string> = { qfq: '前复权', hfq: '后复权', nfq: '不复权' }
-
-const klinePeriod = ref(loadPref<KlinePeriod>(PERIOD_KEY, 'day'))
-// 兼容旧「MA 开关」：kline_ma=false 迁移为主图叠加=无
-const klineOverlayInit = loadPref<OverlayMode | ''>(OVERLAY_KEY, '')
-const klineOverlay = ref<OverlayMode>(
-  klineOverlayInit === 'ma' || klineOverlayInit === 'boll' || klineOverlayInit === 'none'
-    ? klineOverlayInit
-    : (loadPref('emoqunt:kline_ma', true) ? 'ma' : 'none'),
-)
-const klineAdjust = ref(loadPref(ADJUST_KEY, 'qfq') as KlineAdjust)
-const klineSub = ref(loadPref(SUB_KEY, 'macd') as SubIndicator)
-
-watch(klinePeriod, (v) => savePref(PERIOD_KEY, v))
-watch(klineOverlay, (v) => savePref(OVERLAY_KEY, v))
-watch(klineAdjust, (v) => savePref(ADJUST_KEY, v))
-watch(klineSub, (v) => savePref(SUB_KEY, v))
 
 function resetKlineZoom() {
   try {
@@ -311,13 +293,19 @@ usePolling(loadQuotes, { intervalMs: 60_000 })
 // 数据源心跳变化缓慢，5 分钟刷一次
 usePolling(loadSourceHealth, { intervalMs: 300_000 })
 
-/** 行内 sparkline 颜色：按区间涨跌 + 市场配色约定 */
+/** 行内 sparkline 颜色：按区间涨跌取市场涨跌色（A股红涨绿跌 / 美股绿涨红跌） */
 function sparkColor(item: WatchlistItem): string {
   const closes = quoteOf(item.code, item.market, item.kind)?.closes ?? []
   if (closes.length < 2) return '#667eea'
   const up = (closes[closes.length - 1] ?? 0) >= (closes[0] ?? 0)
-  // 红色条件：A股上涨 或 美股下跌
-  return up === (item.market === 'zh_a') ? '#ef232a' : '#14b143'
+  const { up: upColor, down: downColor } = chartPalette(item.market)
+  return up ? upColor : downColor
+}
+
+/** 指数速览 sparkline 颜色：按当日涨跌取市场涨跌色（收拢模板内联三元） */
+function chgSparkColor(market: Market, chgPct: number | undefined): string {
+  const { up, down } = chartPalette(market)
+  return (chgPct ?? 0) < 0 ? down : up
 }
 
 // 添加自选：先拉 2 根 K 线校验代码并解析名称
@@ -353,12 +341,13 @@ function removeWatch(code: string, market: Market, kind?: 'index') {
   watchlistStore.remove(code, market, kind)
 }
 
-// 涨跌徽章（A股红涨绿跌，美股绿涨红跌）
+// 涨跌徽章（A股红涨绿跌，美股绿涨红跌；方向→色调语义映射收拢在 lib/marketColors）
 function deltaBadgeStyle(market: Market, chgPct: number): Record<string, string> {
-  if (chgPct === 0) return { background: 'var(--neutral)', color: '#fff' }
-  const up = chgPct > 0
-  if (market === 'zh_a') return up ? { background: '#fef2f2', color: 'var(--danger)', border: '1px solid #fecaca' } : { background: '#f0fdf4', color: 'var(--success)', border: '1px solid #bbf7d0' }
-  return up ? { background: '#f0fdf4', color: 'var(--success)', border: '1px solid #bbf7d0' } : { background: '#fef2f2', color: 'var(--danger)', border: '1px solid #fecaca' }
+  const tone = deltaTone(market, deltaDirection(chgPct))
+  if (tone === 'neutral') return { background: 'var(--neutral)', color: '#fff' }
+  return tone === 'danger'
+    ? { background: '#fef2f2', color: 'var(--danger)', border: '1px solid #fecaca' }
+    : { background: '#f0fdf4', color: 'var(--success)', border: '1px solid #bbf7d0' }
 }
 
 // ===== 情绪日历 =====
@@ -514,90 +503,7 @@ function replayTour() {
 }
 // 个股推荐点击：加入自选（若未跟踪）并切换主图（卡片下钻：概览 → 个股主图）
 function openRecInChart(rec: { code: string; name: string }) {
-  watchlistStore.lastKey = watchlistStore.ensureTracked(rec.code, 'zh_a', rec.name)
-  activeKey.value = watchlistStore.lastKey
-}
-
-// 工具：计算 MA
-function calcMA(closes: number[], period: number): (number | null)[] {
-  const out: (number | null)[] = []
-  for (let i = 0; i < closes.length; i++) {
-    if (i < period - 1) { out.push(null); continue }
-    let sum = 0
-    for (let j = i - period + 1; j <= i; j++) sum += closes[j]!
-    out.push(+(sum / period).toFixed(2))
-  }
-  return out
-}
-
-// 工具：EMA（递推初值取首值）
-function calcEMA(src: number[], n: number): number[] {
-  const k = 2 / (n + 1)
-  let prev = src[0] ?? 0
-  return src.map((v, i) => {
-    prev = i === 0 ? v : v * k + prev * (1 - k)
-    return prev
-  })
-}
-
-// 工具：BOLL(N=20,±2σ)，σ 为总体标准差（对齐国内软件 STD 口径）
-function calcBOLL(closes: number[], n = 20, mult = 2): { mid: (number | null)[]; up: (number | null)[]; low: (number | null)[] } {
-  const mid = calcMA(closes, n)
-  const up: (number | null)[] = []
-  const low: (number | null)[] = []
-  for (let i = 0; i < closes.length; i++) {
-    if (i < n - 1 || mid[i] == null) { up.push(null); low.push(null); continue }
-    let s = 0
-    for (let j = i - n + 1; j <= i; j++) { const d = closes[j]! - mid[i]!; s += d * d }
-    const sd = Math.sqrt(s / n)
-    up.push(+(mid[i]! + mult * sd).toFixed(2))
-    low.push(+(mid[i]! - mult * sd).toFixed(2))
-  }
-  return { mid, up, low }
-}
-
-// 工具：MACD(12,26,9)，hist=(DIF-DEA)*2 对齐国内软件红绿柱
-function calcMACD(closes: number[]): { dif: number[]; dea: number[]; hist: number[] } {
-  const ema12 = calcEMA(closes, 12)
-  const ema26 = calcEMA(closes, 26)
-  const dif = closes.map((_, i) => ema12[i]! - ema26[i]!)
-  const dea = calcEMA(dif, 9)
-  return {
-    dif: dif.map((v) => +v.toFixed(3)),
-    dea: dea.map((v) => +v.toFixed(3)),
-    hist: dif.map((v, i) => +((v - dea[i]!) * 2).toFixed(3)),
-  }
-}
-
-// 工具：KDJ(9,3,3)，SMA(RSV,3,1) 平滑，初值取首根 RSV（通达信口径）
-function calcKDJ(ohlcv: [number, number, number, number][]): { K: number[]; D: number[]; J: number[] } {
-  const lows = ohlcv.map((o) => o[2])
-  const highs = ohlcv.map((o) => o[3])
-  const K: number[] = [], D: number[] = [], J: number[] = []
-  let kv = 50, dv = 50
-  for (let i = 0; i < ohlcv.length; i++) {
-    const lo = Math.min(...lows.slice(Math.max(0, i - 8), i + 1))
-    const hi = Math.max(...highs.slice(Math.max(0, i - 8), i + 1))
-    const rsv = hi === lo ? 50 : ((ohlcv[i]![1] - lo) / (hi - lo)) * 100
-    kv = i === 0 ? rsv : (2 * kv + rsv) / 3
-    dv = i === 0 ? rsv : (2 * dv + kv) / 3
-    K.push(+kv.toFixed(2)); D.push(+dv.toFixed(2)); J.push(+(3 * kv - 2 * dv).toFixed(2))
-  }
-  return { K, D, J }
-}
-
-// 工具：RSI(N)，Wilder/SMA(U,N,1) 平滑（国内软件口径）
-function calcRSI(closes: number[], n: number): (number | null)[] {
-  const out: (number | null)[] = [null]
-  let au = 0, ad = 0
-  for (let i = 1; i < closes.length; i++) {
-    const u = Math.max(closes[i]! - closes[i - 1]!, 0)
-    const d = Math.max(closes[i - 1]! - closes[i]!, 0)
-    au = (au * (n - 1) + u) / n
-    ad = (ad * (n - 1) + d) / n
-    out.push(au + ad === 0 ? 50 : +(100 * au / (au + ad)).toFixed(2))
-  }
-  return out
+  activeKey.value = watchlistStore.openChartOnHome({ code: rec.code, market: 'zh_a', name: rec.name })
 }
 
 // 成交量格式化：亿/万自适应
@@ -625,43 +531,15 @@ function heatColor(chg: number): string {
   return '#f3f4f6'
 }
 
-// 价格轴格式化：千分位；≥1000 的指数点位省去小数，避免宽标签溢出网格边距被裁剪
-function fmtPriceNum(v: number): string {
-  const dec = Math.abs(v) >= 1000 ? 0 : 2
-  return v.toLocaleString('zh-CN', { minimumFractionDigits: dec, maximumFractionDigits: dec })
-}
-
-// 时间轴刻度本地化（对标 Lightweight Charts tickMarkFormatter）：按月边界取刻度，1月显示年份
-function monthTickConfig(dates: string[]): {
-  interval: (index: number) => boolean
-  formatter: (v: string) => string
-} {
-  let last = ''
-  const flags = dates.map((d) => {
-    const ym = d.slice(0, 7)
-    const show = ym !== last
-    last = ym
-    return show
-  })
-  return {
-    interval: (index: number) => Boolean(flags[index]),
-    formatter: (v: string) => {
-      const [y, m] = v.split('-')
-      return m === '01' ? `${y}年` : `${Number(m)}月`
-    },
-  }
-}
+// 价格/时间轴格式化与 K线图骨架件统一收在 chart/kline（fmtPriceNum/monthTickConfig）
 
 // K线 ECharts 配置：蜡烛图 + 成交量 + 主图叠加(MA/BOLL) + 副图指标(MACD/KDJ/RSI)
 const klineOption = computed(() => {
   if (!kline.value || !kline.value.dates.length) return {}
   const k = kline.value
-  // A股红涨绿跌；美股绿涨红跌
+  // A股红涨绿跌；美股绿涨红跌（市场配色 token 见 lib/marketColors）
   const isUS = k.market === 'us'
-  const upColor = isUS ? '#26a69a' : '#ef232a'
-  const downColor = isUS ? '#ef5350' : '#14b143'
-  const upText = isUS ? '#059669' : '#dc2626'
-  const downText = isUS ? '#dc2626' : '#059669'
+  const { up: upColor, down: downColor, upText, downText } = chartPalette(k.market)
 
   const dates = k.dates
   const ohlcv = k.ohlcv
@@ -707,12 +585,7 @@ const klineOption = computed(() => {
       data: ohlcv,
       barWidth: candleWidth,
       barMinWidth: 1,
-      itemStyle: {
-        color: upColor,
-        color0: downColor,
-        borderColor: upColor,
-        borderColor0: downColor,
-      },
+      itemStyle: candleItemStyle(k.market),
       // 最新价虚线 + 右侧价格标签（TradingView 式）
       markLine: {
         symbol: ['none', 'none'],
@@ -777,20 +650,6 @@ const klineOption = computed(() => {
   }
 
   const monthTicks = monthTickConfig(dates)
-  const xCategory = (gridIndex: number, labelShow: boolean) => ({
-    type: 'category',
-    gridIndex,
-    data: dates,
-    boundaryGap: true,
-    axisLine: { onZero: false },
-    axisTick: { show: false },
-    axisLabel: labelShow
-      ? { show: true, interval: monthTicks.interval, formatter: monthTicks.formatter }
-      : { show: false },
-    splitLine: { show: false },
-    min: 'dataMin',
-    max: 'dataMax',
-  })
 
   return {
     title: {
@@ -801,11 +660,11 @@ const klineOption = computed(() => {
       textStyle: { fontSize: 15, fontWeight: 600 },
       subtextStyle: { fontSize: 11, color: '#9ca3af' },
     },
-    // 多窗格十字光标联动
-    axisPointer: { link: [{ xAxisIndex: 'all' }], label: { backgroundColor: '#6a7985' } },
+    // 多窗格十字光标联动（骨架件见 chart/kline）
+    axisPointer: linkedCrosshair(),
     tooltip: {
       trigger: 'axis',
-      axisPointer: { type: 'cross', label: { backgroundColor: '#6a7985' } },
+      axisPointer: crosshairPointer(),
       // TradingView 式固定数值面板：tooltip 吸顶并水平钳制在图内，消除对蜡烛的遮挡
       position: (point: number[], _params: unknown, _dom: unknown, _rect: unknown, size: { contentSize: number[]; viewSize: number[] }) => {
         const w = size.contentSize[0] ?? 220
@@ -823,8 +682,8 @@ const klineOption = computed(() => {
         const date = dates[idx] ?? ''
         const o = ohlcv[idx]
         if (!o) return date
-        const prev = idx > 0 ? ohlcv[idx - 1]![1] : o[0]
-        const chg = (o[1] / prev - 1) * 100
+        // 前收/涨跌口径统一走 chart/kline（首根回退为开盘价）
+        const { prev, chgPct: chg } = chgVsPrevClose(ohlcv, idx)
         const amp = ((o[3] - o[2]) / prev) * 100
         const valColor = (v: number) => (v > 0 ? upText : v < 0 ? downText : 'inherit')
         const pctStr = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(2)}%`
@@ -891,9 +750,9 @@ const klineOption = computed(() => {
           { left: '7%', right: '4%', top: '81%', height: '12%' },
         ],
     xAxis: [
-      xCategory(0, false),
-      xCategory(1, !hasSub),
-      ...(hasSub ? [xCategory(2, true)] : []),
+      klineXAxis({ data: dates, labelShow: false }),
+      klineXAxis({ data: dates, labelShow: !hasSub, ticks: monthTicks }),
+      ...(hasSub ? [klineXAxis({ data: dates, labelShow: true, ticks: monthTicks })] : []),
     ],
     yAxis: [
       { scale: true, splitArea: { show: true }, axisLabel: { formatter: (v: number) => fmtPriceNum(v) } },
@@ -902,18 +761,12 @@ const klineOption = computed(() => {
         ? [{ gridIndex: 2, scale: true, splitNumber: 2, splitArea: { show: false }, axisLabel: { show: true, fontSize: 10 } }]
         : []),
     ],
-    dataZoom: [
-      {
-        type: 'inside', xAxisIndex: hasSub ? [0, 1, 2] : [0, 1],
-        start: 60, end: 100, minValueSpan: 15,
-        zoomOnMouseWheel: true, moveOnMouseMove: true, preventDefaultMouseMove: true,
-      },
-      {
-        type: 'slider', xAxisIndex: hasSub ? [0, 1, 2] : [0, 1],
-        left: '7%', right: '4%', top: hasSub ? '89%' : '94%', height: 18,
-        start: 60, end: 100,
-      },
-    ],
+    dataZoom: klineDataZoom({
+      xAxisIndex: hasSub ? [0, 1, 2] : [0, 1],
+      start: 60,
+      sliderTop: hasSub ? '89%' : '94%',
+      preventDefaultMouseMove: true,
+    }),
     series,
   }
 })
@@ -981,13 +834,15 @@ const sectorByCode = computed(() => {
 })
 
 function allocColor(name: string): string | undefined {
+  // 涨跌分组沿用 A股涨跌 token（"当日涨跌"视图固定按 A股红涨绿跌语义展示）
+  const zh = chartPalette('zh_a')
   const palette: Record<string, string> = {
     A股: '#667eea',
     美股: '#10b981',
     指数: '#8b5cf6',
-    上涨: '#ef232a',
-    平盘: '#9ca3af',
-    下跌: '#14b143',
+    上涨: zh.up,
+    平盘: NEUTRAL_HEX,
+    下跌: zh.down,
     其他: '#cbd5e1',
   }
   return palette[name]
@@ -1130,7 +985,7 @@ function scoreColor(score: number): string {
                 :values="quoteOf(idx.code, idx.market, idx.kind)?.closes ?? []"
                 :width="56"
                 :height="20"
-                :color="(quoteOf(idx.code, idx.market, idx.kind)?.chgPct ?? 0) < 0 ? '#14b143' : '#ef232a'"
+                :color="chgSparkColor(idx.market, quoteOf(idx.code, idx.market, idx.kind)?.chgPct)"
               />
               <template v-if="quoteOf(idx.code, idx.market, idx.kind)">
                 <span class="index-close" :class="flashOf(idx.code, idx.market, idx.kind)">

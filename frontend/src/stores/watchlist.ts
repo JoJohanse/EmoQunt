@@ -94,7 +94,18 @@ export const useWatchlistStore = defineStore(
       return targetKey(normalized, market, kind)
     }
 
-    return { items, lastKey, has, add, remove, rename, findByKey, ensureTracked }
+    /**
+     * 「跳首页主图预选标的」协议收口：确保标的已跟踪（未跟踪时先加入自选）并写入
+     * lastKey（统一为 targetKey 的 `code|market|kind` 格式），返回最终键。
+     * 不负责导航——调用方自行 router.push('/')；首页监听 lastKey 切换主图。
+     */
+    function openChartOnHome(target: { code: string; market: Market; name?: string; kind?: 'index' }): string {
+      const key = ensureTracked(target.code, target.market, target.name ?? target.code, target.kind)
+      lastKey.value = key
+      return key
+    }
+
+    return { items, lastKey, has, add, remove, rename, findByKey, ensureTracked, openChartOnHome }
   },
   {
     persist: {
