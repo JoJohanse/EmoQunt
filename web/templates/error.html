@@ -7,17 +7,17 @@
     <div class="col-md-8">
         <div class="card app-card">
             <div class="card-header" style="background:var(--danger-grad);color:#fff;border-bottom:none">
-                <h4 class="mb-0"><i class="fas fa-triangle-exclamation me-2"></i>发生错误</h4>
+                <h4 class="mb-0"><i class="fas fa-triangle-exclamation me-2"></i>{{ t('error.heading') }}</h4>
             </div>
             <div class="card-body">
-                <p class="text-danger fw-semibold mb-2"><i class="fas fa-circle-exclamation me-1"></i> 错误信息</p>
+                <p class="text-danger fw-semibold mb-2"><i class="fas fa-circle-exclamation me-1"></i> {{ t('error.info') }}</p>
                 <pre class="bg-light p-3 rounded" style="white-space:pre-wrap;word-break:break-word">{{ error }}</pre>
                 <div class="d-flex gap-2 mt-3">
                     <a class="btn btn-brand" href="/backtest">
-                        <i class="fas fa-arrow-left me-1"></i> 返回回测页面
+                        <i class="fas fa-arrow-left me-1"></i> {{ t('error.backToBacktest') }}
                     </a>
                     <a class="btn btn-outline-secondary" href="/">
-                        <i class="fas fa-house me-1"></i> 返回首页
+                        <i class="fas fa-house me-1"></i> {{ t('error.backToHome') }}
                     </a>
                 </div>
             </div>

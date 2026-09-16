@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { strategyApi } from '@/api'
 import type { StrategyDetail } from '@/api/types'
+import { t } from '@/locales'
 
 const strategies = ref<StrategyDetail[]>([])
 const loading = ref(false)
@@ -12,7 +13,7 @@ async function load() {
   try {
     strategies.value = await strategyApi.list()
   } catch (e: any) {
-    ElMessage.error('加载失败：' + e.message)
+    ElMessage.error(t('strategies.loadFailed', { msg: e.message }))
   } finally {
     loading.value = false
   }
@@ -21,12 +22,16 @@ onMounted(load)
 
 async function remove(name: string) {
   try {
-    await ElMessageBox.confirm(`确定删除策略 "${name}"？此操作不可恢复`, '确认', { type: 'warning' })
+    await ElMessageBox.confirm(
+      t('strategies.deleteConfirm', { name }),
+      t('common.confirm'),
+      { type: 'warning' },
+    )
     await strategyApi.remove(name)
-    ElMessage.success('已删除')
+    ElMessage.success(t('strategies.deleted'))
     await load()
   } catch (e: any) {
-    if (e !== 'cancel') ElMessage.error('删除失败：' + (e.message || e))
+    if (e !== 'cancel') ElMessage.error(t('strategies.deleteFailed', { msg: e.message || e }))
   }
 }
 </script>
@@ -34,8 +39,8 @@ async function remove(name: string) {
 <template>
   <div>
     <div class="page-hero">
-      <h1><el-icon><List /></el-icon> 策略列表</h1>
-      <p class="subtitle">查看与管理所有回测策略</p>
+      <h1><el-icon><List /></el-icon> {{ t('layout.nav.strategies') }}</h1>
+      <p class="subtitle">{{ t('strategies.subtitle') }}</p>
     </div>
 
     <el-row v-loading="loading" :gutter="16">
@@ -46,25 +51,25 @@ async function remove(name: string) {
               <span class="strat-name">
                 {{ s.name }}
                 <el-tag :type="s.is_user_strategy ? 'primary' : 'info'" size="small" effect="plain">
-                  {{ s.is_user_strategy ? '自定义' : '系统' }}
+                  {{ s.is_user_strategy ? t('strategies.badgeCustom') : t('strategies.badgeSystem') }}
                 </el-tag>
               </span>
               <el-button-group v-if="s.is_user_strategy">
                 <el-button size="small" type="danger" plain @click="remove(s.name)">
-                  <el-icon><Delete /></el-icon> 删除
+                  <el-icon><Delete /></el-icon> {{ t('strategies.delete') }}
                 </el-button>
               </el-button-group>
             </div>
           </template>
-          <p class="strat-desc">{{ s.description || '暂无描述' }}</p>
+          <p class="strat-desc">{{ s.description || t('strategies.noDesc') }}</p>
           <el-table v-if="s.parameters && s.parameters.length" :data="s.parameters" size="small" border>
-            <el-table-column prop="name" label="参数名" width="160">
+            <el-table-column prop="name" :label="t('strategies.colParamName')" width="160">
               <template #default="{ row }"><code>{{ row.name }}</code></template>
             </el-table-column>
-            <el-table-column label="值">
+            <el-table-column :label="t('strategies.colValue')">
               <template #default="{ row }">{{ row.value ?? row.default }}</template>
             </el-table-column>
-            <el-table-column prop="type" label="类型" width="80">
+            <el-table-column prop="type" :label="t('strategies.colType')" width="80">
               <template #default="{ row }">
                 <el-tag size="small" type="info">{{ row.type }}</el-tag>
               </template>
@@ -72,13 +77,13 @@ async function remove(name: string) {
           </el-table>
           <div class="strat-footer">
             <router-link :to="`/backtest?strategy=${s.name}`">
-              <el-button size="small" type="success"><el-icon><VideoPlay /></el-icon> 使用此策略回测</el-button>
+              <el-button size="small" type="success"><el-icon><VideoPlay /></el-icon> {{ t('strategies.backtest') }}</el-button>
             </router-link>
           </div>
         </el-card>
       </el-col>
     </el-row>
-    <el-empty v-if="!loading && !strategies.length" description="暂无策略" />
+    <el-empty v-if="!loading && !strategies.length" :description="t('strategies.empty')" />
   </div>
 </template>
 

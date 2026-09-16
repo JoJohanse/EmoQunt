@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
+import { t } from '@/locales'
+import { fmtBigNum } from '@/lib/format'
 import { klineApi, sentimentApi, recommendApi, marketApi } from '@/api'
 import type {
   KlineData,
@@ -55,25 +57,27 @@ const homeLayoutStore = useHomeLayoutStore()
 const uiStore = useUiStore()
 
 // ===== 仪表盘可拖拽布局（与 stores/homeLayout 保持一致） =====
+// 只存 i18n 键（home.widget.*），标题在 widgetMeta 里随语言取值
 const DEFAULT_WIDGETS = [
-  { id: 'quick', title: '快捷入口', icon: 'Histogram' },
-  { id: 'indexes', title: '指数速览', icon: 'TrendCharts' },
-  { id: 'breadth', title: '市场宽度', icon: 'Odometer' },
-  { id: 'kline', title: '行情看板', icon: 'CandlestickChart' },
-  { id: 'heatmap', title: '行业热力图', icon: 'Grid' },
-  { id: 'sectors', title: '热门板块', icon: 'Sunrise' },
-  { id: 'news', title: '当日舆情', icon: 'ChatDotRound' },
-  { id: 'recommend', title: '个股推荐', icon: 'Star' },
-  { id: 'allocation', title: '自选分布', icon: 'PieChart' },
-  { id: 'srchealth', title: '数据源心跳', icon: 'Monitor' },
+  { id: 'quick', titleKey: 'home.widget.quick', icon: 'Histogram' },
+  { id: 'indexes', titleKey: 'home.widget.indexes', icon: 'TrendCharts' },
+  { id: 'breadth', titleKey: 'home.widget.breadth', icon: 'Odometer' },
+  { id: 'kline', titleKey: 'home.widget.kline', icon: 'CandlestickChart' },
+  { id: 'heatmap', titleKey: 'home.widget.heatmap', icon: 'Grid' },
+  { id: 'sectors', titleKey: 'home.widget.sectors', icon: 'Sunrise' },
+  { id: 'news', titleKey: 'home.widget.news', icon: 'ChatDotRound' },
+  { id: 'recommend', titleKey: 'home.widget.recommend', icon: 'Star' },
+  { id: 'allocation', titleKey: 'home.widget.allocation', icon: 'PieChart' },
+  { id: 'srchealth', titleKey: 'home.widget.srchealth', icon: 'Monitor' },
 ] as const
 
 type WidgetId = (typeof DEFAULT_WIDGETS)[number]['id']
 
 // 与 HomeWidgetId 同源，避免 stores/homeLayout 里的 DEFAULT_HOME_ORDER 漂移时漏同步
+// （t() 在这里读取 locale ref → 语言切换时标题自动重算）
 const widgetMeta = computed(() => {
   const meta = new Map<string, { title: string; icon: string }>()
-  for (const w of DEFAULT_WIDGETS) meta.set(w.id, w)
+  for (const w of DEFAULT_WIDGETS) meta.set(w.id, { title: t(w.titleKey), icon: w.icon })
   return meta
 })
 
@@ -114,25 +118,30 @@ function onDragEnd() {
 }
 function resetLayout() {
   homeLayoutStore.reset()
-  ElMessage.success('已恢复默认布局')
+  ElMessage.success(t('home.layout.resetDone'))
 }
 
 // ===== 大盘指数速览（固定 3 个 A 股指数；kind=index 走服务端指数数据链） =====
-const INDEX_PRESETS = [
-  { code: '000001', market: 'zh_a' as Market, name: '上证指数', kind: 'index' as const },
-  { code: '000300', market: 'zh_a' as Market, name: '沪深300', kind: 'index' as const },
-  { code: '399001', market: 'zh_a' as Market, name: '深证成指', kind: 'index' as const },
+// 身份判定只用 code/market/kind；nameKey 仅用于展示（indexPresets 随语言重算）
+const INDEX_PRESETS: { code: string; market: Market; nameKey: string; kind: 'index' }[] = [
+  { code: '000001', market: 'zh_a' as Market, nameKey: 'home.index.sse', kind: 'index' as const },
+  { code: '000300', market: 'zh_a' as Market, nameKey: 'home.index.csi300', kind: 'index' as const },
+  { code: '399001', market: 'zh_a' as Market, nameKey: 'home.index.szse', kind: 'index' as const },
 ]
+type IndexPreset = (typeof INDEX_PRESETS)[number]
 
-// ===== 快捷入口 =====
-const quickActions = [
-  { path: '/backtest', icon: 'Histogram', title: '策略回测', desc: 'A股/美股 · 动态绩效图表' },
-  { path: '/strategy-compare', icon: 'DataLine', title: '策略对比', desc: '多策略同台竞技' },
-  { path: '/factor-analysis', icon: 'DataAnalysis', title: '因子分析', desc: 'IC 分析 · 分层回测' },
-  { path: '/sentiment', icon: 'ChatDotRound', title: '舆情分析', desc: '板块情绪 · 热点新闻' },
-  { path: '/daily-recommend', icon: 'Star', title: '每日推荐', desc: '多因子打分选股' },
-  { path: '/strategies', icon: 'List', title: '策略列表', desc: '查看/管理自有策略' },
-]
+/** 展示用预设指数（名称随当前语言切换） */
+const indexPresets = computed(() => INDEX_PRESETS.map((p) => ({ ...p, name: t(p.nameKey) })))
+
+// ===== 快捷入口（标题与侧边导航共用 layout.nav.*，此处只补一句描述） =====
+const quickActions = computed(() => [
+  { path: '/backtest', icon: 'Histogram', title: t('layout.nav.backtest'), desc: t('home.quick.backtestDesc') },
+  { path: '/strategy-compare', icon: 'DataLine', title: t('layout.nav.compare'), desc: t('home.quick.compareDesc') },
+  { path: '/factor-analysis', icon: 'DataAnalysis', title: t('layout.nav.factor'), desc: t('home.quick.factorDesc') },
+  { path: '/sentiment', icon: 'ChatDotRound', title: t('layout.nav.sentiment'), desc: t('home.quick.sentimentDesc') },
+  { path: '/daily-recommend', icon: 'Star', title: t('layout.nav.recommend'), desc: t('home.quick.recommendDesc') },
+  { path: '/strategies', icon: 'List', title: t('layout.nav.strategies'), desc: t('home.quick.strategiesDesc') },
+])
 
 // ===== K 线主图 =====
 const kline = ref<KlineData | null>(null)
@@ -146,8 +155,16 @@ const klineChartRef = ref<InstanceType<typeof VChart> | null>(null)
 const { period: klinePeriod, adjust: klineAdjust, overlay: klineOverlay, sub: klineSub } =
   storeToRefs(useKlinePrefsStore())
 
-const PERIOD_LABELS: Record<KlinePeriod, string> = { day: '日线', week: '周线', month: '月线' }
-const ADJUST_LABELS: Record<KlineAdjust, string> = { qfq: '前复权', hfq: '后复权', nfq: '不复权' }
+const PERIOD_LABELS = computed<Record<KlinePeriod, string>>(() => ({
+  day: t('home.kline.period.day'),
+  week: t('home.kline.period.week'),
+  month: t('home.kline.period.month'),
+}))
+const ADJUST_LABELS = computed<Record<KlineAdjust, string>>(() => ({
+  qfq: t('home.kline.adjust.qfq'),
+  hfq: t('home.kline.adjust.hfq'),
+  nfq: t('home.kline.adjust.nfq'),
+}))
 
 function resetKlineZoom() {
   try {
@@ -179,13 +196,13 @@ const activeTarget = computed<{ code: string; market: Market; name: string; kind
   if (found) return found
   // 指数速览卡片可点击切换到未在自选中的预设指数
   const preset = INDEX_PRESETS.find((i) => targetKey(i.code, i.market, i.kind) === activeKey.value)
-  if (preset) return { code: preset.code, market: preset.market, name: preset.name, kind: preset.kind }
+  if (preset) return { code: preset.code, market: preset.market, name: t(preset.nameKey), kind: preset.kind }
   return watchlistStore.items[0] ?? null
 })
 /** 是否指数标的：指数无复权概念，禁用复权选择 */
 const isIndexTarget = computed(() => activeTarget.value?.kind === 'index')
 
-function selectIndex(idx: (typeof INDEX_PRESETS)[number]) {
+function selectIndex(idx: IndexPreset) {
   activeKey.value = targetKey(idx.code, idx.market, idx.kind)
 }
 
@@ -199,7 +216,7 @@ async function loadKline() {
       isIndexTarget.value ? 'index' : '',
     )
   } catch (e: any) {
-    ElMessage.warning('K线数据加载失败：' + e.message)
+    ElMessage.warning(t('home.kline.loadFailed') + e.message)
     kline.value = null
   } finally {
     loadingKline.value = false
@@ -290,9 +307,16 @@ async function loadQuote(code: string, market: Market, name?: string, kind?: '' 
 /** 拉取全部自选 + 指数速览行情（轮询复用） */
 function loadQuotes() {
   const quoteTargets = new Map<string, QuoteTarget>()
-  for (const i of INDEX_PRESETS) quoteTargets.set(targetKey(i.code, i.market, i.kind), i)
+  for (const i of INDEX_PRESETS)
+    quoteTargets.set(targetKey(i.code, i.market, i.kind), {
+      code: i.code,
+      market: i.market,
+      kind: i.kind,
+      name: t(i.nameKey),
+    })
   for (const it of watchlistStore.items) quoteTargets.set(targetKey(it.code, it.market, it.kind), it)
-  quoteTargets.forEach((t) => loadQuote(t.code, t.market, t.name, t.kind))
+  // 注意：回调参数不要命名为 t，避免遮蔽 i18n 的 t()
+  quoteTargets.forEach((qt) => loadQuote(qt.code, qt.market, qt.name, qt.kind))
 }
 
 // SWR 式轮询：页面不可见暂停、失败指数退避（日线数据 60s 足够）
@@ -323,11 +347,11 @@ const adding = ref(false)
 async function addWatch() {
   const code = newCode.value.trim()
   if (!code) {
-    ElMessage.warning('请输入股票/指数代码')
+    ElMessage.warning(t('home.watchlist.enterCode'))
     return
   }
   if (watchlistStore.has(code, newMarket.value)) {
-    ElMessage.info('该标的已在自选中')
+    ElMessage.info(t('home.watchlist.alreadyAdded'))
     return
   }
   adding.value = true
@@ -336,9 +360,9 @@ async function addWatch() {
     watchlistStore.add(code, newMarket.value, d.name || code)
     await loadQuote(code, newMarket.value, d.name)
     newCode.value = ''
-    ElMessage.success(`已添加自选：${d.name || code}`)
+    ElMessage.success(t('home.watchlist.addDone', { name: d.name || code }))
   } catch (e: any) {
-    ElMessage.error('添加失败，请检查代码是否正确：' + e.message)
+    ElMessage.error(t('home.watchlist.addFailed') + e.message)
   } finally {
     adding.value = false
   }
@@ -369,14 +393,15 @@ const loadingSectors = ref(false)
 // ===== 数据源健康心跳（Uptime Kuma beat bar 模式） =====
 const sourceHealth = ref<SourceHealthData | null>(null)
 
-/** 展示的数据源与顺序（与后端取数链一致；未启用的源显示灰格） */
-const HEALTH_SOURCES: { key: string; label: string }[] = [
-  { key: 'tushare', label: 'Tushare' },
-  { key: 'yfinance', label: 'Yahoo' },
-  { key: 'sina', label: '新浪' },
-  { key: 'eastmoney', label: '东财' },
-  { key: 'baostock', label: 'BaoStock' },
+/** 展示的数据源与顺序（与后端取数链一致；未启用的源显示灰格）；label 走 i18n，key 是后端契约 */
+const HEALTH_SOURCES: { key: string; labelKey: string }[] = [
+  { key: 'tushare', labelKey: 'home.health.source.tushare' },
+  { key: 'yfinance', labelKey: 'home.health.source.yfinance' },
+  { key: 'sina', labelKey: 'home.health.source.sina' },
+  { key: 'eastmoney', labelKey: 'home.health.source.eastmoney' },
+  { key: 'baostock', labelKey: 'home.health.source.baostock' },
 ]
+const healthSources = computed(() => HEALTH_SOURCES.map((s) => ({ key: s.key, label: t(s.labelKey) })))
 
 /** 补齐为固定 7 格（旧→新，左侧补灰格） */
 function beatsOf(key: string): (SourceBeat | null)[] {
@@ -385,8 +410,9 @@ function beatsOf(key: string): (SourceBeat | null)[] {
   return [...Array<null>(pad).fill(null), ...beats]
 }
 function beatTitle(b: SourceBeat | null): string {
-  if (!b) return '暂无记录'
-  return `${b.ok ? '成功' : '失败'} · ${dayjs(b.ts * 1000).format('MM-DD HH:mm')}`
+  if (!b) return t('home.health.noRecord')
+  const state = b.ok ? t('home.health.ok') : t('home.health.fail')
+  return `${state} · ${dayjs(b.ts * 1000).format('MM-DD HH:mm')}`
 }
 function lastBeatText(key: string): string {
   const beats = sourceHealth.value?.sources[key] ?? []
@@ -405,19 +431,24 @@ async function loadSourceHealth() {
 }
 
 // ===== 快讯流（来源分组过滤；数据仍来自情绪快照的 news_list） =====
-const newsSourceFilter = ref('全部')
+// 「全部」是内部哨兵键（不翻译、不参与持久化），展示文案走 common.all
+const ALL_SOURCES = '__all__'
+const newsSourceFilter = ref(ALL_SOURCES)
 const newsSources = computed(() => {
   const sources: string[] = []
   for (const n of sentiment.value?.news_list || []) {
     const s = cleanNewsSource(n.source)
     if (!sources.includes(s)) sources.push(s)
   }
-  return ['全部', ...sources]
+  return [
+    { key: ALL_SOURCES, label: t('common.all') },
+    ...sources.map((s) => ({ key: s, label: s })),
+  ]
 })
 const filteredNews = computed(() => {
   const list = sentiment.value?.news_list || []
   const picked =
-    newsSourceFilter.value === '全部'
+    newsSourceFilter.value === ALL_SOURCES
       ? list
       : list.filter((n) => cleanNewsSource(n.source) === newsSourceFilter.value)
   return picked.slice(0, 10)
@@ -428,8 +459,9 @@ const NEWS_SOURCE_COLORS = ['#667eea', '#10b981', '#f59e0b', '#8b5cf6', '#0ea5e9
 
 /** 清洗来源名：trendradar 解析出的来源可能带 [URL:...] 附件或超长，展示与分组统一截净 */
 function cleanNewsSource(source?: string): string {
-  const s = (source || '未知来源').split(' [URL:')[0].split(' [MOBILE:')[0].trim()
-  return (s || '未知来源').slice(0, 16)
+  const fallback = t('home.news.unknownSource')
+  const s = (source || fallback).split(' [URL:')[0].split(' [MOBILE:')[0].trim()
+  return (s || fallback).slice(0, 16)
 }
 function newsSourceColor(source?: string): string {
   const s = cleanNewsSource(source)
@@ -513,13 +545,10 @@ function openRecInChart(rec: { code: string; name: string }) {
   activeKey.value = watchlistStore.openChartOnHome({ code: rec.code, market: 'zh_a', name: rec.name })
 }
 
-// 成交量格式化：亿/万自适应
+// 成交量格式化：大数缩写随语言（zh 万/亿 · en K/M/B），统一走 lib/format
 function fmtVol(v: number): string {
   if (!isFinite(v)) return '-'
-  const a = Math.abs(v)
-  if (a >= 1e8) return (v / 1e8).toFixed(2) + '亿'
-  if (a >= 1e4) return (v / 1e4).toFixed(1) + '万'
-  return String(Math.round(v))
+  return fmtBigNum(v)
 }
 
 function heatColor(chg: number): string {
@@ -554,8 +583,11 @@ const klineOption = computed(() => {
   const lastClose = closes[closes.length - 1]!
   const lastUp = ohlcv.length > 1 ? lastClose >= ohlcv[ohlcv.length - 2]![1] : true
 
-  const periodLabel = PERIOD_LABELS[k.period ?? klinePeriod.value] ?? '日线'
-  const adjustLabel = k.kind === 'index' ? '指数' : (ADJUST_LABELS[k.adjust ?? klineAdjust.value] ?? '')
+  const periodLabel = PERIOD_LABELS.value[k.period ?? klinePeriod.value] ?? t('home.kline.period.day')
+  const adjustLabel =
+    k.kind === 'index'
+      ? t('home.kline.indexAdjust')
+      : (ADJUST_LABELS.value[k.adjust ?? klineAdjust.value] ?? '')
 
   // ---- 主图叠加与副图指标（由工具栏偏好驱动） ----
   const overlay = klineOverlay.value
@@ -575,10 +607,16 @@ const klineOption = computed(() => {
   const nBars = dates.length
   const candleWidth = nBars <= 70 ? 9 : nBars <= 140 ? 7 : nBars <= 260 ? 4 : nBars <= 420 ? 3 : 2
 
-  const legendData: string[] = ['日K']
+  // 图例/系列名走 i18n：klineOption 是 computed，t() 在内部读取 locale → 切换语言即重算整份 option
+  const legendData: string[] = [t('home.kline.series.dayK')]
   if (overlay === 'ma') legendData.push('MA5', 'MA20', 'MA60')
-  if (overlay === 'boll') legendData.push('BOLL中轨', 'BOLL上轨', 'BOLL下轨')
-  legendData.push('成交量')
+  if (overlay === 'boll')
+    legendData.push(
+      t('home.kline.series.bollMid'),
+      t('home.kline.series.bollUp'),
+      t('home.kline.series.bollLow'),
+    )
+  legendData.push(t('home.kline.series.volume'))
   if (sub === 'macd') legendData.push('DIF', 'DEA', 'MACD')
   if (sub === 'kdj') legendData.push('K', 'D', 'J')
   if (sub === 'rsi') legendData.push('RSI6', 'RSI12', 'RSI24')
@@ -587,7 +625,7 @@ const klineOption = computed(() => {
 
   const series: any[] = [
     {
-      name: '日K',
+      name: t('home.kline.series.dayK'),
       type: 'candlestick',
       data: ohlcv,
       barWidth: candleWidth,
@@ -617,13 +655,13 @@ const klineOption = computed(() => {
     )
   } else if (boll) {
     series.push(
-      { name: 'BOLL中轨', ...trendLine, data: boll.mid, lineStyle: { width: 1.2, color: '#8b5cf6' } },
-      { name: 'BOLL上轨', ...trendLine, data: boll.up, lineStyle: { width: 1, type: 'dashed', opacity: 0.7, color: '#8b5cf6' } },
-      { name: 'BOLL下轨', ...trendLine, data: boll.low, lineStyle: { width: 1, type: 'dashed', opacity: 0.7, color: '#8b5cf6' } },
+      { name: t('home.kline.series.bollMid'), ...trendLine, data: boll.mid, lineStyle: { width: 1.2, color: '#8b5cf6' } },
+      { name: t('home.kline.series.bollUp'), ...trendLine, data: boll.up, lineStyle: { width: 1, type: 'dashed', opacity: 0.7, color: '#8b5cf6' } },
+      { name: t('home.kline.series.bollLow'), ...trendLine, data: boll.low, lineStyle: { width: 1, type: 'dashed', opacity: 0.7, color: '#8b5cf6' } },
     )
   }
   series.push({
-    name: '成交量',
+    name: t('home.kline.series.volume'),
     type: 'bar',
     xAxisIndex: 1,
     yAxisIndex: 1,
@@ -660,7 +698,7 @@ const klineOption = computed(() => {
 
   return {
     title: {
-      text: `${k.name || k.code} ${isUS ? '(美股)' : '(A股)'}`,
+      text: `${k.name || k.code} (${isUS ? t('home.kline.marketTag.us') : t('home.kline.marketTag.zhA')})`,
       subtext: `${periodLabel}${adjustLabel ? ' · ' + adjustLabel : ''}`,
       left: 'center',
       top: 2,
@@ -697,10 +735,17 @@ const klineOption = computed(() => {
         const pv = (label: string, v: number) =>
           `<span style="color:${valColor(v - prev)}">${label} ${fmtPriceNum(v)}</span>`
         const lines = [`<div style="font-weight:600;margin-bottom:4px">${date} · ${periodLabel}</div>`]
-        lines.push(`${pv('开', o[0])} &nbsp; ${pv('高', o[3])}<br/>${pv('低', o[2])} &nbsp; ${pv('收', o[1])}`)
+        // tooltip 文案在悬停时取当前语言（formatter 不在 computed 内执行，需现取 t()）
+        const open = t('home.kline.tooltip.open')
+        const high = t('home.kline.tooltip.high')
+        const low = t('home.kline.tooltip.low')
+        const closeLbl = t('home.kline.tooltip.close')
         lines.push(
-          `<span style="color:${valColor(chg)}">涨跌 ${pctStr(chg)}</span> &nbsp; ` +
-          `<span style="color:${valColor(chg)}">振幅 ${pctStr(amp)}</span>`,
+          `${pv(open, o[0])} &nbsp; ${pv(high, o[3])}<br/>${pv(low, o[2])} &nbsp; ${pv(closeLbl, o[1])}`,
+        )
+        lines.push(
+          `<span style="color:${valColor(chg)}">${t('home.kline.tooltip.change')} ${pctStr(chg)}</span> &nbsp; ` +
+          `<span style="color:${valColor(chg)}">${t('home.kline.tooltip.amplitude')} ${pctStr(amp)}</span>`,
         )
         if (overlay === 'ma') {
           const m5 = ma5[idx], m20 = ma20[idx], m60 = ma60[idx]
@@ -741,7 +786,7 @@ const klineOption = computed(() => {
           if (rl.length) lines.push(rl.join(' &nbsp; '))
         }
         const vol = k.volumes[idx]
-        if (vol != null) lines.push(`成交量 ${fmtVol(vol)}`)
+        if (vol != null) lines.push(`${t('home.kline.tooltip.volume')} ${fmtVol(vol)}`)
         return lines.join('<br/>')
       },
     },
@@ -794,7 +839,12 @@ const heatmapOption = computed(() => {
       textStyle: { color: '#1f2937', fontSize: 12 },
       formatter(info: any) {
         const c = info.data as any
-        return `${c.nameRaw}<br/>涨跌幅 ${c.chg > 0 ? '+' : ''}${c.chg.toFixed(2)}%<br/>成交额 ${c.value.toFixed(1)}亿 &nbsp; 领涨 ${c.leader || '-'}`
+        // 后端 总成交额 单位为亿元（见 services/market.py），×1e8 后交给 fmtBigNum 按语言缩写
+        return (
+          `${c.nameRaw}<br/>${t('home.heatmap.tooltipChange')} ${c.chg > 0 ? '+' : ''}${c.chg.toFixed(2)}%<br/>` +
+          `${t('home.heatmap.tooltipTurnover')} ${fmtBigNum(c.value * 1e8)} &nbsp; ` +
+          `${t('home.heatmap.tooltipLeader')} ${c.leader || '-'}`
+        )
       },
     },
     series: [
@@ -842,53 +892,71 @@ const sectorByCode = computed(() => {
   return map
 })
 
-function allocColor(name: string): string | undefined {
+/** 分组**内部键** → home.allocation.group.*（行业维度用行业名当键，allocLabel 原样回显数据） */
+const ALLOC_GROUP_KEYS: Record<string, string> = {
+  a: 'home.allocation.group.a',
+  us: 'home.allocation.group.us',
+  index: 'home.allocation.group.index',
+  up: 'home.allocation.group.up',
+  flat: 'home.allocation.group.flat',
+  down: 'home.allocation.group.down',
+  other: 'home.allocation.group.other',
+}
+
+/** 分组内部键 → 当前语言的显示文案（渲染时取值，切语言即换文案） */
+function allocLabel(key: string): string {
+  const i18nKey = ALLOC_GROUP_KEYS[key]
+  return i18nKey ? t(i18nKey) : key
+}
+
+/** 颜色按内部键取，与显示文案解耦：翻译变化不影响配色 */
+function allocColor(key: string): string | undefined {
   // 涨跌分组沿用 A股涨跌 token（"当日涨跌"视图固定按 A股红涨绿跌语义展示）
   const zh = chartPalette('zh_a')
   const palette: Record<string, string> = {
-    A股: '#667eea',
-    美股: '#10b981',
-    指数: '#8b5cf6',
-    上涨: zh.up,
-    平盘: NEUTRAL_HEX,
-    下跌: zh.down,
-    其他: '#cbd5e1',
+    a: '#667eea',
+    us: '#10b981',
+    index: '#8b5cf6',
+    up: zh.up,
+    flat: NEUTRAL_HEX,
+    down: zh.down,
+    other: '#cbd5e1',
   }
-  return palette[name]
+  return palette[key]
 }
 
 const allocationOption = computed(() => {
   const items = watchlistStore.items
   if (!items.length) return {}
-  let entries: { name: string; value: number }[] = []
+  let entries: { key: string; value: number }[] = []
   if (allocDim.value === 'market') {
     const groups: Record<string, number> = {}
     for (const it of items) {
-      const g = it.kind === 'index' ? '指数' : it.market === 'us' ? '美股' : 'A股'
+      const g = it.kind === 'index' ? 'index' : it.market === 'us' ? 'us' : 'a'
       groups[g] = (groups[g] || 0) + 1
     }
-    entries = Object.entries(groups).map(([name, value]) => ({ name, value }))
+    entries = Object.entries(groups).map(([key, value]) => ({ key, value }))
   } else if (allocDim.value === 'change') {
-    const counts = { 上涨: 0, 平盘: 0, 下跌: 0 }
+    const counts = { up: 0, flat: 0, down: 0 }
     for (const it of items) {
       const q = quoteOf(it.code, it.market, it.kind)
       if (!q) continue
-      if (q.chgPct > 0) counts['上涨'] += 1
-      else if (q.chgPct < 0) counts['下跌'] += 1
-      else counts['平盘'] += 1
+      if (q.chgPct > 0) counts.up += 1
+      else if (q.chgPct < 0) counts.down += 1
+      else counts.flat += 1
     }
     entries = Object.entries(counts)
-      .map(([name, value]) => ({ name, value }))
+      .map(([key, value]) => ({ key, value }))
       .filter((e) => e.value > 0)
   } else {
     const groups: Record<string, number> = {}
     for (const it of items) {
       if (it.kind === 'index') continue
-      const g = sectorByCode.value.get(it.code) || '其他'
+      const g = sectorByCode.value.get(it.code) || 'other'
       groups[g] = (groups[g] || 0) + 1
     }
     entries = Object.entries(groups)
-      .map(([name, value]) => ({ name, value }))
+      .map(([key, value]) => ({ key, value }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 8)
   }
@@ -911,7 +979,11 @@ const allocationOption = computed(() => {
         avoidLabelOverlap: true,
         itemStyle: { borderColor: '#fff', borderWidth: 1, borderRadius: 4 },
         label: { show: false },
-        data: entries.map((e) => ({ ...e, itemStyle: { color: allocColor(e.name) } })),
+        data: entries.map((e) => ({
+          name: allocLabel(e.key),
+          value: e.value,
+          itemStyle: { color: allocColor(e.key) },
+        })),
       },
     ],
   }
@@ -934,12 +1006,12 @@ const sectorFallbackList = computed(() => {
   <div class="dashboard">
     <!-- 布局工具栏 -->
     <div class="layout-toolbar">
-      <span class="layout-hint"><el-icon><Rank /></el-icon> 拖动卡片右上角手柄可调整顺序</span>
+      <span class="layout-hint"><el-icon><Rank /></el-icon> {{ t('home.layout.dragHint') }}</span>
       <el-button size="small" text @click="replayTour">
-        <el-icon><QuestionFilled /></el-icon> 新手引导
+        <el-icon><QuestionFilled /></el-icon> {{ t('home.layout.replayTour') }}
       </el-button>
       <el-button size="small" text @click="resetLayout">
-        <el-icon><Refresh /></el-icon> 重置布局
+        <el-icon><Refresh /></el-icon> {{ t('home.layout.reset') }}
       </el-button>
     </div>
 
@@ -956,7 +1028,7 @@ const sectorFallbackList = computed(() => {
       @drop.prevent="onDrop(index)"
     >
       <!-- 拖拽手柄 -->
-      <div class="widget-handle" :title="`${w.meta.title} · 拖动调整顺序`">
+      <div class="widget-handle" :title="t('home.layout.handleTitle', { name: w.meta.title })">
         <el-icon :size="14"><Rank /></el-icon>
       </div>
 
@@ -978,8 +1050,8 @@ const sectorFallbackList = computed(() => {
       <!-- indexes：大盘指数速览（点击卡片在主图查看对应指数） -->
       <template v-else-if="w.id === 'indexes'">
         <el-row :gutter="12" class="index-row">
-          <el-col v-for="idx in INDEX_PRESETS" :key="idx.code" :xs="24" :sm="8">
-            <div class="index-card" title="点击在主图查看该指数" @click="selectIndex(idx)">
+          <el-col v-for="idx in indexPresets" :key="idx.code" :xs="24" :sm="8">
+            <div class="index-card" :title="t('home.index.clickHint')" @click="selectIndex(idx)">
               <span class="index-name">{{ idx.name }}</span>
               <MiniSparkline
                 :values="quoteOf(idx.code, idx.market, idx.kind)?.closes ?? []"
@@ -1016,7 +1088,7 @@ const sectorFallbackList = computed(() => {
           <template #header>
             <div class="card-head-row">
               <span class="section-title" style="margin: 0; border: none; padding: 0">
-                <el-icon><Odometer /></el-icon> 市场宽度
+                <el-icon><Odometer /></el-icon> {{ t('home.breadth.title') }}
               </span>
               <small v-if="breadth" class="card-updated">{{ breadth.updated_at }}</small>
             </div>
@@ -1027,23 +1099,23 @@ const sectorFallbackList = computed(() => {
           <template v-else-if="breadth">
             <div class="breadth-stats">
               <div class="breadth-stat">
-                <span class="b-label">上涨</span>
+                <span class="b-label">{{ t('home.breadth.up') }}</span>
                 <strong class="b-val" style="color: var(--danger)">{{ breadth.up }}</strong>
               </div>
               <div class="breadth-stat">
-                <span class="b-label">下跌</span>
+                <span class="b-label">{{ t('home.breadth.down') }}</span>
                 <strong class="b-val" style="color: var(--success)">{{ breadth.down }}</strong>
               </div>
               <div class="breadth-stat">
-                <span class="b-label">涨停</span>
+                <span class="b-label">{{ t('home.breadth.limitUp') }}</span>
                 <strong class="b-val" style="color: #b91c1c">{{ breadth.limit_up ?? '—' }}</strong>
               </div>
               <div class="breadth-stat">
-                <span class="b-label">跌停</span>
+                <span class="b-label">{{ t('home.breadth.limitDown') }}</span>
                 <strong class="b-val" style="color: #14532d">{{ breadth.limit_down ?? '—' }}</strong>
               </div>
               <div class="breadth-stat">
-                <span class="b-label">上涨板块</span>
+                <span class="b-label">{{ t('home.breadth.risingSectors') }}</span>
                 <strong class="b-val">{{ breadth.rising_sectors }}/{{ breadth.total_sectors }}</strong>
               </div>
             </div>
@@ -1052,11 +1124,11 @@ const sectorFallbackList = computed(() => {
               <div class="breadth-seg down" :style="{ width: (100 - breadthUpPct) + '%' }"></div>
             </div>
             <div class="breadth-foot">
-              <span>领涨板块 <strong :style="{ color: breadth.top_sector.chg_pct > 0 ? 'var(--danger)' : 'var(--success)' }">{{ breadth.top_sector.name }} {{ breadth.top_sector.chg_pct > 0 ? '+' : '' }}{{ breadth.top_sector.chg_pct.toFixed(2) }}%</strong></span>
-              <span class="b-meta">上涨占比 {{ breadthUpPct }}%</span>
+              <span>{{ t('home.breadth.topSector') }} <strong :style="{ color: breadth.top_sector.chg_pct > 0 ? 'var(--danger)' : 'var(--success)' }">{{ breadth.top_sector.name }} {{ breadth.top_sector.chg_pct > 0 ? '+' : '' }}{{ breadth.top_sector.chg_pct.toFixed(2) }}%</strong></span>
+              <span class="b-meta">{{ t('home.breadth.upRatio', { pct: breadthUpPct }) }}</span>
             </div>
           </template>
-          <el-empty v-else :image-size="60" description="暂无市场宽度数据" />
+          <el-empty v-else :image-size="60" :description="t('home.breadth.empty')" />
         </el-card>
       </template>
 
@@ -1068,43 +1140,43 @@ const sectorFallbackList = computed(() => {
               <template #header>
                 <div class="kline-header">
                   <span class="section-title" style="margin: 0; border: none; padding: 0">
-                    <el-icon><CandlestickChart /></el-icon> 行情看板
+                    <el-icon><CandlestickChart /></el-icon> {{ t('home.kline.title') }}
                   </span>
                   <div class="kline-toolbar">
                     <el-radio-group v-model="klinePeriod" size="small">
-                      <el-radio-button value="day">日</el-radio-button>
-                      <el-radio-button value="week">周</el-radio-button>
-                      <el-radio-button value="month">月</el-radio-button>
+                      <el-radio-button value="day">{{ t('home.kline.periodShort.day') }}</el-radio-button>
+                      <el-radio-button value="week">{{ t('home.kline.periodShort.week') }}</el-radio-button>
+                      <el-radio-button value="month">{{ t('home.kline.periodShort.month') }}</el-radio-button>
                     </el-radio-group>
                     <el-select
                       v-model="klineAdjust"
                       size="small"
-                      style="width: 92px"
-                      title="复权方式（指数无复权概念）"
+                      class="tb-adjust"
+                      :title="t('home.kline.adjustTitle')"
                       :disabled="isIndexTarget"
                     >
-                      <el-option label="前复权" value="qfq" />
-                      <el-option label="后复权" value="hfq" />
-                      <el-option label="不复权" value="nfq" />
+                      <el-option :label="t('home.kline.adjust.qfq')" value="qfq" />
+                      <el-option :label="t('home.kline.adjust.hfq')" value="hfq" />
+                      <el-option :label="t('home.kline.adjust.nfq')" value="nfq" />
                     </el-select>
-                    <el-select v-model="klineOverlay" size="small" style="width: 96px" title="主图叠加指标">
-                      <el-option label="主图：MA" value="ma" />
-                      <el-option label="主图：BOLL" value="boll" />
-                      <el-option label="主图：无" value="none" />
+                    <el-select v-model="klineOverlay" size="small" class="tb-overlay" :title="t('home.kline.overlayTitle')">
+                      <el-option :label="t('home.kline.overlay.ma')" value="ma" />
+                      <el-option :label="t('home.kline.overlay.boll')" value="boll" />
+                      <el-option :label="t('home.kline.overlay.none')" value="none" />
                     </el-select>
-                    <el-select v-model="klineSub" size="small" style="width: 106px" title="副图指标">
-                      <el-option label="副图：MACD" value="macd" />
-                      <el-option label="副图：KDJ" value="kdj" />
-                      <el-option label="副图：RSI" value="rsi" />
-                      <el-option label="副图：无" value="none" />
+                    <el-select v-model="klineSub" size="small" class="tb-sub" :title="t('home.kline.subTitle')">
+                      <el-option :label="t('home.kline.sub.macd')" value="macd" />
+                      <el-option :label="t('home.kline.sub.kdj')" value="kdj" />
+                      <el-option :label="t('home.kline.sub.rsi')" value="rsi" />
+                      <el-option :label="t('home.kline.sub.none')" value="none" />
                     </el-select>
                     <el-button size="small" text @click="resetKlineZoom">
-                      <el-icon><Refresh /></el-icon> 重置缩放
+                      <el-icon><Refresh /></el-icon> {{ t('home.kline.resetZoom') }}
                     </el-button>
                     <el-select
                       v-model="activeKey"
-                      placeholder="选择标的"
-                      style="width: 180px"
+                      :placeholder="t('home.kline.selectTarget')"
+                      class="tb-target"
                       filterable
                     >
                       <el-option
@@ -1128,7 +1200,7 @@ const sectorFallbackList = computed(() => {
                     :update-options="{ notMerge: true }"
                     autoresize
                   />
-                  <el-empty v-else description="暂无K线数据" />
+                  <el-empty v-else :description="t('home.kline.empty')" />
                 </template>
               </div>
             </el-card>
@@ -1139,20 +1211,20 @@ const sectorFallbackList = computed(() => {
             <el-card shadow="never" class="side-card">
               <template #header>
                 <span class="section-title" style="margin: 0; border: none; padding: 0">
-                  <el-icon><Collection /></el-icon> 自选股
+                  <el-icon><Collection /></el-icon> {{ t('home.watchlist.title') }}
                 </span>
               </template>
               <div class="watch-add">
                 <el-input
                   ref="newCodeInput"
                   v-model="newCode"
-                  :placeholder="newMarket === 'us' ? '美股代码，如 AAPL' : '6位代码，如 600938'"
+                  :placeholder="newMarket === 'us' ? t('home.watchlist.placeholderUs') : t('home.watchlist.placeholderZhA')"
                   size="small"
                   @keyup.enter="addWatch"
                 />
-                <el-select v-model="newMarket" size="small" style="width: 84px">
-                  <el-option label="A股" value="zh_a" />
-                  <el-option label="美股" value="us" />
+                <el-select v-model="newMarket" size="small" class="tb-market">
+                  <el-option :label="t('home.watchlist.marketZhA')" value="zh_a" />
+                  <el-option :label="t('home.watchlist.marketUs')" value="us" />
                 </el-select>
                 <el-button type="primary" size="small" :loading="adding" @click="addWatch">
                   <el-icon><Plus /></el-icon>
@@ -1198,7 +1270,7 @@ const sectorFallbackList = computed(() => {
                     text
                     circle
                     size="small"
-                    title="移除自选"
+                    :title="t('home.watchlist.remove')"
                     @click.stop="removeWatch(item.code, item.market, item.kind)"
                   >
                     <el-icon :size="14"><Close /></el-icon>
@@ -1207,9 +1279,9 @@ const sectorFallbackList = computed(() => {
                 <el-empty
                   v-if="!watchlistStore.items.length"
                   :image-size="60"
-                  description="暂无自选"
+                  :description="t('home.watchlist.empty')"
                 >
-                  <el-button type="primary" size="small" @click="focusWatchInput">输入代码添加</el-button>
+                  <el-button type="primary" size="small" @click="focusWatchInput">{{ t('home.watchlist.emptyAction') }}</el-button>
                 </el-empty>
               </div>
             </el-card>
@@ -1219,7 +1291,7 @@ const sectorFallbackList = computed(() => {
               <template #header>
                 <div class="kline-header">
                   <span class="section-title" style="margin: 0; border: none; padding: 0">
-                    <el-icon><Clock /></el-icon> 最近回测
+                    <el-icon><Clock /></el-icon> {{ t('home.history.title') }}
                   </span>
                   <el-button
                     v-if="historyStore.records.length"
@@ -1228,7 +1300,7 @@ const sectorFallbackList = computed(() => {
                     type="danger"
                     @click="historyStore.clear()"
                   >
-                    清空
+                    {{ t('home.history.clear') }}
                   </el-button>
                 </div>
               </template>
@@ -1243,19 +1315,25 @@ const sectorFallbackList = computed(() => {
                       </span>
                     </div>
                     <small class="history-meta">
-                      {{ fmtTime(r.ts) }} · 回撤 {{ (r.maxDrawdown * 100).toFixed(1) }}% · 夏普 {{ r.sharpe.toFixed(2) }}
+                      {{
+                        t('home.history.meta', {
+                          time: fmtTime(r.ts),
+                          dd: (r.maxDrawdown * 100).toFixed(1),
+                          sharpe: r.sharpe.toFixed(2),
+                        })
+                      }}
                     </small>
                   </div>
                   <el-button text size="small" type="primary" @click="rerunBacktest(r.id)">
-                    <el-icon><VideoPlay /></el-icon> 重跑
+                    <el-icon><VideoPlay /></el-icon> {{ t('home.history.rerun') }}
                   </el-button>
                 </div>
                 <el-empty
                   v-if="!recentBacktests.length"
                   :image-size="60"
-                  description="还没有回测记录"
+                  :description="t('home.history.empty')"
                 >
-                  <el-button type="primary" size="small" @click="router.push('/backtest')">去运行回测</el-button>
+                  <el-button type="primary" size="small" @click="router.push('/backtest')">{{ t('home.history.runAction') }}</el-button>
                 </el-empty>
               </div>
             </el-card>
@@ -1269,11 +1347,11 @@ const sectorFallbackList = computed(() => {
           <template #header>
             <div class="card-head-row">
               <span class="section-title" style="margin: 0; border: none; padding: 0">
-                <el-icon><Grid /></el-icon> 行业热力图
+                <el-icon><Grid /></el-icon> {{ t('home.heatmap.title') }}
               </span>
               <span class="card-head-right">
                 <small v-if="sectorBoard" class="card-updated">{{ sectorBoard.updated_at }}</small>
-                <router-link to="/sentiment" class="card-more">板块情绪 →</router-link>
+                <router-link to="/sentiment" class="card-more">{{ t('home.heatmap.more') }}</router-link>
               </span>
             </div>
           </template>
@@ -1283,15 +1361,15 @@ const sectorFallbackList = computed(() => {
           <template v-else-if="sectorBoard?.sectors?.length">
             <v-chart class="heatmap-chart" :option="heatmapOption" autoresize />
             <div class="heatmap-legend">
-              <span class="hl" style="background:#14532d"></span> 跌 &gt;3%
-              <span class="hl" style="background:#4ade80"></span> 跌
-              <span class="hl" style="background:#f3f4f6;border:1px solid #e5e7eb"></span> 平
-              <span class="hl" style="background:#f87171"></span> 涨
-              <span class="hl" style="background:#991b1b"></span> 涨 &gt;3%
-              <span class="hl-meta">面积=成交额 · 颜色=涨跌幅</span>
+              <span class="hl" style="background:#14532d"></span> {{ t('home.heatmap.legendDown3') }}
+              <span class="hl" style="background:#4ade80"></span> {{ t('home.heatmap.legendDown') }}
+              <span class="hl" style="background:#f3f4f6;border:1px solid #e5e7eb"></span> {{ t('home.heatmap.legendFlat') }}
+              <span class="hl" style="background:#f87171"></span> {{ t('home.heatmap.legendUp') }}
+              <span class="hl" style="background:#991b1b"></span> {{ t('home.heatmap.legendUp3') }}
+              <span class="hl-meta">{{ t('home.heatmap.legendMeta') }}</span>
             </div>
           </template>
-          <el-empty v-else :image-size="60" description="暂无板块数据" />
+          <el-empty v-else :image-size="60" :description="t('home.heatmap.empty')" />
         </el-card>
       </template>
 
@@ -1300,7 +1378,7 @@ const sectorFallbackList = computed(() => {
         <el-card shadow="never" class="info-card">
           <template #header>
             <span class="section-title" style="margin: 0; border: none; padding: 0">
-              <el-icon><Sunrise /></el-icon> 热门板块 TOP
+              <el-icon><Sunrise /></el-icon> {{ t('home.sectors.title') }}
             </span>
           </template>
           <div class="info-body">
@@ -1320,7 +1398,7 @@ const sectorFallbackList = computed(() => {
                 :show-text="false"
               />
             </div>
-            <el-empty v-if="!sectorFallbackList.length" :image-size="60" description="暂无板块数据" />
+            <el-empty v-if="!sectorFallbackList.length" :image-size="60" :description="t('home.sectors.empty')" />
           </div>
         </el-card>
       </template>
@@ -1331,15 +1409,15 @@ const sectorFallbackList = computed(() => {
           <template #header>
             <div class="card-head-row">
               <span class="section-title" style="margin: 0; border: none; padding: 0">
-                <el-icon><ChatDotRound /></el-icon> 当日舆情
+                <el-icon><ChatDotRound /></el-icon> {{ t('home.news.title') }}
               </span>
-              <router-link to="/sentiment" class="card-more">舆情分析 →</router-link>
+              <router-link to="/sentiment" class="card-more">{{ t('layout.nav.sentiment') }} →</router-link>
             </div>
           </template>
           <div class="info-body news-body">
             <div v-if="newsSources.length > 2" class="news-filter">
               <el-radio-group v-model="newsSourceFilter" size="small">
-                <el-radio-button v-for="s in newsSources" :key="s" :value="s">{{ s }}</el-radio-button>
+                <el-radio-button v-for="s in newsSources" :key="s.key" :value="s.key">{{ s.label }}</el-radio-button>
               </el-radio-group>
             </div>
             <div v-for="(n, i) in filteredNews" :key="n.id || i" class="news-item">
@@ -1350,7 +1428,7 @@ const sectorFallbackList = computed(() => {
               <a v-if="n.url" :href="n.url" target="_blank" rel="noopener" class="news-title">{{ n.title }}</a>
               <div v-else class="news-title">{{ n.title }}</div>
             </div>
-            <el-empty v-if="!sentiment?.news_list?.length" :image-size="60" description="暂无舆情数据" />
+            <el-empty v-if="!sentiment?.news_list?.length" :image-size="60" :description="t('home.news.empty')" />
           </div>
         </el-card>
       </template>
@@ -1360,7 +1438,7 @@ const sectorFallbackList = computed(() => {
         <el-card shadow="never" class="info-card">
           <template #header>
             <span class="section-title" style="margin: 0; border: none; padding: 0">
-              <el-icon><Star /></el-icon> 个股推荐
+              <el-icon><Star /></el-icon> {{ t('home.recommend.title') }}
             </span>
           </template>
           <div class="info-body">
@@ -1368,7 +1446,7 @@ const sectorFallbackList = computed(() => {
               v-for="r in (recommend?.recommendations || []).slice(0, 6)"
               :key="r.code"
               class="rec-item"
-              :title="`${r.name} · 点击在主图查看`"
+              :title="t('home.recommend.cardTitle', { name: r.name })"
               @click="openRecInChart(r)"
             >
               <el-tag :type="r.rank <= 3 ? (r.rank === 1 ? 'warning' : r.rank === 2 ? 'info' : 'danger') : 'info'" effect="dark" round size="small">{{ r.rank }}</el-tag>
@@ -1381,7 +1459,7 @@ const sectorFallbackList = computed(() => {
                 <small class="rec-reason">{{ r.reason }}</small>
               </div>
             </div>
-            <el-empty v-if="!recommend?.recommendations?.length" :image-size="60" description="暂无推荐数据" />
+            <el-empty v-if="!recommend?.recommendations?.length" :image-size="60" :description="t('home.recommend.empty')" />
           </div>
         </el-card>
       </template>
@@ -1392,12 +1470,12 @@ const sectorFallbackList = computed(() => {
           <template #header>
             <div class="card-head-row">
               <span class="section-title" style="margin: 0; border: none; padding: 0">
-                <el-icon><PieChart /></el-icon> 自选分布
+                <el-icon><PieChart /></el-icon> {{ t('home.allocation.title') }}
               </span>
               <el-radio-group v-model="allocDim" size="small">
-                <el-radio-button value="market">市场</el-radio-button>
-                <el-radio-button value="change">当日涨跌</el-radio-button>
-                <el-radio-button value="sector">行业</el-radio-button>
+                <el-radio-button value="market">{{ t('home.allocation.dim.market') }}</el-radio-button>
+                <el-radio-button value="change">{{ t('home.allocation.dim.change') }}</el-radio-button>
+                <el-radio-button value="sector">{{ t('home.allocation.dim.sector') }}</el-radio-button>
               </el-radio-group>
             </div>
           </template>
@@ -1407,7 +1485,7 @@ const sectorFallbackList = computed(() => {
             :option="allocationOption"
             autoresize
           />
-          <el-empty v-else :image-size="60" description="添加自选后查看分布" />
+          <el-empty v-else :image-size="60" :description="t('home.allocation.empty')" />
         </el-card>
       </template>
 
@@ -1417,13 +1495,13 @@ const sectorFallbackList = computed(() => {
           <template #header>
             <div class="card-head-row">
               <span class="section-title" style="margin: 0; border: none; padding: 0">
-                <el-icon><Monitor /></el-icon> 数据源心跳
+                <el-icon><Monitor /></el-icon> {{ t('home.health.title') }}
               </span>
-              <small class="card-updated">各数据源近 7 次取数</small>
+              <small class="card-updated">{{ t('home.health.subtitle') }}</small>
             </div>
           </template>
           <div class="health-body">
-            <div v-for="s in HEALTH_SOURCES" :key="s.key" class="health-row">
+            <div v-for="s in healthSources" :key="s.key" class="health-row">
               <span class="health-name">{{ s.label }}</span>
               <span class="health-beats">
                 <span
@@ -1437,7 +1515,7 @@ const sectorFallbackList = computed(() => {
               <small class="health-last">{{ lastBeatText(s.key) }}</small>
             </div>
             <div v-if="!hasHealthData" class="health-hint">
-              暂无取数记录：查询行情/回测后自动生成（仅统计本进程，重启清零）
+              {{ t('home.health.hint') }}
             </div>
           </div>
         </el-card>
@@ -1449,7 +1527,7 @@ const sectorFallbackList = computed(() => {
       <el-card shadow="never" class="info-card">
         <template #header>
           <span class="section-title" style="margin: 0; border: none; padding: 0">
-            <el-icon><Calendar /></el-icon> 情绪日历
+            <el-icon><Calendar /></el-icon> {{ t('home.calendar.title') }}
           </span>
         </template>
         <SentimentCalendar :calendar="calendar" />
@@ -1474,6 +1552,9 @@ const sectorFallbackList = computed(() => {
   justify-content: flex-end;
   align-items: center;
   gap: 12px;
+  /* 英文提示语（drag hint）比中文长一倍余，窄屏允许换行避免溢出 */
+  flex-wrap: wrap;
+  row-gap: 4px;
 }
 .layout-hint {
   font-size: 0.78rem;
@@ -1583,6 +1664,11 @@ const sectorFallbackList = computed(() => {
   font-weight: 600;
   color: var(--text-muted);
   font-size: 0.9rem;
+  /* 英文指数名（SZSE Component）比中文宽，超宽时省略号截断而非挤换行 */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .index-close {
   font-size: 1.2rem;
@@ -1608,6 +1694,9 @@ const sectorFallbackList = computed(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  /* 英文卡片标题（Watchlist Allocation）+ 档位切换（Today's Change）在窄屏放不下，允许换行 */
+  flex-wrap: wrap;
+  gap: 6px 12px;
 }
 .card-updated {
   color: var(--text-muted);
@@ -1624,7 +1713,8 @@ const sectorFallbackList = computed(() => {
 }
 .breadth-stat {
   flex: 1;
-  min-width: 72px;
+  /* 88px：容下英文最长档位「Rising Sectors」（约 70px@0.72rem）不折行 */
+  min-width: 88px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -1682,6 +1772,39 @@ const sectorFallbackList = computed(() => {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+/* 工具栏下拉宽度：中文档位（前复权/主图：BOLL）本就顶满旧固定宽，英文更长必截断。
+   按「中文最宽档位 + 英文最长档位」取大者预留（EP small select：内距 16px + 箭头 14px + 间隙 4px）：
+   - Backward Adj.（约 73px 文本）→ 112px；Overlay: BOLL（约 75px）→ 116px；
+   - 副图：MACD（中文即最宽，约 70px）→ 106px 维持不变；
+   - 标的选择为「名称 (代码)」数据、长度不定 → 弹性占位 + 上下限，选中值溢出省略。 */
+.tb-adjust {
+  width: 112px;
+}
+.tb-overlay {
+  width: 116px;
+}
+.tb-sub {
+  width: 106px;
+}
+.tb-target {
+  flex: 1 1 200px;
+  min-width: 180px;
+  max-width: 280px;
+}
+.tb-target :deep(.el-select__selection) {
+  overflow: hidden;
+}
+.tb-target :deep(.el-select__selected-item span) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 自选-市场下拉：英文档位 A-shares 比中文宽一倍余，84px 余量不足；
+   flex-shrink:0 防止被 .watch-add 弹性行压缩回截断 */
+.tb-market {
+  width: 90px;
+  flex-shrink: 0;
 }
 .kline-body {
   min-height: 520px;
@@ -1986,7 +2109,9 @@ const sectorFallbackList = computed(() => {
   gap: 10px;
 }
 .health-name {
-  width: 68px;
+  /* 固定 width 改为 min-width：英文源名（Eastmoney/BaoStock）比中文宽，可撑开不截断 */
+  flex: 0 0 auto;
+  min-width: 68px;
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--text-muted);

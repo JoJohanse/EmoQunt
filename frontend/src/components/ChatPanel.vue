@@ -5,6 +5,7 @@ import { useChatStore } from '@/stores/chat'
 import MarkdownIt from 'markdown-it'
 import ChatToolCard from '@/components/ChatToolCard.vue'
 import { toolCardKind } from '@/components/chat/toolCards'
+import { t } from '@/locales'
 
 const store = useChatStore()
 const { messages, loading } = storeToRefs(store)
@@ -73,8 +74,8 @@ watch(
                   :name="j"
                 >
                   <div class="tool-detail">
-                    <div class="tool-section"><strong>参数：</strong><code>{{ tc.args }}</code></div>
-                    <div class="tool-section"><strong>结果：</strong><pre>{{ tc.result }}</pre></div>
+                    <div class="tool-section"><strong>{{ t('chat.args') }}</strong><code>{{ tc.args }}</code></div>
+                    <div class="tool-section"><strong>{{ t('chat.result') }}</strong><pre>{{ tc.result }}</pre></div>
                   </div>
                 </el-collapse-item>
               </el-collapse>
@@ -98,17 +99,17 @@ watch(
         type="textarea"
         :rows="2"
         resize="none"
-        placeholder="输入问题，回车发送（Shift+回车换行）"
+        :placeholder="t('chat.placeholder')"
         :disabled="loading"
         @keydown="onKeydown"
       />
       <div class="input-actions">
-        <el-button text size="small" @click="store.clear" :disabled="loading">清空</el-button>
+        <el-button text size="small" @click="store.clear" :disabled="loading">{{ t('chat.clear') }}</el-button>
         <el-button v-if="loading" type="danger" plain size="small" @click="store.cancel">
-          <el-icon><VideoPause /></el-icon> 停止
+          <el-icon><VideoPause /></el-icon> {{ t('chat.stop') }}
         </el-button>
         <el-button type="primary" size="small" :loading="loading" @click="onSend">
-          <el-icon><Promotion /></el-icon> 发送
+          <el-icon><Promotion /></el-icon> {{ t('chat.send') }}
         </el-button>
       </div>
     </div>

@@ -24,6 +24,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.data.data_manager import Stock
 from src.data.columns import DATE, OPEN, HIGH, LOW, CLOSE, VOLUME
+from src.utils.i18n import t
 from src.utils.serialize import safe_float, safe_metric
 
 # 绩效指标唯一事实来源为 calculate_strategy_metrics，PerformanceAnalyzer.generate_report 为旧报告视图
@@ -243,16 +244,16 @@ class PerformanceAnalyzer:
         return report
     
     def plot_performance(self, figsize: Tuple[int, int] = (12, 10)):
-        """绘制绩效图表"""
+        """绘制绩效图表（标签按当前请求语言本地化）"""
         fig, axes = plt.subplots(2, 2, figsize=figsize)
         
         # 1. 累积收益曲线
         cumulative_returns = (1 + self.returns).cumprod()
-        axes[0, 0].plot(cumulative_returns.index, cumulative_returns.values, label='策略收益', linewidth=2)
+        axes[0, 0].plot(cumulative_returns.index, cumulative_returns.values, label=t('charts.strategyReturn'), linewidth=2)
         if self.benchmark_returns is not None:
             benchmark_cumulative = (1 + self.benchmark_returns).cumprod()
-            axes[0, 0].plot(benchmark_cumulative.index, benchmark_cumulative.values, label='基准收益', linewidth=2)
-        axes[0, 0].set_title('累积收益曲线')
+            axes[0, 0].plot(benchmark_cumulative.index, benchmark_cumulative.values, label=t('charts.benchmarkReturn'), linewidth=2)
+        axes[0, 0].set_title(t('charts.cumulativeReturns'))
         axes[0, 0].legend()
         axes[0, 0].grid(True, linestyle='--', alpha=0.6)
         
@@ -260,12 +261,12 @@ class PerformanceAnalyzer:
         running_max = cumulative_returns.expanding().max()
         drawdown = (cumulative_returns - running_max) / running_max
         axes[0, 1].fill_between(drawdown.index, drawdown.values, 0, color='red', alpha=0.3)
-        axes[0, 1].set_title('回撤曲线')
+        axes[0, 1].set_title(t('charts.drawdownCurve'))
         axes[0, 1].grid(True, linestyle='--', alpha=0.6)
         
         # 3. 收益分布直方图
         axes[1, 0].hist(self.returns.dropna(), bins=50, density=True, alpha=0.7, edgecolor='black')
-        axes[1, 0].set_title('收益分布直方图')
+        axes[1, 0].set_title(t('charts.returnsDistribution'))
         axes[1, 0].grid(True, linestyle='--', alpha=0.6)
         
         # 4. 月度收益热力图
@@ -276,7 +277,7 @@ class PerformanceAnalyzer:
             monthly_pivot['month'] = monthly_pivot.index.month
             pivot_table = monthly_pivot.pivot(index='year', columns='month', values='monthly_return')
             sns.heatmap(pivot_table, annot=True, fmt='.2%', cmap='RdYlGn', center=0, ax=axes[1, 1])
-            axes[1, 1].set_title('月度收益热力图')
+            axes[1, 1].set_title(t('charts.monthlyHeatmap'))
         
         plt.tight_layout()
         plt.show()
@@ -862,12 +863,13 @@ def run_backtest_with_charts(
     visualizer = StrategyVisualizer()
     equity_path = os.path.join(strategy_dir, f"equity_curve_{strategy_name}_{stock_code}_{timestamp}.png")
     equity_fig = visualizer.plot_cumulative_returns(
-        daily_returns, benchmark_returns, title=f"{strategy_name} 收益曲线")
+        daily_returns, benchmark_returns, title=f"{strategy_name} {t('charts.equityCurve')}")
     equity_fig.savefig(equity_path)
     plt.close(equity_fig)
 
     drawdown_path = os.path.join(strategy_dir, f"drawdown_curve_{strategy_name}_{stock_code}_{timestamp}.png")
-    drawdown_fig = visualizer.plot_drawdown(daily_returns, title=f"{strategy_name} 回撤曲线")
+    drawdown_fig = visualizer.plot_drawdown(
+        daily_returns, title=f"{strategy_name} {t('charts.drawdownCurve')}")
     drawdown_fig.savefig(drawdown_path)
     plt.close(drawdown_fig)
 

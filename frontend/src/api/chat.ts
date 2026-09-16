@@ -5,6 +5,7 @@
  * 后端端点：POST /api/agent/chat（SSE），POST /api/agent/chat/sync（非流式）。
  */
 import type { ChatMessage, SseEvent } from './types'
+import { t } from '@/locales'
 
 /**
  * 流式发送对话，通过回调逐事件返回。
@@ -29,7 +30,8 @@ export async function chatStream(
 
   if (!resp.ok || !resp.body) {
     const txt = await resp.text().catch(() => '')
-    throw new Error(`请求失败 (${resp.status}) ${txt}`)
+    // 调用时取词：错误文案跟随当前界面语言
+    throw new Error(`${t('chat.requestFailedStatus', { status: resp.status })} ${txt}`)
   }
 
   const reader = resp.body.getReader()
@@ -69,6 +71,6 @@ export async function chatSync(messages: ChatMessage[]): Promise<string> {
     }),
   })
   const data = await resp.json()
-  if (!resp.ok) throw new Error(data.error || '请求失败')
+  if (!resp.ok) throw new Error(data.error || t('chat.requestFailed'))
   return data.reply as string
 }

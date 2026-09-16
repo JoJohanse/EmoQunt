@@ -127,7 +127,9 @@ def _get_trendradar_sentiment():
 
 
 def _generate_sentiment_chart(sentiment_result, sentiment_dir, timestamp, output_dir):
-    """生成舆情分析图表（原样搬移，Agg backend、配色与 1/3 兜底不变）。"""
+    """生成舆情分析图表（原样搬移，Agg backend、配色与 1/3 兜底不变；标签按当前语言本地化）。"""
+    from src.utils.i18n import t
+
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -140,9 +142,11 @@ def _generate_sentiment_chart(sentiment_result, sentiment_dir, timestamp, output
     total = sum(sizes)
     sizes = [1/3, 1/3, 1/3] if total == 0 else [s / total for s in sizes]
     fig, ax = plt.subplots(figsize=(8, 6))
-    ax.pie(sizes, labels=['正面', '负面', '中性'], colors=colors, autopct='%1.1f%%', startangle=90)
+    ax.pie(sizes,
+           labels=[t('charts.sentimentPositive'), t('charts.sentimentNegative'), t('charts.sentimentNeutral')],
+           colors=colors, autopct='%1.1f%%', startangle=90)
     ax.axis('equal')
-    plt.title('舆情情绪分布')
+    plt.title(t('charts.sentimentDistribution'))
     chart_path = os.path.join(sentiment_dir, f"sentiment_distribution_{timestamp}.png")
     plt.savefig(chart_path)
     plt.close(fig)

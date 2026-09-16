@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { recommendApi } from '@/api'
 import type { DailyRecommendData, RecommendedStock } from '@/api/types'
 import { recommendScoreColor } from '@/lib/marketColors'
+import { t } from '@/locales'
 
 const data = ref<DailyRecommendData | null>(null)
 const loading = ref(false)
@@ -13,7 +14,7 @@ async function load(refresh = false) {
   try {
     data.value = refresh ? await recommendApi.refresh() : await recommendApi.get()
   } catch (e: any) {
-    ElMessage.error('加载失败：' + e.message)
+    ElMessage.error(t('recommend.loadFailed', { msg: e.message }))
   } finally {
     loading.value = false
   }
@@ -34,18 +35,18 @@ function scoreType(score: number): string {
 </script>
 
 <template>
-  <div v-loading.fullscreen="loading" element-loading-text="正在刷新推荐，请稍候...">
+  <div v-loading.fullscreen="loading" :element-loading-text="t('recommend.refreshing')">
     <div class="page-hero">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <div>
-          <h1><el-icon><Star /></el-icon> 每日推荐</h1>
-          <p class="subtitle" v-if="data">推荐日期：{{ data.date }}</p>
+          <h1><el-icon><Star /></el-icon> {{ t('layout.nav.recommend') }}</h1>
+          <p class="subtitle" v-if="data">{{ t('recommend.subtitle', { date: data.date }) }}</p>
         </div>
-        <el-button :loading="loading" @click="load(true)"><el-icon><Refresh /></el-icon> 刷新推荐</el-button>
+        <el-button :loading="loading" @click="load(true)"><el-icon><Refresh /></el-icon> {{ t('recommend.refreshButton') }}</el-button>
       </div>
     </div>
 
-    <div class="section-title" v-if="data?.top_sectors?.length"><el-icon><Sunrise /></el-icon> 热门板块 TOP 3</div>
+    <div class="section-title" v-if="data?.top_sectors?.length"><el-icon><Sunrise /></el-icon> {{ t('recommend.topSectors') }}</div>
     <el-row :gutter="16" style="margin-bottom: 1.5rem">
       <el-col v-for="(s, i) in data?.top_sectors || []" :key="i" :xs="24" :md="8">
         <el-card shadow="hover" class="top-sector">
@@ -53,26 +54,26 @@ function scoreType(score: number): string {
             <el-icon><OfficeBuilding /></el-icon>
           </div>
           <h4>{{ s.name }}</h4>
-          <el-tag :type="s.sentiment >= 85 ? 'danger' : 'warning'">热度：{{ s.sentiment }}</el-tag>
+          <el-tag :type="s.sentiment >= 85 ? 'danger' : 'warning'">{{ t('recommend.heat', { score: s.sentiment }) }}</el-tag>
         </el-card>
       </el-col>
     </el-row>
 
-    <div class="section-title"><el-icon><Rank /></el-icon> 推荐股票列表</div>
+    <div class="section-title"><el-icon><Rank /></el-icon> {{ t('recommend.list') }}</div>
     <el-table :data="data?.recommendations || []" stripe style="width: 100%">
-      <el-table-column label="排名" width="80">
+      <el-table-column :label="t('recommend.colRank')" width="80">
         <template #default="{ row }">
           <el-tag :type="rankType(row.rank)" effect="dark" round>{{ row.rank }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="code" label="代码" width="100">
+      <el-table-column prop="code" :label="t('recommend.colCode')" width="100">
         <template #default="{ row }"><code>{{ row.code }}</code></template>
       </el-table-column>
-      <el-table-column prop="name" label="名称" width="120" />
-      <el-table-column prop="sector" label="板块" width="120">
+      <el-table-column prop="name" :label="t('recommend.colName')" width="120" />
+      <el-table-column prop="sector" :label="t('recommend.colSector')" width="120">
         <template #default="{ row }"><el-tag size="small" type="info">{{ row.sector }}</el-tag></template>
       </el-table-column>
-      <el-table-column label="综合评分" width="180">
+      <el-table-column :label="t('recommend.colScore')" width="180">
         <template #default="{ row }">
           <div style="display:flex;align-items:center;gap:8px">
             <el-progress :percentage="row.score" :color="recommendScoreColor(row.score)" :stroke-width="10" :show-text="false" style="flex:1" />
@@ -80,9 +81,9 @@ function scoreType(score: number): string {
           </div>
         </template>
       </el-table-column>
-      <el-table-column prop="reason" label="推荐理由" />
+      <el-table-column prop="reason" :label="t('recommend.colReason')" />
     </el-table>
-    <el-empty v-if="!loading && !data?.recommendations?.length" description="暂无推荐" />
+    <el-empty v-if="!loading && !data?.recommendations?.length" :description="t('recommend.empty')" />
   </div>
 </template>
 

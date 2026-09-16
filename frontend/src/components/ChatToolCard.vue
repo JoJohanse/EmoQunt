@@ -5,6 +5,7 @@ import type { Market, ToolCallEvent } from '@/api/types'
 import { useWatchlistStore } from '@/stores/watchlist'
 import { deltaTone, deltaDirection, scoreColor } from '@/lib/marketColors'
 import { parseToolResult, TOOL_LABELS } from '@/components/chat/toolCards'
+import { t } from '@/locales'
 
 /**
  * AI 助手工具结果卡片（Generative UI 模式）：
@@ -17,7 +18,11 @@ const router = useRouter()
 const watchlistStore = useWatchlistStore()
 
 const data = computed(() => parseToolResult(props.call))
-const label = computed(() => TOOL_LABELS[props.call.name] ?? props.call.name)
+// 卡片标题：登记过的工具经 i18n 翻译，未知工具回退原始工具名（数据）
+const label = computed(() => {
+  const key = TOOL_LABELS[props.call.name]
+  return key ? t(key) : props.call.name
+})
 
 // ===== 行情卡片（get_stock_quote / get_index_quote） =====
 const quote = computed(() => {
@@ -30,7 +35,7 @@ const quote = computed(() => {
     code,
     market,
     kind,
-    name: String(d.name || code || '指数'),
+    name: String(d.name || code || t('chat.indexName')),
     close: Number(d.close ?? 0),
     chgPct: Number(d.change_pct ?? 0),
     periodHigh: d.period_high != null ? Number(d.period_high) : null,
@@ -71,10 +76,10 @@ const sentiment = computed(() => {
 })
 
 function signalTag(signal: string): { text: string; type: 'danger' | 'success' | 'info' } {
-  // A股配色约定：买入=红、卖出=绿
-  if (signal === 'buy') return { text: '买入信号', type: 'danger' }
-  if (signal === 'sell') return { text: '卖出信号', type: 'success' }
-  return { text: '观望', type: 'info' }
+  // A股配色约定：买入=红、卖出=绿；文案在渲染时取（语言切换即时生效）
+  if (signal === 'buy') return { text: t('chat.signalBuy'), type: 'danger' }
+  if (signal === 'sell') return { text: t('chat.signalSell'), type: 'success' }
+  return { text: t('chat.signalHold'), type: 'info' }
 }
 
 // 评分色（≥70 绿 / ≥60 紫 / ≥45 橙）收拢在 lib/marketColors，此处直接消费
@@ -108,12 +113,12 @@ const backtest = computed(() => {
     strategy: String(d.strategy ?? ''),
     stock: String(d.stock ?? ''),
     cells: [
-      cell('总收益率', Number(d.total_return_pct ?? 0), '%', d.total_return_pct > 0 ? true : d.total_return_pct < 0 ? false : null),
-      cell('年化收益', Number(d.annual_return_pct ?? 0), '%', d.annual_return_pct > 0 ? true : d.annual_return_pct < 0 ? false : null),
-      cell('最大回撤', Number(d.max_drawdown_pct ?? 0), '%', false),
-      cell('夏普比率', Number(d.sharpe ?? 0), '', d.sharpe > 0 ? true : d.sharpe < 0 ? false : null),
-      cell('胜率', Number(d.win_rate_pct ?? 0), '%', null),
-      cell('盈亏比', Number(d.profit_loss_ratio ?? 0), '', d.profit_loss_ratio >= 1 ? true : d.profit_loss_ratio > 0 ? false : null),
+      cell(t('chat.btTotalReturn'), Number(d.total_return_pct ?? 0), '%', d.total_return_pct > 0 ? true : d.total_return_pct < 0 ? false : null),
+      cell(t('chat.btAnnualReturn'), Number(d.annual_return_pct ?? 0), '%', d.annual_return_pct > 0 ? true : d.annual_return_pct < 0 ? false : null),
+      cell(t('chat.btMaxDrawdown'), Number(d.max_drawdown_pct ?? 0), '%', false),
+      cell(t('chat.btSharpe'), Number(d.sharpe ?? 0), '', d.sharpe > 0 ? true : d.sharpe < 0 ? false : null),
+      cell(t('chat.btWinRate'), Number(d.win_rate_pct ?? 0), '%', null),
+      cell(t('chat.btProfitLossRatio'), Number(d.profit_loss_ratio ?? 0), '', d.profit_loss_ratio >= 1 ? true : d.profit_loss_ratio > 0 ? false : null),
     ],
   }
 })
@@ -136,7 +141,7 @@ const signal = computed(() => {
   <div class="tool-card">
     <div class="tool-card-head">
       <span class="tool-kind"><el-icon><Histogram /></el-icon> {{ label }}</span>
-      <el-tag v-if="call.failed" type="danger" size="small" effect="plain">未完成</el-tag>
+      <el-tag v-if="call.failed" type="danger" size="small" effect="plain">{{ t('chat.incomplete') }}</el-tag>
     </div>
 
     <!-- 执行中：骨架占位（tool_start → tool 状态机的 input-available 态） -->
@@ -145,7 +150,7 @@ const signal = computed(() => {
     </div>
 
     <div v-else-if="call.failed" class="tool-card-body">
-      <div class="tool-fail">该工具调用未返回结果（已取消或服务异常）</div>
+      <div class="tool-fail">{{ t('chat.toolNoResult') }}</div>
     </div>
 
     <!-- 行情 / 指数 -->
@@ -153,7 +158,7 @@ const signal = computed(() => {
       <div class="quote-row">
         <span class="quote-name">{{ quote.name }}</span>
         <code class="quote-code">{{ quote.code }}</code>
-        <span class="quote-market">{{ quote.market === 'us' ? '美股' : 'A股' }}</span>
+        <span class="quote-market">{{ quote.market === 'us' ? t('chat.marketUs') : t('chat.marketCn') }}</span>
       </div>
       <div class="quote-row">
         <span class="quote-close">{{ quote.close.toFixed(2) }}</span>
@@ -162,12 +167,12 @@ const signal = computed(() => {
         </span>
       </div>
       <div class="quote-meta">
-        <span v-if="quote.periodHigh != null">期间最高 <strong>{{ quote.periodHigh.toFixed(2) }}</strong></span>
-        <span v-if="quote.periodLow != null">期间最低 <strong>{{ quote.periodLow.toFixed(2) }}</strong></span>
+        <span v-if="quote.periodHigh != null">{{ t('chat.periodHigh') }} <strong>{{ quote.periodHigh.toFixed(2) }}</strong></span>
+        <span v-if="quote.periodLow != null">{{ t('chat.periodLow') }} <strong>{{ quote.periodLow.toFixed(2) }}</strong></span>
         <span v-if="quote.lastDate">{{ quote.lastDate }}</span>
       </div>
       <el-button size="small" type="primary" plain class="tool-action" @click="openInHome(quote.code, quote.market, quote.name, quote.kind)">
-        <el-icon><CandlestickChart /></el-icon> 在首页查看主图
+        <el-icon><CandlestickChart /></el-icon> {{ t('chat.viewOnHome') }}
       </el-button>
     </div>
 
@@ -175,12 +180,12 @@ const signal = computed(() => {
     <div v-else-if="sentiment" class="tool-card-body">
       <div class="quote-row">
         <span class="delta-badge" style="background: var(--brand-start); color: #fff">
-          平均情绪 {{ sentiment.averageScore != null ? sentiment.averageScore.toFixed(2) : '—' }}
+          {{ t('chat.avgSentiment') }} {{ sentiment.averageScore != null ? sentiment.averageScore.toFixed(2) : '—' }}
         </span>
         <el-tag :type="signalTag(sentiment.signal).type" size="small" effect="dark">
           {{ signalTag(sentiment.signal).text }}
         </el-tag>
-        <span class="tool-muted">新闻 {{ sentiment.newsCount }} 条</span>
+        <span class="tool-muted">{{ t('chat.newsCount', { n: sentiment.newsCount }) }}</span>
       </div>
       <div v-for="s in sentiment.sectors" :key="s.name" class="sentiment-row">
         <div class="sentiment-head">
@@ -191,7 +196,7 @@ const signal = computed(() => {
         <small v-if="s.stocks.length" class="tool-muted">{{ s.stocks.join(' / ') }}</small>
       </div>
       <el-button size="small" type="primary" plain class="tool-action" @click="router.push('/sentiment')">
-        <el-icon><ChatDotRound /></el-icon> 查看舆情分析
+        <el-icon><ChatDotRound /></el-icon> {{ t('chat.viewSentiment') }}
       </el-button>
     </div>
 
@@ -201,7 +206,7 @@ const signal = computed(() => {
         v-for="r in recommends"
         :key="r.code"
         class="rec-row"
-        title="点击在首页主图查看"
+        :title="t('chat.clickToViewOnHome')"
         @click="openInHome(r.code, 'zh_a', r.name)"
       >
         <el-tag size="small" effect="dark" round>{{ r.rank }}</el-tag>
@@ -210,7 +215,7 @@ const signal = computed(() => {
         <span class="rec-score" :style="{ color: scoreColor(r.score) }">{{ r.score }}</span>
       </div>
       <el-button size="small" type="primary" plain class="tool-action" @click="router.push('/daily-recommend')">
-        <el-icon><Star /></el-icon> 查看每日推荐
+        <el-icon><Star /></el-icon> {{ t('chat.viewRecommend') }}
       </el-button>
     </div>
 
@@ -227,25 +232,25 @@ const signal = computed(() => {
         </div>
       </div>
       <el-button size="small" type="primary" plain class="tool-action" @click="router.push('/backtest')">
-        <el-icon><Histogram /></el-icon> 去运行回测
+        <el-icon><Histogram /></el-icon> {{ t('chat.runBacktest') }}
       </el-button>
     </div>
 
     <!-- 个股信号 -->
     <div v-else-if="signal" class="tool-card-body">
       <div class="quote-row">
-        <span class="quote-name">{{ signal.sector || '个股信号' }}</span>
+        <span class="quote-name">{{ signal.sector || t('chat.stockSignal') }}</span>
         <code class="quote-code">{{ signal.code }}</code>
         <el-tag :type="signalTag(signal.signal).type" size="small" effect="dark">
           {{ signalTag(signal.signal).text }}
         </el-tag>
       </div>
       <div class="quote-meta">
-        <span v-if="signal.score != null">行业情绪 <strong :style="{ color: scoreColor(signal.score) }">{{ signal.score }}</strong></span>
+        <span v-if="signal.score != null">{{ t('chat.sectorSentiment') }} <strong :style="{ color: scoreColor(signal.score) }">{{ signal.score }}</strong></span>
         <span v-if="signal.date">{{ signal.date }}</span>
       </div>
       <el-button size="small" type="primary" plain class="tool-action" @click="openInHome(signal.code, 'zh_a', signal.code)">
-        <el-icon><CandlestickChart /></el-icon> 在首页查看主图
+        <el-icon><CandlestickChart /></el-icon> {{ t('chat.viewOnHome') }}
       </el-button>
     </div>
   </div>

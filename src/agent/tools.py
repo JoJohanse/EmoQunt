@@ -12,6 +12,8 @@ from typing import Optional
 
 from langchain_core.tools import tool
 
+from src.utils.i18n import vmsg
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,7 +46,7 @@ def get_stock_quote(stock_code: str, market: str = "zh_a", days: int = 30) -> st
         df = stock.get_stock_data(start_date=start, end_date=end,
                                   adjust="qfq" if market == "us" else "hfq", type="daily")
         if df is None or df.empty:
-            return _err(f"无法获取 {stock_code} 的行情数据")
+            return _err(vmsg("agentTool.noQuoteData", "无法获取 {code} 的行情数据", code=stock_code))
         df = df.tail(days).reset_index(drop=True)
         # 中文列名 → 英文（引用统一常量）
         from src.data.columns import ZH_TO_EN
@@ -75,7 +77,7 @@ def get_stock_quote(stock_code: str, market: str = "zh_a", days: int = 30) -> st
         return _json(summary)
     except Exception as e:
         logger.exception("get_stock_quote failed")
-        return _err(f"行情查询失败: {e}")
+        return _err(vmsg("agentTool.quoteFailed", "行情查询失败: {err}", err=e))
 
 
 @tool
@@ -95,7 +97,7 @@ def get_index_quote(index_code: str = "000300", market: str = "zh_a", days: int 
         start = (datetime.now() - timedelta(days=days * 2 + 30)).strftime("%Y%m%d")
         df = get_index_data(index_code, start_date=start, end_date=end, market=market)
         if df is None or df.empty:
-            return _err(f"无法获取指数 {index_code} 的数据")
+            return _err(vmsg("agentTool.noIndexData", "无法获取指数 {code} 的数据", code=index_code))
         df = df.tail(days).reset_index(drop=True)
         col_map = {"时间": "date", "收盘": "close", "最高": "high", "最低": "low", "成交量": "volume"}
         df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
@@ -116,7 +118,7 @@ def get_index_quote(index_code: str = "000300", market: str = "zh_a", days: int 
         })
     except Exception as e:
         logger.exception("get_index_quote failed")
-        return _err(f"指数查询失败: {e}")
+        return _err(vmsg("agentTool.indexFailed", "指数查询失败: {err}", err=e))
 
 
 @tool
@@ -165,7 +167,7 @@ def run_backtest(strategy_name: str, stock_code: str, start_date: str, end_date:
         return _json(summary)
     except Exception as e:
         logger.exception("run_backtest tool failed")
-        return _err(f"回测失败: {e}")
+        return _err(vmsg("agentTool.backtestFailed", "回测失败: {err}", err=e))
 
 
 @tool
@@ -179,7 +181,7 @@ def get_sentiment(top_n: int = 10) -> str:
         from src.factor.sentiment import get_or_generate_sentiment_data
         data, news = get_or_generate_sentiment_data()
         if not data:
-            return _err("暂无舆情数据（可能需要联网抓取新闻）")
+            return _err(vmsg("agentTool.noSentimentData", "暂无舆情数据（可能需要联网抓取新闻）"))
         sectors = data.get("top_sectors", [])[:top_n]
         out_sectors = []
         for s in sectors:
@@ -196,7 +198,7 @@ def get_sentiment(top_n: int = 10) -> str:
         })
     except Exception as e:
         logger.exception("get_sentiment failed")
-        return _err(f"舆情查询失败: {e}")
+        return _err(vmsg("agentTool.sentimentFailed", "舆情查询失败: {err}", err=e))
 
 
 @tool
@@ -212,15 +214,15 @@ def get_stock_signal(stock_code: str) -> str:
         mapper = StockSectorMapper()
         sector = mapper.get_sector_by_code(stock_code)
         if not sector:
-            return _err(f"无法定位 {stock_code} 的行业（可能非沪深300成分股）")
+            return _err(vmsg("agentTool.noSector", "无法定位 {code} 的行业（可能非沪深300成分股）", code=stock_code))
         panel = load_sentiment_snapshots()
         if panel is None or panel.empty:
             return _json({"code": stock_code, "sector": sector,
-                          "sentiment": None, "note": "无历史情绪快照"})
+                          "sentiment": None, "note": vmsg("agentTool.noSnapshots", "无历史情绪快照")})
         series, _ = build_stock_sentiment_series(panel, stock_code)
         if series is None or series.empty:
             return _json({"code": stock_code, "sector": sector,
-                          "sentiment": None, "note": "快照中无该行业数据"})
+                          "sentiment": None, "note": vmsg("agentTool.noSectorSnapshot", "快照中无该行业数据")})
         latest = float(series.iloc[-1])
         latest_date = str(series.index[-1].date())
         # 信号阈值（与 sentiment_config 一致）
@@ -232,7 +234,7 @@ def get_stock_signal(stock_code: str) -> str:
         })
     except Exception as e:
         logger.exception("get_stock_signal failed")
-        return _err(f"个股信号查询失败: {e}")
+        return _err(vmsg("agentTool.signalFailed", "个股信号查询失败: {err}", err=e))
 
 
 @tool
@@ -259,7 +261,7 @@ def get_daily_recommendations(top_n: int = 10) -> str:
         })
     except Exception as e:
         logger.exception("get_daily_recommendations failed")
-        return _err(f"推荐查询失败: {e}")
+        return _err(vmsg("agentTool.recommendFailed", "推荐查询失败: {err}", err=e))
 
 
 @tool
@@ -280,7 +282,7 @@ def list_strategies() -> str:
         return _json({"strategies": strategies, "templates": out_templates})
     except Exception as e:
         logger.exception("list_strategies failed")
-        return _err(f"策略列表查询失败: {e}")
+        return _err(vmsg("agentTool.strategiesFailed", "策略列表查询失败: {err}", err=e))
 
 
 # 工具列表（供 agent 使用）

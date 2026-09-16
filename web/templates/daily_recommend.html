@@ -5,21 +5,21 @@
 {% block content %}
 <div class="card app-card">
     <div class="card-header bg-brand d-flex justify-content-between align-items-center">
-        <h4 class="mb-0"><i class="fas fa-star me-2"></i>每日股票推荐</h4>
+        <h4 class="mb-0"><i class="fas fa-star me-2"></i>{{ t('title.dailyRecommend', '每日股票推荐') }}</h4>
         <form action="/refresh_recommend" method="post" class="d-inline">
             <button type="submit" class="btn btn-light btn-sm">
-                <i class="fas fa-rotate me-1"></i> 刷新推荐
+                <i class="fas fa-rotate me-1"></i> {{ t('recommend.refresh', '刷新推荐') }}
             </button>
         </form>
     </div>
     <div class="card-body">
         <div class="alert alert-info d-flex align-items-center py-2">
             <i class="fas fa-calendar-day me-2"></i>
-            <span>推荐日期：<strong>{{ data.date }}</strong></span>
+            <span>{{ t('recommend.dateLabel', '推荐日期：') }}<strong>{{ data.date }}</strong></span>
         </div>
 
         <!-- 热门板块 TOP 3 -->
-        <div class="section-title"><i class="fas fa-fire"></i> 热门板块 TOP 3</div>
+        <div class="section-title"><i class="fas fa-fire"></i> {{ t('recommend.topSectors', '热门板块 TOP 3') }}</div>
         <div class="row g-3 mb-4">
             {% for sector in data.top_sectors %}
             <div class="col-md-4">
@@ -30,7 +30,7 @@
                     </div>
                     <h6 class="mb-2">{{ sector.name }}</h6>
                     <span class="badge {% if sector.sentiment >= 85 %}bg-danger{% else %}bg-warning text-dark{% endif %} fs-6">
-                        热度：{{ sector.sentiment }}
+                        {{ t('recommend.heatLabel', '热度：') }}{{ sector.sentiment }}
                     </span>
                 </div>
             </div>
@@ -38,17 +38,17 @@
         </div>
 
         <!-- 推荐股票列表 -->
-        <div class="section-title"><i class="fas fa-ranking-star"></i> 推荐股票列表</div>
+        <div class="section-title"><i class="fas fa-ranking-star"></i> {{ t('recommend.stockList', '推荐股票列表') }}</div>
         <div class="table-responsive">
             <table class="table table-app align-middle">
                 <thead>
                     <tr>
-                        <th>排名</th>
-                        <th>股票代码</th>
-                        <th>股票名称</th>
-                        <th>所属板块</th>
-                        <th style="min-width:140px">综合评分</th>
-                        <th>推荐理由</th>
+                        <th>{{ t('recommend.col.rank', '排名') }}</th>
+                        <th>{{ t('recommend.col.code', '股票代码') }}</th>
+                        <th>{{ t('recommend.col.name', '股票名称') }}</th>
+                        <th>{{ t('recommend.col.sector', '所属板块') }}</th>
+                        <th style="min-width:140px">{{ t('recommend.col.score', '综合评分') }}</th>
+                        <th>{{ t('recommend.col.reason', '推荐理由') }}</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -82,24 +82,24 @@
 
 <!-- 评分说明 -->
 <div class="card app-card mt-4">
-    <div class="card-header"><i class="fas fa-circle-info me-1 text-brand"></i> 评分说明</div>
+    <div class="card-header"><i class="fas fa-circle-info me-1 text-brand"></i> {{ t('recommend.scoringTitle', '评分说明') }}</div>
     <div class="card-body">
         <div class="row g-3">
             <div class="col-md-3">
-                <p class="mb-1"><i class="fas fa-chart-line text-brand me-1"></i><strong>近期涨跌幅 (30%)</strong></p>
-                <small class="text-muted">基于近 5 日价格变化计算</small>
+                <p class="mb-1"><i class="fas fa-chart-line text-brand me-1"></i><strong>{{ t('recommend.metric.price', '近期涨跌幅 (30%)') }}</strong></p>
+                <small class="text-muted">{{ t('recommend.metric.priceHint', '基于近 5 日价格变化计算') }}</small>
             </div>
             <div class="col-md-3">
-                <p class="mb-1"><i class="fas fa-chart-column text-success me-1"></i><strong>成交量变化 (20%)</strong></p>
-                <small class="text-muted">近 5 日均量对比 30 日均量</small>
+                <p class="mb-1"><i class="fas fa-chart-column text-success me-1"></i><strong>{{ t('recommend.metric.volume', '成交量变化 (20%)') }}</strong></p>
+                <small class="text-muted">{{ t('recommend.metric.volumeHint', '近 5 日均量对比 30 日均量') }}</small>
             </div>
             <div class="col-md-3">
-                <p class="mb-1"><i class="fas fa-fire text-danger me-1"></i><strong>舆情热度 (30%)</strong></p>
-                <small class="text-muted">基于板块新闻舆情分析</small>
+                <p class="mb-1"><i class="fas fa-fire text-danger me-1"></i><strong>{{ t('recommend.metric.sentiment', '舆情热度 (30%)') }}</strong></p>
+                <small class="text-muted">{{ t('recommend.metric.sentimentHint', '基于板块新闻舆情分析') }}</small>
             </div>
             <div class="col-md-3">
-                <p class="mb-1"><i class="fas fa-gears text-warning me-1"></i><strong>技术形态 (20%)</strong></p>
-                <small class="text-muted">基于 MA 均线走势判断</small>
+                <p class="mb-1"><i class="fas fa-gears text-warning me-1"></i><strong>{{ t('recommend.metric.technical', '技术形态 (20%)') }}</strong></p>
+                <small class="text-muted">{{ t('recommend.metric.technicalHint', '基于 MA 均线走势判断') }}</small>
             </div>
         </div>
     </div>
@@ -110,7 +110,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const refreshBtn = document.querySelector('form[action="/refresh_recommend"] button');
     if (refreshBtn) {
         refreshBtn.addEventListener('click', function() {
-            showLoading('正在刷新推荐...');
+            showLoading(tt('js.recommend.refreshing', '正在刷新推荐...'));
         });
     }
 });

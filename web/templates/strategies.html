@@ -20,11 +20,11 @@
 {% block content %}
 <div class="page-hero d-flex justify-content-between align-items-center flex-wrap gap-2">
     <div>
-        <h1><i class="fas fa-list text-brand me-2"></i>策略列表</h1>
-        <p class="subtitle mb-0">查看、创建与管理所有回测策略</p>
+        <h1><i class="fas fa-list text-brand me-2"></i>{{ t('strategies.heading') }}</h1>
+        <p class="subtitle mb-0">{{ t('strategies.subtitle') }}</p>
     </div>
     <button class="btn btn-brand" onclick="showCreateModal()">
-        <i class="fas fa-plus me-1"></i> 新建策略
+        <i class="fas fa-plus me-1"></i> {{ t('strategies.newStrategy') }}
     </button>
 </div>
 
@@ -38,39 +38,39 @@
                     <h5 class="mb-0">
                         <i class="fas fa-gear me-1"></i> {{ strategy.name }}
                         {% if strategy.is_user_strategy %}
-                        <span class="badge user-strategy-badge ms-1">自定义</span>
+                        <span class="badge user-strategy-badge ms-1">{{ t('strategies.badgeUser') }}</span>
                         {% else %}
-                        <span class="badge default-strategy-badge ms-1">系统</span>
+                        <span class="badge default-strategy-badge ms-1">{{ t('strategies.badgeSystem') }}</span>
                         {% endif %}
                     </h5>
                     <div class="btn-group btn-group-sm">
                         {% if strategy.is_user_strategy %}
                         <button class="btn btn-outline-primary" onclick="editStrategy('{{ strategy.name }}')">
-                            <i class="fas fa-pen"></i> 编辑
+                            <i class="fas fa-pen"></i> {{ t('strategies.edit') }}
                         </button>
                         <button class="btn btn-outline-danger" onclick="deleteStrategy('{{ strategy.name }}')">
-                            <i class="fas fa-trash"></i> 删除
+                            <i class="fas fa-trash"></i> {{ t('strategies.delete') }}
                         </button>
                         {% else %}
                         <button class="btn btn-outline-secondary" onclick="viewStrategy('{{ strategy.name }}')">
-                            <i class="fas fa-eye"></i> 查看
+                            <i class="fas fa-eye"></i> {{ t('strategies.view') }}
                         </button>
                         {% endif %}
                     </div>
                 </div>
             </div>
             <div class="card-body">
-                <p class="card-text text-muted">{{ strategy.description or '暂无描述' }}</p>
+                <p class="card-text text-muted">{{ strategy.description or t('strategies.noDescription') }}</p>
 
                 {% if strategy.parameters %}
-                <h6 class="mb-2"><i class="fas fa-sliders me-1 text-brand"></i> 参数配置</h6>
+                <h6 class="mb-2"><i class="fas fa-sliders me-1 text-brand"></i> {{ t('strategies.parameterConfig') }}</h6>
                 <div class="table-responsive">
                     <table class="table table-sm table-app mb-0">
                         <thead>
                             <tr>
-                                <th>参数名</th>
-                                <th>值</th>
-                                <th>类型</th>
+                                <th>{{ t('strategies.paramName') }}</th>
+                                <th>{{ t('strategies.value') }}</th>
+                                <th>{{ t('strategies.type') }}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -85,12 +85,12 @@
                     </table>
                 </div>
                 {% else %}
-                <p class="text-muted mb-0"><i class="fas fa-circle-info me-1"></i> 此策略无额外参数</p>
+                <p class="text-muted mb-0"><i class="fas fa-circle-info me-1"></i> {{ t('strategies.noExtraParams') }}</p>
                 {% endif %}
 
                 <div class="mt-3">
                     <a href="/backtest?strategy_name={{ strategy.name }}" class="btn btn-sm" style="background:var(--success-grad);color:#fff">
-                        <i class="fas fa-play me-1"></i> 使用此策略回测
+                        <i class="fas fa-play me-1"></i> {{ t('strategies.useForBacktest') }}
                     </a>
                 </div>
             </div>
@@ -101,7 +101,7 @@
 {% else %}
 <div class="empty-state">
     <i class="fas fa-box-open d-block"></i>
-    <p>暂无可用策略，点击右上角"新建策略"创建</p>
+    <p>{{ t('strategies.empty') | safe }}</p>
 </div>
 {% endif %}
 
@@ -110,35 +110,35 @@
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="modalTitle">新建策略</h5>
+                <h5 class="modal-title" id="modalTitle">{{ t('strategies.newStrategy') }}</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
                 <form id="strategyForm">
                     <input type="hidden" id="strategyNameOriginal" name="originalName" value="">
                     <div class="mb-3">
-                        <label for="strategyName" class="form-label">策略名称 <span class="text-danger">*</span></label>
+                        <label for="strategyName" class="form-label">{{ t('strategies.strategyName') }} <span class="text-danger">*</span></label>
                         <input type="text" class="form-control" id="strategyName" name="name" required>
                     </div>
                     <div class="mb-3">
-                        <label for="strategyTemplate" class="form-label">策略模板 <span class="text-danger">*</span></label>
+                        <label for="strategyTemplate" class="form-label">{{ t('strategies.strategyTemplate') }} <span class="text-danger">*</span></label>
                         <select class="form-select" id="strategyTemplate" name="template" onchange="loadTemplateParams()">
-                            <option value="">请选择策略模板</option>
+                            <option value="">{{ t('strategies.selectTemplate') }}</option>
                         </select>
                     </div>
                     <div class="mb-3">
-                        <label for="strategyDescription" class="form-label">策略描述</label>
+                        <label for="strategyDescription" class="form-label">{{ t('strategies.strategyDescription') }}</label>
                         <textarea class="form-control" id="strategyDescription" name="description" rows="3"></textarea>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label mb-0">参数配置</label>
+                        <label class="form-label mb-0">{{ t('strategies.parameterConfig') }}</label>
                         <div class="table-responsive mt-2">
                             <table class="table table-sm table-app" id="paramTable">
                                 <thead>
                                     <tr>
-                                        <th>参数名</th>
-                                        <th>默认值</th>
-                                        <th>范围</th>
+                                        <th>{{ t('strategies.paramName') }}</th>
+                                        <th>{{ t('strategies.defaultValue') }}</th>
+                                        <th>{{ t('strategies.range') }}</th>
                                     </tr>
                                 </thead>
                                 <tbody id="paramTableBody">
@@ -149,12 +149,12 @@
                 </form>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{ t('strategies.cancel') }}</button>
                 <button type="button" class="btn btn-outline-primary" onclick="saveStrategyFromTemplate()">
-                    <i class="fas fa-wand-magic-sparkles"></i> 使用模板创建
+                    <i class="fas fa-wand-magic-sparkles"></i> {{ t('strategies.createFromTemplate') }}
                 </button>
                 <button type="button" class="btn btn-brand" onclick="saveStrategy()">
-                    <i class="fas fa-floppy-disk"></i> 自定义创建
+                    <i class="fas fa-floppy-disk"></i> {{ t('strategies.createCustom') }}
                 </button>
             </div>
         </div>
@@ -185,12 +185,12 @@
                 select.appendChild(option);
             }
         } catch (err) {
-            console.error('加载策略模板失败:', err);
+            console.error(tt('js.strategies.loadTemplatesFailed', '加载策略模板失败:'), err);
         }
     }
 
     function showCreateModal() {
-        document.getElementById('modalTitle').textContent = '新建策略';
+        document.getElementById('modalTitle').textContent = tt('js.strategies.newStrategy', '新建策略');
         document.getElementById('strategyForm').reset();
         document.getElementById('strategyNameOriginal').value = '';
         document.getElementById('paramTableBody').innerHTML = '';
@@ -203,24 +203,24 @@
         const footer = document.querySelector('#strategyModal .modal-footer');
         if (mode === 'create') {
             footer.innerHTML = `
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">${tt('js.strategies.cancel', '取消')}</button>
                 <button type="button" class="btn btn-outline-primary" onclick="saveStrategyFromTemplate()">
-                    <i class="fas fa-wand-magic-sparkles"></i> 使用模板创建
+                    <i class="fas fa-wand-magic-sparkles"></i> ${tt('js.strategies.createFromTemplate', '使用模板创建')}
                 </button>
                 <button type="button" class="btn btn-brand" onclick="saveStrategy()">
-                    <i class="fas fa-floppy-disk"></i> 自定义创建
+                    <i class="fas fa-floppy-disk"></i> ${tt('js.strategies.createCustom', '自定义创建')}
                 </button>
             `;
         } else if (mode === 'edit') {
             footer.innerHTML = `
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">${tt('js.strategies.cancel', '取消')}</button>
                 <button type="button" class="btn btn-brand" onclick="saveStrategy()">
-                    <i class="fas fa-floppy-disk"></i> 保存修改
+                    <i class="fas fa-floppy-disk"></i> ${tt('js.strategies.saveChanges', '保存修改')}
                 </button>
             `;
         } else if (mode === 'view') {
             footer.innerHTML = `
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">${tt('js.strategies.close', '关闭')}</button>
             `;
         }
     }
@@ -241,8 +241,8 @@
             let inputHtml = '';
             if (param.type === 'bool') {
                 inputHtml = `<select class="form-select form-select-sm" name="paramDefault">
-                    <option value="true" ${param.default === true ? 'selected' : ''}>是</option>
-                    <option value="false" ${param.default === false ? 'selected' : ''}>否</option>
+                    <option value="true" ${param.default === true ? 'selected' : ''}>${tt('js.strategies.yes', '是')}</option>
+                    <option value="false" ${param.default === false ? 'selected' : ''}>${tt('js.strategies.no', '否')}</option>
                 </select>`;
             } else if (param.type === 'int' || param.type === 'float') {
                 const min = param.min !== undefined ? `min="${param.min}"` : '';
@@ -269,7 +269,7 @@
     }
 
     function editStrategy(name) {
-        showLoading('正在加载策略信息...');
+        showLoading(tt('js.strategies.loadingDetail', '正在加载策略信息...'));
         fetch(`/api/strategies/detail/${name}`)
             .then(res => res.json())
             .then(data => {
@@ -277,7 +277,7 @@
                     alert(data.error);
                     return;
                 }
-                document.getElementById('modalTitle').textContent = '编辑策略';
+                document.getElementById('modalTitle').textContent = tt('js.strategies.editTitle', '编辑策略');
                 document.getElementById('strategyNameOriginal').value = data.name;
                 document.getElementById('strategyName').value = data.name;
                 document.getElementById('strategyDescription').value = data.description || '';
@@ -313,14 +313,14 @@
             })
             .catch(err => {
                 console.error(err);
-                alert('获取策略信息失败');
+                alert(tt('js.strategies.fetchFailed', '获取策略信息失败'));
             })
             .finally(() => { hideLoading(); });
     }
 
     function viewStrategy(name) {
         editStrategy(name);
-        document.getElementById('modalTitle').textContent = '查看策略';
+        document.getElementById('modalTitle').textContent = tt('js.strategies.viewTitle', '查看策略');
         updateModalButtons('view');
     }
 
@@ -329,10 +329,10 @@
         const description = document.getElementById('strategyDescription').value.trim();
         const template = document.getElementById('strategyTemplate').value;
 
-        if (!name) { alert('策略名称不能为空'); return; }
-        if (!template) { alert('请选择策略模板'); return; }
+        if (!name) { alert(tt('js.strategies.nameRequired', '策略名称不能为空')); return; }
+        if (!template) { alert(tt('js.strategies.templateRequired', '请选择策略模板')); return; }
 
-        showLoading('正在创建策略...');
+        showLoading(tt('js.strategies.creating', '正在创建策略...'));
         fetch('/api/strategies/create_from_template', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -341,9 +341,9 @@
         .then(res => res.json())
         .then(data => {
             if (data.success) { strategyModal.hide(); location.reload(); }
-            else { alert(data.error || '创建失败'); }
+            else { alert(data.error || tt('js.strategies.createFailed', '创建失败')); }
         })
-        .catch(err => { console.error(err); alert('创建失败'); })
+        .catch(err => { console.error(err); alert(tt('js.strategies.createFailed', '创建失败')); })
         .finally(() => { hideLoading(); });
     }
 
@@ -353,8 +353,8 @@
         const description = document.getElementById('strategyDescription').value.trim();
         const template = document.getElementById('strategyTemplate').value;
 
-        if (!name) { alert('策略名称不能为空'); return; }
-        if (!template) { alert('请选择策略模板'); return; }
+        if (!name) { alert(tt('js.strategies.nameRequired', '策略名称不能为空')); return; }
+        if (!template) { alert(tt('js.strategies.templateRequired', '请选择策略模板')); return; }
 
         const paramRows = document.querySelectorAll('#paramTableBody tr');
         const parameters = [];
@@ -368,13 +368,13 @@
             parameters.push({ name: paramName, default: paramDefault, type: paramType });
         });
 
-        if (parameters.length === 0) { alert('请配置参数'); return; }
+        if (parameters.length === 0) { alert(tt('js.strategies.paramsRequired', '请配置参数')); return; }
 
         let url, method;
         if (originalName) { url = `/api/strategies/${originalName}`; method = 'PUT'; }
         else { url = '/api/strategies/create_new'; method = 'POST'; }
 
-        showLoading('正在保存策略...');
+        showLoading(tt('js.strategies.saving', '正在保存策略...'));
         fetch(url, {
             method: method,
             headers: {'Content-Type': 'application/json'},
@@ -383,22 +383,22 @@
         .then(res => res.json())
         .then(data => {
             if (data.success) { strategyModal.hide(); location.reload(); }
-            else { alert(data.error || '保存失败'); }
+            else { alert(data.error || tt('js.strategies.saveFailed', '保存失败')); }
         })
-        .catch(err => { console.error(err); alert('保存失败'); })
+        .catch(err => { console.error(err); alert(tt('js.strategies.saveFailed', '保存失败')); })
         .finally(() => { hideLoading(); });
     }
 
     function deleteStrategy(name) {
-        if (!confirm(`确定要删除策略 "${name}" 吗？此操作不可恢复。`)) return;
-        showLoading('正在删除策略...');
+        if (!confirm(tt('js.strategies.deleteConfirm', '确定要删除策略 "{name}" 吗？此操作不可恢复。').replace('{name}', name))) return;
+        showLoading(tt('js.strategies.deleting', '正在删除策略...'));
         fetch(`/api/strategies/${name}`, { method: 'DELETE' })
         .then(res => res.json())
         .then(result => {
             if (result.error) { alert(result.error); }
-            else { alert('策略删除成功'); location.reload(); }
+            else { alert(tt('js.strategies.deleteSuccess', '策略删除成功')); location.reload(); }
         })
-        .catch(err => { console.error(err); alert('删除失败'); })
+        .catch(err => { console.error(err); alert(tt('js.strategies.deleteFailed', '删除失败')); })
         .finally(() => { hideLoading(); });
     }
 </script>

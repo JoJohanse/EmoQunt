@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import type { SentimentCalendarItem } from '@/api/types'
 import { sectorColor } from '@/lib/marketColors'
+import { t } from '@/locales'
 
 /**
  * 情绪日历：用 el-calendar 展示历史情绪快照。
@@ -41,7 +42,7 @@ function handleSelect(date: string) {
       <template #header="{ date }">
         <div class="cal-header">
           <span class="cal-title">{{ date }}</span>
-          <span class="cal-hint">有快照的日期显示当日最强板块情绪分</span>
+          <span class="cal-hint">{{ t('sentiment.calendarHint') }}</span>
         </div>
       </template>
       <template #date-cell="{ data }">

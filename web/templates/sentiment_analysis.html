@@ -7,38 +7,38 @@
     <div>
         <h1><i class="fas fa-newspaper text-brand me-2"></i>{{ title }}</h1>
         <p class="subtitle mb-0">
-            {% if update_time %}数据更新时间：{{ update_time }} · {% endif %}热门新闻：{{ news_count }} 条
+            {% if update_time %}{{ t('sentiment.updatedAt', '数据更新时间：') }}{{ update_time }} · {% endif %}{{ t('sentiment.hotNewsCount', '热门新闻：{count} 条', count=news_count) }}
         </p>
     </div>
     <form action="/refresh_sentiment" method="post">
         <button type="submit" class="btn btn-outline-secondary">
-            <i class="fas fa-rotate me-1"></i> 刷新数据
+            <i class="fas fa-rotate me-1"></i> {{ t('sentiment.refresh', '刷新数据') }}
         </button>
     </form>
 </div>
 
 <!-- 个股情绪分析入口表单（打通孤立的 /analyze_sentiment 路由） -->
 <div class="card app-card mb-4">
-    <div class="card-header"><i class="fas fa-magnifying-glass-chart me-1 text-brand"></i> 个股情绪分析</div>
+    <div class="card-header"><i class="fas fa-magnifying-glass-chart me-1 text-brand"></i> {{ t('sentiment.stockAnalyzeTitle', '个股情绪分析') }}</div>
     <div class="card-body">
         <form action="/analyze_sentiment" method="post" class="row g-2 align-items-end">
             <div class="col-md-6">
-                <label for="stock_code" class="form-label fw-semibold">输入股票代码</label>
+                <label for="stock_code" class="form-label fw-semibold">{{ t('sentiment.stockCodeLabel', '输入股票代码') }}</label>
                 <div class="input-group">
                     <span class="input-group-text"><i class="fas fa-tag"></i></span>
                     <input type="text" class="form-control" id="stock_code" name="stock_code"
-                           value="000001" placeholder="如 000001" required>
+                           value="000001" placeholder="{{ t('sentiment.stockCodePlaceholder', '如 000001') }}" required>
                 </div>
-                <small class="text-muted">查询某只股票的行业情绪得分与交易信号</small>
+                <small class="text-muted">{{ t('sentiment.stockCodeHint', '查询某只股票的行业情绪得分与交易信号') }}</small>
             </div>
             <div class="col-md-3">
-                <label for="sentiment_weight" class="form-label fw-semibold">情绪权重</label>
+                <label for="sentiment_weight" class="form-label fw-semibold">{{ t('sentiment.weightLabel', '情绪权重') }}</label>
                 <input type="number" step="0.1" min="0" max="1" class="form-control"
                        id="sentiment_weight" name="sentiment_weight" value="0.3">
             </div>
             <div class="col-md-3">
                 <button type="submit" class="btn btn-brand w-100">
-                    <i class="fas fa-play me-1"></i> 分析
+                    <i class="fas fa-play me-1"></i> {{ t('sentiment.analyze', '分析') }}
                 </button>
             </div>
         </form>
@@ -49,12 +49,12 @@
 <div class="row g-4">
     <!-- 热门新闻 -->
     <div class="col-lg-6">
-        <div class="section-title"><i class="fas fa-fire"></i> 热门新闻</div>
+        <div class="section-title"><i class="fas fa-fire"></i> {{ t('sentiment.hotNews', '热门新闻') }}</div>
         {% if news_list %}
             {% for news in news_list %}
             <div class="news-card">
                 <div class="news-source">
-                    <i class="fas fa-rss me-1"></i> {{ news.source or '未知来源' }}
+                    <i class="fas fa-rss me-1"></i> {{ news.source or t('sentiment.unknownSource', '未知来源') }}
                 </div>
                 <h5 class="news-title">
                     {% if news.url %}
@@ -68,14 +68,14 @@
         {% else %}
         <div class="empty-state">
             <i class="fas fa-newspaper d-block"></i>
-            <p>暂无热门新闻</p>
+            <p>{{ t('sentiment.noHotNews', '暂无热门新闻') }}</p>
         </div>
         {% endif %}
     </div>
 
     <!-- 板块得分排行 -->
     <div class="col-lg-6">
-        <div class="section-title"><i class="fas fa-chart-pie"></i> 板块得分排行</div>
+        <div class="section-title"><i class="fas fa-chart-pie"></i> {{ t('sentiment.sectorRanking', '板块得分排行') }}</div>
         {% if sectors %}
             {% for sector in sectors %}
             <div class="sector-card {% if sector.sentiment >= 70 %}positive{% elif sector.sentiment <= 40 %}negative{% else %}neutral{% endif %}">
@@ -107,7 +107,7 @@
         {% else %}
         <div class="empty-state">
             <i class="fas fa-chart-pie d-block"></i>
-            <p>暂无板块得分数据</p>
+            <p>{{ t('sentiment.noSectorData', '暂无板块得分数据') }}</p>
         </div>
         {% endif %}
     </div>
@@ -116,14 +116,14 @@
 <div class="card app-card">
     <div class="card-body">
         <div class="alert alert-info mb-0">
-            <h5><i class="fas fa-circle-info me-1"></i> 说明</h5>
-            <p class="mb-2">该页面展示当天热门新闻和各板块的舆情得分情况。</p>
-            <p class="mb-1"><strong>数据来源：</strong>TrendRadar 实时热点舆论数据</p>
-            <p class="mb-1"><strong>板块评分说明：</strong></p>
+            <h5><i class="fas fa-circle-info me-1"></i> {{ t('sentiment.aboutTitle', '说明') }}</h5>
+            <p class="mb-2">{{ t('sentiment.aboutDesc', '该页面展示当天热门新闻和各板块的舆情得分情况。') }}</p>
+            <p class="mb-1"><strong>{{ t('sentiment.aboutSourceLabel', '数据来源：') }}</strong>{{ t('sentiment.aboutSourceValue', 'TrendRadar 实时热点舆论数据') }}</p>
+            <p class="mb-1"><strong>{{ t('sentiment.aboutScoringLabel', '板块评分说明：') }}</strong></p>
             <ul class="mb-0">
-                <li>得分 ≥ 70：积极情绪</li>
-                <li>得分 41–69：中性情绪</li>
-                <li>得分 ≤ 40：消极情绪</li>
+                <li>{{ t('sentiment.scorePositive', '得分 ≥ 70：积极情绪') }}</li>
+                <li>{{ t('sentiment.scoreNeutral', '得分 41–69：中性情绪') }}</li>
+                <li>{{ t('sentiment.scoreNegative', '得分 ≤ 40：消极情绪') }}</li>
             </ul>
         </div>
     </div>
@@ -135,7 +135,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const refreshBtn = document.querySelector('form[action="/refresh_sentiment"] button');
     if (refreshBtn) {
         refreshBtn.addEventListener('click', function() {
-            showLoading('正在刷新舆情数据...');
+            showLoading(tt('js.sentiment.refreshing', '正在刷新舆情数据...'));
         });
     }
     const analyzeForm = document.querySelector('form[action="/analyze_sentiment"]');
@@ -143,7 +143,7 @@ document.addEventListener('DOMContentLoaded', function() {
         analyzeForm.addEventListener('submit', function() {
             const btn = this.querySelector('button[type="submit"]');
             if (btn) { btn.disabled = true; }
-            showLoading('正在分析舆情...');
+            showLoading(tt('js.sentiment.analyzing', '正在分析舆情...'));
         });
     }
 });

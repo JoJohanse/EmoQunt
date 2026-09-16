@@ -4,43 +4,43 @@
 
 {% block content %}
 <div class="page-hero">
-    <h1><i class="fas fa-sliders text-brand me-2"></i>策略回测配置</h1>
-    <p class="subtitle">选择市场、策略与标的，运行回测查看含 Alpha/Beta、最大回撤的详细绩效</p>
+    <h1><i class="fas fa-sliders text-brand me-2"></i>{{ t('backtestForm.heading') }}</h1>
+    <p class="subtitle">{{ t('backtestForm.subtitle') }}</p>
 </div>
 
 <div class="row g-4">
     <div class="col-lg-8">
         <div class="card app-card">
             <div class="card-header bg-brand">
-                <i class="fas fa-play-circle me-1"></i> 回测参数
+                <i class="fas fa-play-circle me-1"></i> {{ t('backtestForm.paramsTitle') }}
             </div>
             <div class="card-body p-4">
                 <form action="/run_backtest" method="post" id="backtestForm">
                     <!-- 市场选择 -->
                     <div class="mb-3">
                         <label class="form-label fw-semibold">
-                            <i class="fas fa-globe me-1 text-brand"></i> 市场
+                            <i class="fas fa-globe me-1 text-brand"></i> {{ t('backtestForm.market') }}
                         </label>
                         <div class="btn-group w-100" role="group" id="marketGroup">
                             <input type="radio" class="btn-check" name="market" id="market_zh" value="zh_a"
                                    autocomplete="off" {% if preselected_market != 'us' %}checked{% endif %}>
                             <label class="btn btn-outline-primary" for="market_zh">
-                                <i class="fas fa-yen-sign me-1"></i>A 股
+                                <i class="fas fa-yen-sign me-1"></i>{{ t('backtestForm.marketZhA') }}
                             </label>
                             <input type="radio" class="btn-check" name="market" id="market_us" value="us"
                                    autocomplete="off" {% if preselected_market == 'us' %}checked{% endif %}>
                             <label class="btn btn-outline-primary" for="market_us">
-                                <i class="fas fa-dollar-sign me-1"></i>美股
+                                <i class="fas fa-dollar-sign me-1"></i>{{ t('backtestForm.marketUs') }}
                             </label>
                         </div>
                     </div>
 
                     <div class="mb-3">
                         <label for="strategy_name" class="form-label fw-semibold">
-                            <i class="fas fa-list-check me-1 text-brand"></i> 选择策略
+                            <i class="fas fa-list-check me-1 text-brand"></i> {{ t('backtestForm.strategy') }}
                         </label>
                         <select class="form-select form-select-lg" id="strategy_name" name="strategy_name" required>
-                            <option value="" {% if not preselected_strategy %}selected{% endif %}>-- 请选择策略 --</option>
+                            <option value="" {% if not preselected_strategy %}selected{% endif %}>{{ t('backtestForm.strategyPlaceholder') }}</option>
                             {% for strategy in strategies %}
                             <option value="{{ strategy }}"
                                 {% if preselected_strategy == strategy %}selected{% endif %}>
@@ -53,19 +53,19 @@
                     <div class="row g-3">
                         <div class="col-md-6">
                             <label for="stock_code" class="form-label fw-semibold">
-                                <i class="fas fa-hashtag me-1 text-brand"></i> 股票代码
+                                <i class="fas fa-hashtag me-1 text-brand"></i> {{ t('backtestForm.stockCode') }}
                             </label>
                             <div class="input-group">
                                 <span class="input-group-text"><i class="fas fa-tag"></i></span>
                                 <input type="text" class="form-control" id="stock_code" name="stock_code"
                                        value="{% if preselected_market == 'us' %}AAPL{% else %}000001{% endif %}"
-                                       placeholder="如 000001" required>
+                                       placeholder="{{ t('backtestForm.stockCodePlaceholder') }}" required>
                             </div>
-                            <small class="text-muted" id="stockHint">不带前缀的 6 位 A 股代码</small>
+                            <small class="text-muted" id="stockHint">{{ t('backtestForm.stockHintZh') }}</small>
                         </div>
                         <div class="col-md-6">
                             <label for="initial_capital" class="form-label fw-semibold">
-                                <i class="fas fa-wallet me-1 text-brand"></i> <span id="capitalLabel">初始资金（元）</span>
+                                <i class="fas fa-wallet me-1 text-brand"></i> <span id="capitalLabel">{{ t('backtestForm.capitalZh') }}</span>
                             </label>
                             <div class="input-group">
                                 <span class="input-group-text"><i class="fas fa-yen-sign" id="currencyIcon"></i></span>
@@ -78,14 +78,14 @@
                     <div class="row g-3 mt-1">
                         <div class="col-md-6">
                             <label for="start_date" class="form-label fw-semibold">
-                                <i class="fas fa-calendar-day me-1 text-brand"></i> 开始日期
+                                <i class="fas fa-calendar-day me-1 text-brand"></i> {{ t('backtestForm.startDate') }}
                             </label>
                             <input type="date" class="form-control" id="start_date" name="start_date"
                                    value="2024-01-01" required>
                         </div>
                         <div class="col-md-6">
                             <label for="end_date" class="form-label fw-semibold">
-                                <i class="fas fa-calendar-check me-1 text-brand"></i> 结束日期
+                                <i class="fas fa-calendar-check me-1 text-brand"></i> {{ t('backtestForm.endDate') }}
                             </label>
                             <input type="date" class="form-control" id="end_date" name="end_date"
                                    value="2024-12-31" required>
@@ -94,22 +94,22 @@
 
                     <div class="mt-3">
                         <label for="commission_rate" class="form-label fw-semibold">
-                            <i class="fas fa-percent me-1 text-brand"></i> 佣金费率（双边）
+                            <i class="fas fa-percent me-1 text-brand"></i> {{ t('backtestForm.commissionRate') }}
                         </label>
                         <div class="input-group">
                             <span class="input-group-text"><i class="fas fa-coins"></i></span>
                             <input type="number" step="0.0001" min="0" max="0.01" class="form-control"
                                    id="commission_rate" name="commission_rate" value="0.0003">
                         </div>
-                        <small class="text-muted" id="commissionHint">A 股已自动叠加印花税（卖出 0.05%）与过户费（双边 0.001%）</small>
+                        <small class="text-muted" id="commissionHint">{{ t('backtestForm.commissionHintZh') }}</small>
                     </div>
 
                     <div class="d-flex gap-2 mt-4">
                         <a href="/" class="btn btn-outline-secondary">
-                            <i class="fas fa-arrow-left me-1"></i> 返回首页
+                            <i class="fas fa-arrow-left me-1"></i> {{ t('backtestForm.backHome') }}
                         </a>
                         <button type="submit" class="btn btn-brand">
-                            <i class="fas fa-play me-1"></i> 运行回测
+                            <i class="fas fa-play me-1"></i> {{ t('backtestForm.run') }}
                         </button>
                     </div>
                 </form>
@@ -119,18 +119,18 @@
 
     <div class="col-lg-4">
         <div class="card app-card">
-            <div class="card-header"><i class="fas fa-circle-info me-1 text-brand"></i> 使用说明</div>
+            <div class="card-header"><i class="fas fa-circle-info me-1 text-brand"></i> {{ t('backtestForm.instructions') }}</div>
             <div class="card-body">
                 <ul class="list-unstyled mb-0 small">
-                    <li class="mb-2"><i class="fas fa-check text-success me-2"></i>选择市场（A股 / 美股）</li>
-                    <li class="mb-2"><i class="fas fa-check text-success me-2"></i>选择已创建的策略</li>
-                    <li class="mb-2"><i class="fas fa-check text-success me-2"></i>输入股票代码（A股如 000001，美股如 AAPL）</li>
-                    <li class="mb-2"><i class="fas fa-check text-success me-2"></i>运行后查看绩效指标与图表</li>
+                    <li class="mb-2"><i class="fas fa-check text-success me-2"></i>{{ t('backtestForm.howtoMarket') }}</li>
+                    <li class="mb-2"><i class="fas fa-check text-success me-2"></i>{{ t('backtestForm.howtoStrategy') }}</li>
+                    <li class="mb-2"><i class="fas fa-check text-success me-2"></i>{{ t('backtestForm.howtoCode') }}</li>
+                    <li class="mb-2"><i class="fas fa-check text-success me-2"></i>{{ t('backtestForm.howtoRun') }}</li>
                 </ul>
                 <hr>
                 <div class="alert alert-info py-2 mb-0 small">
                     <i class="fas fa-lightbulb me-1"></i>
-                    <span id="benchmarkHint">A 股基准为沪深300；美股基准为标普500。美股仅佣金，无印花税/过户费。</span>
+                    <span id="benchmarkHint">{{ t('backtestForm.benchmarkHint') }}</span>
                 </div>
             </div>
         </div>
@@ -140,13 +140,17 @@
 <script>
 // 市场联动：切换时更新股票代码占位符、提示文案、货币符号
 (function() {
-    const zhDefaults = { code: '000001', codePlaceholder: '如 000001',
-        stockHint: '不带前缀的 6 位 A 股代码', capitalLabel: '初始资金（元）',
-        commissionHint: 'A 股已自动叠加印花税（卖出 0.05%）与过户费（双边 0.001%）',
+    const zhDefaults = { code: '000001',
+        codePlaceholder: tt('js.backtest.codePlaceholderZh', '如 000001'),
+        stockHint: tt('js.backtest.stockHintZh', '不带前缀的 6 位 A 股代码'),
+        capitalLabel: tt('js.backtest.capitalZh', '初始资金（元）'),
+        commissionHint: tt('js.backtest.commissionHintZh', 'A 股已自动叠加印花税（卖出 0.05%）与过户费（双边 0.001%）'),
         currencyIcon: 'fas fa-yen-sign' };
-    const usDefaults = { code: 'AAPL', codePlaceholder: '如 AAPL',
-        stockHint: '美股字母代码，如 AAPL、MSFT、BRK.B', capitalLabel: '初始资金（美元）',
-        commissionHint: '美股仅佣金（双边），无印花税/过户费',
+    const usDefaults = { code: 'AAPL',
+        codePlaceholder: tt('js.backtest.codePlaceholderUs', '如 AAPL'),
+        stockHint: tt('js.backtest.stockHintUs', '美股字母代码，如 AAPL、MSFT、BRK.B'),
+        capitalLabel: tt('js.backtest.capitalUs', '初始资金（美元）'),
+        commissionHint: tt('js.backtest.commissionHintUs', '美股仅佣金（双边），无印花税/过户费'),
         currencyIcon: 'fas fa-dollar-sign' };
 
     function applyMarket(market) {
@@ -218,7 +222,7 @@
 document.getElementById('backtestForm').addEventListener('submit', function() {
     const btn = this.querySelector('button[type="submit"]');
     if (btn) { btn.disabled = true; }
-    showLoading('正在运行回测，请稍候...');
+    showLoading(tt('js.backtest.running', '正在运行回测，请稍候...'));
 });
 </script>
 {% endblock %}

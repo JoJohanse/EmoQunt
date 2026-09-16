@@ -2,17 +2,29 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ChatMessage, SseEvent } from '@/api/types'
 import { chatStream } from '@/api/chat'
+import { t } from '@/locales'
+
+/**
+ * 初始欢迎语（含 4 条示例问题）：只在没有本地持久化消息时显示，
+ * 因此用 t() 在 store 初始化时按当前语言生成（切换语言后欢迎语保持原语言，视作历史消息）。
+ */
+function greeting(): ChatMessage {
+  const samples = [
+    t('chat.sampleQuote'),
+    t('chat.sampleBacktest'),
+    t('chat.sampleSentiment'),
+    t('chat.sampleRecommend'),
+  ]
+  return {
+    role: 'assistant',
+    content: `${t('chat.greeting')}\n\n${samples.map((s) => `- ${s}`).join('\n')}`,
+  }
+}
 
 export const useChatStore = defineStore(
   'chat',
   () => {
-  const messages = ref<ChatMessage[]>([
-    {
-      role: 'assistant',
-      content:
-        '你好！我是 EmoQunt AI 投资助手。我可以帮你查询行情、运行回测、分析舆情与推荐个股。试试问：\n\n- 帮我看看 000001 最近行情\n- 运行 test 策略回测 000001\n- 今天哪些板块情绪最高？\n- 推荐几只股票',
-    },
-  ])
+  const messages = ref<ChatMessage[]>([greeting()])
   const loading = ref(false)
   const drawerOpen = ref(false)
   let abortCtrl: AbortController | null = null
@@ -79,9 +91,10 @@ export const useChatStore = defineStore(
       )
     } catch (e: any) {
       if (e.name === 'AbortError') {
-        assistantMsg.content += '\n\n_(已取消)_'
+        // 取消标记落在消息正文里（历史消息保持当时的语言，不随界面语言迁移）
+        assistantMsg.content += `\n\n${t('chat.cancelled')}`
       } else {
-        assistantMsg.error = e.message || '对话失败'
+        assistantMsg.error = e.message || t('chat.failed')
       }
     } finally {
       assistantMsg.streaming = false

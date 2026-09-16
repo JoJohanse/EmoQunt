@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional, Tuple
 
+from src.utils.i18n import vmsg
 from src.utils.validators import (
     sanitize_string,
     validate_commission_rate,
@@ -96,7 +97,7 @@ def validate_compare_params(payload: Dict) -> Tuple[Optional[Dict], Optional[str
     """
     names = payload.get("strategy_names") or []
     if not isinstance(names, list) or not names:
-        return None, "strategy_names 必须是非空数组"
+        return None, vmsg("validator.compareNamesEmpty", "strategy_names 必须是非空数组")
     names = [sanitize_string(str(n), 50) for n in names][:5]
 
     stock_code = sanitize_string(str(payload.get("stock_code", "")), 10)

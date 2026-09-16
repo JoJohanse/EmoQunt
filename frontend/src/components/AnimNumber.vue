@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { fmtNum } from '@/lib/format'
 
 /**
  * 数值滚动组件：值变化时以 rAF 补间过渡（行情软件式数字滚动微交互）。
@@ -35,7 +36,7 @@ watch(
 onBeforeUnmount(() => cancelAnimationFrame(raf))
 
 const text = computed(() =>
-  display.value.toLocaleString('zh-CN', {
+  fmtNum(display.value, {
     minimumFractionDigits: props.decimals,
     maximumFractionDigits: props.decimals,
   }),

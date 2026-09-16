@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { compareApi, strategyApi } from '@/api'
 import type { CompareResult, StrategyDetail, Market } from '@/api/types'
 import { VChart } from '@/composables/useECharts'
+import { t } from '@/locales'
 
 const strategies = ref<StrategyDetail[]>([])
 const loading = ref(false)
@@ -23,14 +24,13 @@ const form = ref({
   try {
     strategies.value = await strategyApi.list()
   } catch (e: any) {
-    ElMessage.warning('策略列表加载失败：' + e.message)
+    ElMessage.warning(t('compare.loadStrategiesFailed') + e.message)
   }
 })()
 
+// A 股 / 美股代码格式提示（computed 内读 t()，切换语言即重算）
 const stockHint = computed(() =>
-  form.value.market === 'us'
-    ? '美股字母代码，如 AAPL'
-    : '不带前缀的 6 位 A 股代码',
+  form.value.market === 'us' ? t('compare.form.hintUs') : t('compare.form.hintZhA'),
 )
 
 function onMarketChange() {
@@ -40,11 +40,11 @@ function onMarketChange() {
 
 async function runCompare() {
   if (form.value.strategy_names.length < 2) {
-    ElMessage.warning('请至少选择 2 个策略进行对比')
+    ElMessage.warning(t('compare.needAtLeastTwo'))
     return
   }
   if (form.value.strategy_names.length > 5) {
-    ElMessage.warning('最多对比 5 个策略')
+    ElMessage.warning(t('compare.atMostFive'))
     return
   }
   loading.value = true
@@ -55,10 +55,10 @@ async function runCompare() {
       ElMessage.error(result.value.error)
       result.value = null
     } else {
-      ElMessage.success('对比完成')
+      ElMessage.success(t('compare.done'))
     }
   } catch (e: any) {
-    ElMessage.error('对比失败：' + e.message)
+    ElMessage.error(t('compare.failed') + e.message)
   } finally {
     loading.value = false
   }
@@ -80,13 +80,14 @@ const equityOption = computed(() => {
     legend: { top: 0 },
     grid: { left: 50, right: 30, top: 40, bottom: 60 },
     xAxis: { type: 'category', data: r.dates },
-    yAxis: { type: 'value', name: '净值' },
+    yAxis: { type: 'value', name: t('compare.chart.equityAxis') },
     dataZoom: [{ type: 'inside' }, { type: 'slider' }],
     series,
   }
 })
 
-// 对比指标表
+// 对比指标表：行对象的键沿用后端指标的中文字段名（表格列 prop 与之一一对应），
+// 中文键不参与 i18n——只有列头 label 走 t('compare.metric.<中文键>')
 const tableRows = computed(() => {
   if (!result.value) return []
   const fmtPct = (v: number | null | undefined) =>
@@ -110,24 +111,24 @@ const tableRows = computed(() => {
 <template>
   <div class="page">
     <div class="page-hero">
-      <h1><el-icon><DataLine /></el-icon> 策略对比</h1>
-      <p class="subtitle">选择 2-5 个策略，在同一标的上对比净值曲线与绩效指标</p>
+      <h1><el-icon><DataLine /></el-icon> {{ t('compare.title') }}</h1>
+      <p class="subtitle">{{ t('compare.subtitle') }}</p>
     </div>
 
     <el-card shadow="never" class="form-card" v-loading="loading">
       <el-form :model="form" label-width="100px" label-position="right">
-        <el-form-item label="市场">
+        <el-form-item :label="t('compare.form.market')">
           <el-radio-group v-model="form.market" @change="onMarketChange">
-            <el-radio-button value="zh_a">A 股</el-radio-button>
-            <el-radio-button value="us">美股</el-radio-button>
+            <el-radio-button value="zh_a">{{ t('compare.market.zhA') }}</el-radio-button>
+            <el-radio-button value="us">{{ t('compare.market.us') }}</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-form-item label="选择策略">
+        <el-form-item :label="t('compare.form.strategies')">
           <el-select
             v-model="form.strategy_names"
             multiple
             :multiple-limit="5"
-            placeholder="选择 2-5 个策略"
+            :placeholder="t('compare.form.strategiesPlaceholder')"
             style="width: 100%"
           >
             <el-option
@@ -140,50 +141,50 @@ const tableRows = computed(() => {
         </el-form-item>
         <el-row :gutter="20">
           <el-col :xs="12" :md="6">
-            <el-form-item label="股票代码">
+            <el-form-item :label="t('compare.form.stockCode')">
               <el-input v-model="form.stock_code" :placeholder="stockHint" />
             </el-form-item>
           </el-col>
           <el-col :xs="12" :md="6">
-            <el-form-item label="初始资金">
+            <el-form-item :label="t('compare.form.initialCapital')">
               <el-input-number v-model="form.initial_capital" :min="1000" style="width: 100%" />
             </el-form-item>
           </el-col>
           <el-col :xs="12" :md="6">
-            <el-form-item label="开始日期">
+            <el-form-item :label="t('compare.form.startDate')">
               <el-input v-model="form.start_date" placeholder="2024-01-01" />
             </el-form-item>
           </el-col>
           <el-col :xs="12" :md="6">
-            <el-form-item label="结束日期">
+            <el-form-item :label="t('compare.form.endDate')">
               <el-input v-model="form.end_date" placeholder="2024-12-31" />
             </el-form-item>
           </el-col>
         </el-row>
         <el-form-item>
           <el-button type="primary" :loading="loading" @click="runCompare">
-            <el-icon><TrendCharts /></el-icon> 开始对比
+            <el-icon><TrendCharts /></el-icon> {{ t('compare.run') }}
           </el-button>
         </el-form-item>
       </el-form>
     </el-card>
 
     <template v-if="result">
-      <div class="section-title"><el-icon><TrendCharts /></el-icon> 净值曲线对比</div>
+      <div class="section-title"><el-icon><TrendCharts /></el-icon> {{ t('compare.section.equity') }}</div>
       <el-card shadow="never" class="chart-card">
         <v-chart class="chart" :option="equityOption" autoresize />
       </el-card>
 
-      <div class="section-title"><el-icon><DataAnalysis /></el-icon> 绩效指标对比</div>
+      <div class="section-title"><el-icon><DataAnalysis /></el-icon> {{ t('compare.section.metrics') }}</div>
       <el-card shadow="never">
         <el-table :data="tableRows" stripe style="width: 100%">
-          <el-table-column prop="name" label="策略" />
-          <el-table-column prop="总收益率" label="总收益率" />
-          <el-table-column prop="年化收益率" label="年化收益率" />
-          <el-table-column prop="夏普比率" label="夏普比率" />
-          <el-table-column prop="最大回撤" label="最大回撤" />
-          <el-table-column prop="胜率" label="胜率" />
-          <el-table-column prop="盈亏比" label="盈亏比" />
+          <el-table-column prop="name" :label="t('compare.table.strategy')" />
+          <el-table-column prop="总收益率" :label="t('compare.metric.总收益率')" />
+          <el-table-column prop="年化收益率" :label="t('compare.metric.年化收益率')" />
+          <el-table-column prop="夏普比率" :label="t('compare.metric.夏普比率')" />
+          <el-table-column prop="最大回撤" :label="t('compare.metric.最大回撤')" />
+          <el-table-column prop="胜率" :label="t('compare.metric.胜率')" />
+          <el-table-column prop="盈亏比" :label="t('compare.metric.盈亏比')" />
           <el-table-column prop="Alpha" label="Alpha" />
           <el-table-column prop="Beta" label="Beta" />
         </el-table>
@@ -193,14 +194,14 @@ const tableRows = computed(() => {
         <el-alert
           v-for="(e, i) in result.errors"
           :key="i"
-          :title="`策略 ${e.name} 失败：${e.error}`"
+          :title="t('compare.strategyFailed', { name: e.name }) + e.error"
           type="warning"
           :closable="false"
           style="margin-bottom: 6px"
         />
       </div>
     </template>
-    <el-empty v-else-if="!loading" description="选择多个策略后在此查看对比结果" />
+    <el-empty v-else-if="!loading" :description="t('compare.empty')" />
   </div>
 </template>
 

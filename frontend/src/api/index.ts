@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { t } from '@/locales'
 import type {
   BacktestRequest,
   BacktestResult,
@@ -22,12 +23,12 @@ const http = axios.create({
   timeout: 300000, // 回测可能耗时较长
 })
 
-// 统一错误处理
+// 统一错误处理（兜底文案住在 chat.* 命名空间，与对话错误气泡同源；后端返回的 detail 原样透出）
 http.interceptors.response.use(
   (resp) => resp,
   (error) => {
     const msg = error?.response?.data?.detail || error?.response?.data?.error || error.message
-    return Promise.reject(new Error(typeof msg === 'string' ? msg : '请求失败'))
+    return Promise.reject(new Error(typeof msg === 'string' ? msg : t('chat.requestFailed')))
   },
 )
 

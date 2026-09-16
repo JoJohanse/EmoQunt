@@ -5,15 +5,15 @@
 {% block content %}
 {% if show_setup_banner %}
 <div class="alert alert-warning d-flex align-items-center justify-content-between flex-wrap gap-2" role="alert">
-    <span><i class="fas fa-triangle-exclamation me-2"></i>检测到系统尚未完成初始配置（缺少 <code>.env</code> 或 LLM API Key）。</span>
+    <span><i class="fas fa-triangle-exclamation me-2"></i>{{ t('index.setupBanner') | safe }}</span>
     <a href="/setup" class="btn btn-sm btn-warning text-dark fw-semibold">
-        <i class="fas fa-screwdriver-wrench me-1"></i>查看安装引导
+        <i class="fas fa-screwdriver-wrench me-1"></i>{{ t('index.setupBannerAction') }}
     </a>
 </div>
 {% endif %}
 <div class="hero-gradient">
-    <h1><i class="fas fa-chart-line me-2"></i>欢迎使用 EmoQunt 量化系统</h1>
-    <p>结合情绪因子的智能量化策略回测平台 · 让数据驱动你的投资决策</p>
+    <h1><i class="fas fa-chart-line me-2"></i>{{ t('index.heroTitle') }}</h1>
+    <p>{{ t('index.heroSubtitle') }}</p>
 </div>
 
 <!-- 功能入口卡片 -->
@@ -24,9 +24,9 @@
                 <div class="feature-icon brand">
                     <i class="fas fa-play-circle"></i>
                 </div>
-                <h5 class="card-title">策略回测</h5>
-                <p class="card-text flex-grow-1 text-muted">选择策略运行回测，查看含 Alpha/Beta、最大回撤的详细绩效报告</p>
-                <a href="/backtest" class="btn btn-brand mt-3"><i class="fas fa-play me-1"></i> 开始回测</a>
+                <h5 class="card-title">{{ t('index.featureBacktestTitle') }}</h5>
+                <p class="card-text flex-grow-1 text-muted">{{ t('index.featureBacktestDesc') }}</p>
+                <a href="/backtest" class="btn btn-brand mt-3"><i class="fas fa-play me-1"></i> {{ t('index.featureBacktestAction') }}</a>
             </div>
         </div>
     </div>
@@ -36,9 +36,9 @@
                 <div class="feature-icon success">
                     <i class="fas fa-sliders"></i>
                 </div>
-                <h5 class="card-title">策略管理</h5>
-                <p class="card-text flex-grow-1 text-muted">创建、编辑、查看所有策略及其参数配置</p>
-                <a href="/strategies" class="btn btn-brand mt-3" style="background:var(--success-grad)"><i class="fas fa-list me-1"></i> 查看策略</a>
+                <h5 class="card-title">{{ t('index.featureStrategiesTitle') }}</h5>
+                <p class="card-text flex-grow-1 text-muted">{{ t('index.featureStrategiesDesc') }}</p>
+                <a href="/strategies" class="btn btn-brand mt-3" style="background:var(--success-grad)"><i class="fas fa-list me-1"></i> {{ t('index.featureStrategiesAction') }}</a>
             </div>
         </div>
     </div>
@@ -48,9 +48,9 @@
                 <div class="feature-icon warning">
                     <i class="fas fa-newspaper"></i>
                 </div>
-                <h5 class="card-title">舆情分析</h5>
-                <p class="card-text flex-grow-1 text-muted">基于实时热点舆论数据生成板块情绪与个股交易信号</p>
-                <a href="/sentiment" class="btn btn-brand mt-3" style="background:var(--warning-grad)"><i class="fas fa-fire me-1"></i> 分析舆情</a>
+                <h5 class="card-title">{{ t('index.featureSentimentTitle') }}</h5>
+                <p class="card-text flex-grow-1 text-muted">{{ t('index.featureSentimentDesc') }}</p>
+                <a href="/sentiment" class="btn btn-brand mt-3" style="background:var(--warning-grad)"><i class="fas fa-fire me-1"></i> {{ t('index.featureSentimentAction') }}</a>
             </div>
         </div>
     </div>
@@ -60,9 +60,9 @@
                 <div class="feature-icon info">
                     <i class="fas fa-star"></i>
                 </div>
-                <h5 class="card-title">每日推荐</h5>
-                <p class="card-text flex-grow-1 text-muted">融合情绪与多因子模型，智能推荐潜力股票</p>
-                <a href="/daily_recommend" class="btn btn-brand mt-3" style="background:var(--info-grad)"><i class="fas fa-arrow-right me-1"></i> 查看推荐</a>
+                <h5 class="card-title">{{ t('index.featureRecommendTitle') }}</h5>
+                <p class="card-text flex-grow-1 text-muted">{{ t('index.featureRecommendDesc') }}</p>
+                <a href="/daily_recommend" class="btn btn-brand mt-3" style="background:var(--info-grad)"><i class="fas fa-arrow-right me-1"></i> {{ t('index.featureRecommendAction') }}</a>
             </div>
         </div>
     </div>
@@ -71,7 +71,7 @@
 <!-- 系统特性 -->
 <div class="card app-card">
     <div class="card-header">
-        <i class="fas fa-gear me-1 text-brand"></i> 系统特性
+        <i class="fas fa-gear me-1 text-brand"></i> {{ t('index.systemTitle') }}
     </div>
     <div class="card-body">
         <div class="row g-3">
@@ -81,8 +81,8 @@
                         <i class="fas fa-brain"></i>
                     </div>
                     <div>
-                        <h6 class="mb-1">情绪因子策略</h6>
-                        <small class="text-muted">将行业情绪快照接入回测信号过滤</small>
+                        <h6 class="mb-1">{{ t('index.systemSentimentTitle') }}</h6>
+                        <small class="text-muted">{{ t('index.systemSentimentDesc') }}</small>
                     </div>
                 </div>
             </div>
@@ -92,8 +92,8 @@
                         <i class="fas fa-chart-column"></i>
                     </div>
                     <div>
-                        <h6 class="mb-1">多因子模型</h6>
-                        <small class="text-muted">均线、情绪、基本面多维度打分</small>
+                        <h6 class="mb-1">{{ t('index.systemFactorTitle') }}</h6>
+                        <small class="text-muted">{{ t('index.systemFactorDesc') }}</small>
                     </div>
                 </div>
             </div>
@@ -103,8 +103,8 @@
                         <i class="fas fa-shield-halved"></i>
                     </div>
                     <div>
-                        <h6 class="mb-1">真实交易成本</h6>
-                        <small class="text-muted">A股佣金/印花税/过户费/滑点建模</small>
+                        <h6 class="mb-1">{{ t('index.systemCostTitle') }}</h6>
+                        <small class="text-muted">{{ t('index.systemCostDesc') }}</small>
                     </div>
                 </div>
             </div>

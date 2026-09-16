@@ -1,5 +1,7 @@
 import type { Market } from '@/api/types'
 import { chartPalette } from '@/lib/marketColors'
+import { fmtNum } from '@/lib/format'
+import { locale } from '@/locales'
 
 /**
  * 蜡烛图 option 组装器（纯函数 module，无框架依赖）。
@@ -24,12 +26,12 @@ export type KlineBar = [number, number, number, number]
 // ===== 5) 价格数值格式 =====
 
 /**
- * 价格轴/tooltip 数值格式：千分位；≥1000 的指数点位省去小数，
+ * 价格轴/tooltip 数值格式：千分位（分组随界面语言）；≥1000 的指数点位省去小数，
  * 避免宽标签溢出网格边距被裁剪。两视图唯一实现。
  */
 export function fmtPriceNum(v: number): string {
   const dec = Math.abs(v) >= 1000 ? 0 : 2
-  return v.toLocaleString('zh-CN', { minimumFractionDigits: dec, maximumFractionDigits: dec })
+  return fmtNum(v, { minimumFractionDigits: dec, maximumFractionDigits: dec })
 }
 
 // ===== 2) 蜡烛 itemStyle =====
@@ -96,7 +98,13 @@ export function klineDataZoom(o: KlineDataZoomOptions = {}) {
 
 // ===== 6) 类目 x 轴 =====
 
-/** 月度刻度策略（对标 Lightweight Charts tickMarkFormatter）：按月边界取刻度，1月显示年份 */
+/** 英文月份缩写（1-12 月，与 zh 的「1月…12月」两档刻度对应） */
+const EN_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/**
+ * 月度刻度策略（对标 Lightweight Charts tickMarkFormatter）：按月边界取刻度，1月显示年份。
+ * 文案随界面语言：zh → `2024年` / `3月`，en → `2024` / `Mar`（两档均为简洁短标签）。
+ */
 export function monthTickConfig(dates: string[]): {
   interval: (index: number) => boolean
   formatter: (v: string) => string
@@ -112,6 +120,9 @@ export function monthTickConfig(dates: string[]): {
     interval: (index: number) => Boolean(flags[index]),
     formatter: (v: string) => {
       const [y, m] = v.split('-')
+      if (locale.value === 'en-US') {
+        return m === '01' ? `${y}` : (EN_MONTHS[Number(m) - 1] ?? v)
+      }
       return m === '01' ? `${y}年` : `${Number(m)}月`
     },
   }

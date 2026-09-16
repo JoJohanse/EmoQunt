@@ -3,6 +3,8 @@ import { watch } from 'vue'
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useTabsStore } from '@/stores/tabs'
+import type { TabItem } from '@/stores/tabs'
+import { t } from '@/locales'
 
 const route = useRoute()
 const router = useRouter()
@@ -14,6 +16,18 @@ watch(
   () => tabsStore.addTab(route as any),
   { immediate: true },
 )
+
+/**
+ * 标签标题：优先用持久化的 titleKey（旧数据/未知路由为空串时按 path 反查路由 meta），
+ * 最终用 t() 现算——这里读的是响应式 locale，切换语言即重渲染。
+ * 键缺失（t() 回退为原始键名）或路由不存在时回退显示 path。
+ */
+function titleOf(tab: TabItem): string {
+  const key = tab.titleKey || (router.resolve(tab.path).meta.titleKey as string | undefined)
+  if (!key) return tab.path
+  const label = t(key)
+  return label === key ? tab.path : label
+}
 
 function onClick(path: string) {
   if (path !== route.path) router.push(path)
@@ -41,25 +55,25 @@ function onCloseOthers(path: string) {
     <el-scrollbar>
       <div class="tabs-inner">
         <el-tag
-          v-for="t in tabsStore.visited"
-          :key="t.path"
-          :type="t.path === route.path ? '' : 'info'"
-          :effect="t.path === route.path ? 'dark' : 'plain'"
-          :closable="t.path !== '/'"
+          v-for="tab in tabsStore.visited"
+          :key="tab.path"
+          :type="tab.path === route.path ? '' : 'info'"
+          :effect="tab.path === route.path ? 'dark' : 'plain'"
+          :closable="tab.path !== '/'"
           class="app-tab"
-          @click="onClick(t.path)"
-          @close="onClose(t.path)"
+          @click="onClick(tab.path)"
+          @close="onClose(tab.path)"
         >
-          {{ t.title }}
+          {{ titleOf(tab) }}
         </el-tag>
       </div>
     </el-scrollbar>
     <div class="tabs-actions">
       <el-button text size="small" :disabled="tabsStore.visited.length <= 1" @click="onCloseOthers(route.path)">
-        关闭其他
+        {{ t('layout.tabs.closeOthers') }}
       </el-button>
       <el-button text size="small" :disabled="tabsStore.visited.length <= 1" @click="onCloseAll()">
-        关闭全部
+        {{ t('layout.tabs.closeAll') }}
       </el-button>
     </div>
   </div>

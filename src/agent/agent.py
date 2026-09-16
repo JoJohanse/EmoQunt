@@ -16,8 +16,8 @@ from .tools import ALL_TOOLS
 
 logger = logging.getLogger(__name__)
 
-# 进程级 agent 缓存（避免每次请求重建）
-_agent_cache: Optional[Any] = None
+# 进程级 agent 缓存（避免每次请求重建）；系统提示词随请求语言变化，故按语言分桶
+_agent_cache: Dict[str, Any] = {}
 
 
 def get_agent_llm_config() -> Dict[str, Any]:
@@ -62,20 +62,26 @@ def _build_llm() -> ChatOpenAI:
 def build_agent():
     """构建（并缓存）LangGraph ReAct agent。
 
+    缓存按请求语言分桶（提示词不同）；语言由 web 中间件写入 ContextVar，
+    SSE/线程池两条调用路径均在请求上下文内执行。
+
     :return: 可调用的 agent（CompiledStateGraph）
     :raises RuntimeError: 若未配置 API Key
     """
-    global _agent_cache
-    if _agent_cache is not None:
-        return _agent_cache
+    from src.utils.i18n import get_lang
+
+    lang = get_lang()
+    cached = _agent_cache.get(lang)
+    if cached is not None:
+        return cached
     llm = _build_llm()
-    _agent_cache = create_react_agent(
+    _agent_cache[lang] = create_react_agent(
         model=llm,
         tools=ALL_TOOLS,
         prompt=build_system_message(),
     )
-    logger.info("Agent 构建完成，模型: %s", get_agent_llm_config()["model"])
-    return _agent_cache
+    logger.info("Agent 构建完成，模型: %s, 语言: %s", get_agent_llm_config()["model"], lang)
+    return _agent_cache[lang]
 
 
 def _to_lc_messages(messages: List[Dict]) -> List[BaseMessage]:

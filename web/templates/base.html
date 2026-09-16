@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{ lang() }}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}EmoQunt 量化系统{% endblock %}</title>
+    <title>{% block title %}{{ t('brand.title') }}{% endblock %}</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -54,11 +54,16 @@
       }
     </style>
     {% block extra_head %}{% endblock %}
+    <!-- 服务端文案目录（js. 前缀键）+ 内联脚本取词助手：tt('js.key', '中文兜底') -->
+    <script>
+      window.__I18N__ = {{ i18n_js() | tojson }};
+      function tt(k, f) { var m = window.__I18N__ || {}; return m[k] || f || k; }
+    </script>
 </head>
 <body>
     <nav class="navbar navbar-expand-lg app-navbar">
         <div class="container">
-            <a class="navbar-brand" href="/"><i class="fas fa-chart-line me-2"></i>EmoQunt 量化系统</a>
+            <a class="navbar-brand" href="/"><i class="fas fa-chart-line me-2"></i>EmoQunt {{ t('brand.suffix') }}</a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
                     aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
                 <span class="navbar-toggler-icon"></span>
@@ -67,32 +72,39 @@
                 <ul class="navbar-nav ms-auto">
                     <li class="nav-item">
                         <a class="nav-link {% if nav_active == 'home' %}active{% endif %}" href="/">
-                            <i class="fas fa-house me-1"></i> 首页
+                            <i class="fas fa-house me-1"></i> {{ t('nav.home') }}
                         </a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link {% if nav_active == 'backtest' %}active{% endif %}" href="/backtest">
-                            <i class="fas fa-chart-line me-1"></i> 策略回测
+                            <i class="fas fa-chart-line me-1"></i> {{ t('nav.backtest') }}
                         </a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link {% if nav_active == 'strategies' %}active{% endif %}" href="/strategies">
-                            <i class="fas fa-list me-1"></i> 策略列表
+                            <i class="fas fa-list me-1"></i> {{ t('nav.strategies') }}
                         </a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link {% if nav_active == 'sentiment' %}active{% endif %}" href="/sentiment">
-                            <i class="fas fa-newspaper me-1"></i> 舆情分析
+                            <i class="fas fa-newspaper me-1"></i> {{ t('nav.sentiment') }}
                         </a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link {% if nav_active == 'recommend' %}active{% endif %}" href="/daily_recommend">
-                            <i class="fas fa-star me-1"></i> 每日推荐
+                            <i class="fas fa-star me-1"></i> {{ t('nav.recommend') }}
                         </a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link {% if nav_active == 'setup' %}active{% endif %}" href="/setup">
-                            <i class="fas fa-screwdriver-wrench me-1"></i> 安装引导
+                            <i class="fas fa-screwdriver-wrench me-1"></i> {{ t('nav.setup') }}
+                        </a>
+                    </li>
+                    <!-- 语言切换：显示「目标语言」名称，写 emoqunt_lang cookie 后回到当前页（nav-item-lang 在桌面横排时加分隔线，见 app.css） -->
+                    <li class="nav-item nav-item-lang">
+                        <a class="nav-link" href="/set-lang?lang={{ 'en-US' if lang() == 'zh-CN' else 'zh-CN' }}&amp;next={{ request.url.path }}"
+                           title="{{ t('nav.switchLang') }}">
+                            <i class="fas fa-language me-1"></i> {{ 'English' if lang() == 'zh-CN' else '中文' }}
                         </a>
                     </li>
                 </ul>
@@ -106,8 +118,8 @@
 
     <footer class="app-footer">
         <div class="container text-center">
-            <p class="mb-1 brand-line"><i class="fas fa-chart-line me-1"></i> EmoQunt 量化系统</p>
-            <p class="mb-0">让量化投资更简单</p>
+            <p class="mb-1 brand-line"><i class="fas fa-chart-line me-1"></i> EmoQunt {{ t('brand.suffix') }}</p>
+            <p class="mb-0">{{ t('footer.tagline') }}</p>
         </div>
     </footer>
 
@@ -116,13 +128,13 @@
 
     <div id="globalLoading">
       <div class="loading-spinner"></div>
-      <div class="loading-text" id="loadingText">加载中...</div>
+      <div class="loading-text" id="loadingText">{{ t('common.loading') }}</div>
     </div>
     <script>
       function showLoading(text) {
         const overlay = document.getElementById('globalLoading');
         const textEl = document.getElementById('loadingText');
-        if (textEl) textEl.textContent = text || '加载中...';
+        if (textEl) textEl.textContent = text || tt('js.loading', '加载中...');
         if (overlay) overlay.style.display = 'flex';
         document.body.style.overflow = 'hidden';
       }

@@ -5,15 +5,15 @@
 {% block content %}
 <div class="card app-card">
     <div class="card-header d-flex justify-content-between align-items-center bg-brand">
-        <h3 class="mb-0"><i class="fas fa-chart-pie me-2"></i>回测结果 · {{ strategy_name }}</h3>
+        <h3 class="mb-0"><i class="fas fa-chart-pie me-2"></i>{{ t('backtestResult.heading') }} · {{ strategy_name }}</h3>
         <a href="/backtest" class="btn btn-light btn-sm">
-            <i class="fas fa-rotate-right me-1"></i> 重新回测
+            <i class="fas fa-rotate-right me-1"></i> {{ t('backtestResult.rerun') }}
         </a>
     </div>
     <div class="card-body p-4">
 
         <!-- 绩效指标卡片：按收益/风险/基准分组着色 -->
-        <div class="section-title"><i class="fas fa-gauge-high"></i> 绩效指标</div>
+        <div class="section-title"><i class="fas fa-gauge-high"></i> {{ t('backtestResult.metricsTitle') }}</div>
         <div class="row g-3 mb-4">
             {% for key, value in performance_data.items() %}
             <div class="col-6 col-md-4 col-lg-2">
@@ -32,7 +32,7 @@
                         {% elif '信息' in key %}<i class="fas fa-satellite-dish"></i>
                         {% else %}<i class="fas fa-chart-line"></i>{% endif %}
                     </div>
-                    <div class="metric-label">{{ key }}</div>
+                    <div class="metric-label">{{ t('metric.' ~ key, key) }}</div>
                     <div class="metric-value
                         {% if '收益率' in key or '胜率' in key %}
                             {% if value[0] == '-' %}negative{% else %}positive{% endif %}
@@ -45,32 +45,32 @@
         </div>
 
         <!-- 收益曲线 -->
-        <div class="section-title"><i class="fas fa-arrow-trend-up"></i> 累计收益曲线</div>
+        <div class="section-title"><i class="fas fa-arrow-trend-up"></i> {{ t('backtestResult.equityTitle') }}</div>
         <div class="chart-frame mb-4">
             {% if equity_chart_url %}
-                <img src="{{ equity_chart_url }}" class="img-fluid" alt="收益曲线" loading="lazy">
+                <img src="{{ equity_chart_url }}" class="img-fluid" alt="{{ t('backtestResult.equityAlt') }}" loading="lazy">
             {% else %}
-                <div class="chart-placeholder"><i class="fas fa-image d-block mb-2"></i>收益曲线图表未生成</div>
+                <div class="chart-placeholder"><i class="fas fa-image d-block mb-2"></i>{{ t('backtestResult.equityMissing') }}</div>
             {% endif %}
         </div>
 
         <!-- 回撤曲线 -->
-        <div class="section-title"><i class="fas fa-arrow-trend-down"></i> 最大回撤曲线</div>
+        <div class="section-title"><i class="fas fa-arrow-trend-down"></i> {{ t('backtestResult.drawdownTitle') }}</div>
         <div class="chart-frame mb-4">
             {% if drawdown_chart_url %}
-                <img src="{{ drawdown_chart_url }}" class="img-fluid" alt="回撤曲线" loading="lazy">
+                <img src="{{ drawdown_chart_url }}" class="img-fluid" alt="{{ t('backtestResult.drawdownAlt') }}" loading="lazy">
             {% else %}
-                <div class="chart-placeholder"><i class="fas fa-image d-block mb-2"></i>回撤曲线图表未生成</div>
+                <div class="chart-placeholder"><i class="fas fa-image d-block mb-2"></i>{{ t('backtestResult.drawdownMissing') }}</div>
             {% endif %}
         </div>
 
         <!-- 绩效仪表板 -->
-        <div class="section-title"><i class="fas fa-table-columns"></i> 绩效仪表板</div>
+        <div class="section-title"><i class="fas fa-table-columns"></i> {{ t('backtestResult.dashboardTitle') }}</div>
         <div class="chart-frame">
             {% if dashboard_url %}
-                <img src="{{ dashboard_url }}" class="img-fluid" alt="绩效仪表板" loading="lazy">
+                <img src="{{ dashboard_url }}" class="img-fluid" alt="{{ t('backtestResult.dashboardAlt') }}" loading="lazy">
             {% else %}
-                <div class="chart-placeholder"><i class="fas fa-image d-block mb-2"></i>绩效仪表板未生成</div>
+                <div class="chart-placeholder"><i class="fas fa-image d-block mb-2"></i>{{ t('backtestResult.dashboardMissing') }}</div>
             {% endif %}
         </div>
     </div>

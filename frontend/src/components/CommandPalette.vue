@@ -3,6 +3,7 @@ import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useWatchlistStore } from '@/stores/watchlist'
 import { useBacktestHistoryStore } from '@/stores/backtestHistory'
+import { t } from '@/locales'
 
 interface CmdItem {
   id: string
@@ -23,21 +24,24 @@ const activeIndex = ref(0)
 const inputRef = ref<HTMLInputElement | null>(null)
 
 // --- 命令数据源 ---
-const navItems: CmdItem[] = [
-  { id: 'nav-home', label: '首页', group: '导航', path: '/', keywords: 'home dashboard' },
-  { id: 'nav-backtest', label: '策略回测', group: '导航', path: '/backtest', keywords: 'backtest' },
-  { id: 'nav-compare', label: '策略对比', group: '导航', path: '/strategy-compare', keywords: 'compare' },
-  { id: 'nav-factor', label: '因子分析', group: '导航', path: '/factor-analysis', keywords: 'factor' },
-  { id: 'nav-sentiment', label: '舆情分析', group: '导航', path: '/sentiment', keywords: 'sentiment news' },
-  { id: 'nav-recommend', label: '每日推荐', group: '导航', path: '/daily-recommend', keywords: 'recommend' },
-  { id: 'nav-strategies', label: '策略列表', group: '导航', path: '/strategies', keywords: 'strategies' },
-]
+// 导航项文案复用 layout.nav.*（与 router meta.titleKey 同一契约）；分组名走 palette.*。
+// 用 computed 而非模块级常量：t() 读取响应式 locale，语言切换即时重建列表。
+const navItems = computed<CmdItem[]>(() => [
+  { id: 'nav-home', label: t('layout.nav.home'), group: t('palette.groupNav'), path: '/', keywords: 'home dashboard' },
+  { id: 'nav-backtest', label: t('layout.nav.backtest'), group: t('palette.groupNav'), path: '/backtest', keywords: 'backtest' },
+  { id: 'nav-compare', label: t('layout.nav.compare'), group: t('palette.groupNav'), path: '/strategy-compare', keywords: 'compare' },
+  { id: 'nav-factor', label: t('layout.nav.factor'), group: t('palette.groupNav'), path: '/factor-analysis', keywords: 'factor' },
+  { id: 'nav-sentiment', label: t('layout.nav.sentiment'), group: t('palette.groupNav'), path: '/sentiment', keywords: 'sentiment news' },
+  { id: 'nav-recommend', label: t('layout.nav.recommend'), group: t('palette.groupNav'), path: '/daily-recommend', keywords: 'recommend' },
+  { id: 'nav-strategies', label: t('layout.nav.strategies'), group: t('palette.groupNav'), path: '/strategies', keywords: 'strategies' },
+])
 
 const allItems = computed<CmdItem[]>(() => {
   const wl: CmdItem[] = watchlistStore.items.map((it) => ({
     id: `wl-${it.code}-${it.market}`,
+    // 自选名与代码是数据，保持原样
     label: `${it.name} ${it.code}`,
-    group: '自选股',
+    group: t('palette.groupWatchlist'),
     keywords: `${it.code} ${it.name} ${it.market}`,
     action: () => {
       // 跳首页预选协议收口走 openChartOnHome（修复旧 `code|market` 两段键格式漂移）
@@ -47,12 +51,13 @@ const allItems = computed<CmdItem[]>(() => {
   }))
   const hist: CmdItem[] = historyStore.records.slice(0, 10).map((r) => ({
     id: `hist-${r.id}`,
+    // 策略名是用户数据，保持原样
     label: `${r.strategyName} · ${r.stockCode}`,
-    group: '最近回测',
+    group: t('palette.groupRecentBacktest'),
     keywords: `${r.strategyName} ${r.stockCode}`,
     action: () => router.push({ path: '/backtest', query: { historyId: r.id } }),
   }))
-  return [...navItems, ...wl, ...hist]
+  return [...navItems.value, ...wl, ...hist]
 })
 
 const filtered = computed(() => {
@@ -139,9 +144,9 @@ defineExpose({ open: () => (open.value = true), close: () => (open.value = false
         ref="inputRef"
         v-model="query"
         class="cmd-input"
-        placeholder="搜索命令、页面、自选股、回测…（↑↓ 选择，回车确认）"
+        :placeholder="t('palette.placeholder')"
       />
-      <span class="cmd-hint">ESC 关闭</span>
+      <span class="cmd-hint">{{ t('palette.escHint') }}</span>
     </div>
     <el-scrollbar max-height="360px" class="cmd-list">
       <template v-for="[group, items] in grouped" :key="group">
@@ -158,7 +163,7 @@ defineExpose({ open: () => (open.value = true), close: () => (open.value = false
           <span v-if="it.path" class="cmd-path">{{ it.path }}</span>
         </div>
       </template>
-      <el-empty v-if="!filtered.length" description="无匹配结果" :image-size="56" />
+      <el-empty v-if="!filtered.length" :description="t('palette.noResults')" :image-size="56" />
     </el-scrollbar>
   </el-dialog>
 </template>

@@ -12,15 +12,15 @@ const KIND_BY_TOOL: Record<string, ToolCardKind> = {
   get_stock_signal: 'signal',
 }
 
-/** 工具名 → 卡片内标题 */
+/** 工具名 → 卡片标题的 i18n 键（渲染时经 t() 翻译；未登记的工具回退原始工具名） */
 export const TOOL_LABELS: Record<string, string> = {
-  get_stock_quote: '行情查询',
-  get_index_quote: '指数查询',
-  get_sentiment: '舆情查询',
-  get_daily_recommendations: '每日推荐',
-  run_backtest: '策略回测',
-  get_stock_signal: '个股信号',
-  list_strategies: '策略列表',
+  get_stock_quote: 'chat.toolQuote',
+  get_index_quote: 'chat.toolIndex',
+  get_sentiment: 'chat.toolSentiment',
+  get_daily_recommendations: 'chat.toolRecommend',
+  run_backtest: 'chat.toolBacktest',
+  get_stock_signal: 'chat.toolSignal',
+  list_strategies: 'chat.toolStrategies',
 }
 
 /**

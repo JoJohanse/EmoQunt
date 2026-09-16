@@ -6,10 +6,10 @@
 <div class="page-hero d-flex justify-content-between align-items-center flex-wrap gap-2">
     <div>
         <h1><i class="fas fa-chart-pie text-brand me-2"></i>{{ title }}</h1>
-        <p class="subtitle mb-0">分析时间：{{ sentiment_result.timestamp }}</p>
+        <p class="subtitle mb-0">{{ t('sentiment.analysisTime', '分析时间：') }}{{ sentiment_result.timestamp }}</p>
     </div>
     <a href="/sentiment" class="btn btn-brand">
-        <i class="fas fa-plus me-1"></i> 重新分析
+        <i class="fas fa-plus me-1"></i> {{ t('sentiment.reanalyze', '重新分析') }}
     </a>
 </div>
 
@@ -17,50 +17,50 @@
     <div class="col-lg-8">
         <!-- 分析结果 -->
         <div class="card app-card mb-4">
-            <div class="card-header"><i class="fas fa-chart-bar me-1 text-brand"></i> 分析结果</div>
+            <div class="card-header"><i class="fas fa-chart-bar me-1 text-brand"></i> {{ t('sentiment.resultTitle', '分析结果') }}</div>
             <div class="card-body">
                 <div class="row g-3 mb-4">
                     <div class="col-md-6">
                         <div class="metric-card">
-                            <div class="metric-label">股票代码</div>
+                            <div class="metric-label">{{ t('sentiment.stockCode', '股票代码') }}</div>
                             <div class="metric-value">{{ sentiment_result.stock_code or '000001' }}</div>
                         </div>
                     </div>
                     <div class="col-md-6">
                         <div class="metric-card">
-                            <div class="metric-label">所属行业</div>
-                            <div class="metric-value">{{ sentiment_result.stock_sector or '未知' }}</div>
+                            <div class="metric-label">{{ t('sentiment.sector', '所属行业') }}</div>
+                            <div class="metric-value">{{ sentiment_result.stock_sector or t('sentiment.unknown', '未知') }}</div>
                         </div>
                     </div>
                 </div>
                 <div class="row g-3 mb-4">
                     <div class="col-md-4">
                         <div class="metric-card">
-                            <div class="metric-label">情绪权重</div>
+                            <div class="metric-label">{{ t('sentiment.weightLabel', '情绪权重') }}</div>
                             <div class="metric-value">{{ "%.2f"|format(sentiment_result.sentiment_weight or 0.3) }}</div>
                         </div>
                     </div>
                     <div class="col-md-4">
                         <div class="metric-card">
-                            <div class="metric-label">原始情绪得分</div>
+                            <div class="metric-label">{{ t('sentiment.rawScore', '原始情绪得分') }}</div>
                             <div class="metric-value">{{ "%.2f"|format(sentiment_result.average_score) }}</div>
                         </div>
                     </div>
                     <div class="col-md-4">
                         <div class="metric-card">
-                            <div class="metric-label">调整后得分</div>
+                            <div class="metric-label">{{ t('sentiment.adjustedScore', '调整后得分') }}</div>
                             <div class="metric-value">{{ "%.2f"|format((sentiment_result.average_score * (sentiment_result.sentiment_weight or 0.3))) }}</div>
                         </div>
                     </div>
                 </div>
                 <div class="text-center">
-                    <div class="metric-label mb-2">交易信号</div>
+                    <div class="metric-label mb-2">{{ t('sentiment.signal', '交易信号') }}</div>
                     {% if sentiment_result.signal == 'buy' %}
-                    <span class="signal-badge buy"><i class="fas fa-arrow-up me-1"></i>买入</span>
+                    <span class="signal-badge buy"><i class="fas fa-arrow-up me-1"></i>{{ t('sentiment.signal.buy', '买入') }}</span>
                     {% elif sentiment_result.signal == 'sell' %}
-                    <span class="signal-badge sell"><i class="fas fa-arrow-down me-1"></i>卖出</span>
+                    <span class="signal-badge sell"><i class="fas fa-arrow-down me-1"></i>{{ t('sentiment.signal.sell', '卖出') }}</span>
                     {% else %}
-                    <span class="signal-badge hold"><i class="fas fa-minus me-1"></i>持有</span>
+                    <span class="signal-badge hold"><i class="fas fa-minus me-1"></i>{{ t('sentiment.signal.hold', '持有') }}</span>
                     {% endif %}
                 </div>
             </div>
@@ -68,13 +68,13 @@
 
         <!-- 情绪分布图 -->
         <div class="card app-card mb-4">
-            <div class="card-header"><i class="fas fa-chart-pie me-1 text-brand"></i> 情绪分布</div>
+            <div class="card-header"><i class="fas fa-chart-pie me-1 text-brand"></i> {{ t('sentiment.distribution', '情绪分布') }}</div>
             <div class="card-body">
                 <div class="chart-frame">
                     {% if sentiment_chart_url %}
-                    <img src="{{ sentiment_chart_url }}" class="img-fluid" alt="情绪分布图表" loading="lazy">
+                    <img src="{{ sentiment_chart_url }}" class="img-fluid" alt="{{ t('sentiment.chartAlt', '情绪分布图表') }}" loading="lazy">
                     {% else %}
-                    <div class="chart-placeholder"><i class="fas fa-image d-block mb-2"></i>图表生成失败</div>
+                    <div class="chart-placeholder"><i class="fas fa-image d-block mb-2"></i>{{ t('sentiment.chartFailed', '图表生成失败') }}</div>
                     {% endif %}
                 </div>
             </div>
@@ -84,28 +84,28 @@
     <!-- 新闻统计侧栏 -->
     <div class="col-lg-4">
         <div class="card app-card">
-            <div class="card-header"><i class="fas fa-newspaper me-1 text-brand"></i> 新闻统计</div>
+            <div class="card-header"><i class="fas fa-newspaper me-1 text-brand"></i> {{ t('sentiment.newsStats', '新闻统计') }}</div>
             <div class="card-body">
                 <div class="metric-card mb-3">
-                    <div class="metric-label">分析新闻数</div>
+                    <div class="metric-label">{{ t('sentiment.newsAnalyzed', '分析新闻数') }}</div>
                     <div class="metric-value">{{ sentiment_result.analysis_result.total_news }}</div>
                 </div>
                 <div class="row text-center g-2">
                     <div class="col-4">
                         <div class="metric-card">
-                            <div class="metric-label">正面</div>
+                            <div class="metric-label">{{ t('sentiment.positive', '正面') }}</div>
                             <div class="metric-value positive">{{ sentiment_result.analysis_result.positive_count }}</div>
                         </div>
                     </div>
                     <div class="col-4">
                         <div class="metric-card">
-                            <div class="metric-label">中性</div>
+                            <div class="metric-label">{{ t('sentiment.neutral', '中性') }}</div>
                             <div class="metric-value neutral">{{ sentiment_result.analysis_result.neutral_count }}</div>
                         </div>
                     </div>
                     <div class="col-4">
                         <div class="metric-card">
-                            <div class="metric-label">负面</div>
+                            <div class="metric-label">{{ t('sentiment.negative', '负面') }}</div>
                             <div class="metric-value negative">{{ sentiment_result.analysis_result.negative_count }}</div>
                         </div>
                     </div>
@@ -117,7 +117,7 @@
 
 <!-- 最新舆情 -->
 <div class="card app-card mt-4">
-    <div class="card-header"><i class="fas fa-list me-1 text-brand"></i> 最新舆情</div>
+    <div class="card-header"><i class="fas fa-list me-1 text-brand"></i> {{ t('sentiment.latestSentiment', '最新舆情') }}</div>
     <div class="card-body">
         {% if news_data %}
         <div class="row g-3">
@@ -133,14 +133,14 @@
             {% endfor %}
         </div>
         {% else %}
-        <div class="empty-state"><i class="fas fa-newspaper d-block"></i><p>暂无舆情数据</p></div>
+        <div class="empty-state"><i class="fas fa-newspaper d-block"></i><p>{{ t('sentiment.noSentimentData', '暂无舆情数据') }}</p></div>
         {% endif %}
     </div>
 </div>
 
 <div class="text-center mt-4">
     <a href="/sentiment" class="btn btn-outline-secondary">
-        <i class="fas fa-arrow-left me-1"></i> 返回分析页面
+        <i class="fas fa-arrow-left me-1"></i> {{ t('sentiment.backToAnalysis', '返回分析页面') }}
     </a>
 </div>
 {% endblock %}

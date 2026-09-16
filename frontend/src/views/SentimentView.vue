@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { sentimentApi } from '@/api'
 import type { SentimentData } from '@/api/types'
 import { sectorColor } from '@/lib/marketColors'
+import { t } from '@/locales'
 
 const data = ref<SentimentData | null>(null)
 const loading = ref(false)
@@ -14,7 +15,7 @@ async function load(refresh = false) {
   try {
     data.value = refresh ? await sentimentApi.refresh() : await sentimentApi.get()
   } catch (e: any) {
-    ElMessage.error('加载失败：' + e.message)
+    ElMessage.error(t('sentiment.loadFailed', { msg: e.message }))
   } finally {
     loading.value = false
   }
@@ -23,30 +24,30 @@ onMounted(() => load())
 </script>
 
 <template>
-  <div v-loading.fullscreen="loading" element-loading-text="正在刷新舆情数据，请稍候...">
+  <div v-loading.fullscreen="loading" :element-loading-text="t('sentiment.refreshing')">
     <div class="page-hero">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <div>
-          <h1><el-icon><ChatDotRound /></el-icon> 舆情分析</h1>
-          <p class="subtitle" v-if="data">更新时间：{{ data.update_time }} · 热门新闻 {{ data.news_count }} 条</p>
+          <h1><el-icon><ChatDotRound /></el-icon> {{ t('layout.nav.sentiment') }}</h1>
+          <p class="subtitle" v-if="data">{{ t('sentiment.subtitle', { time: data.update_time, count: data.news_count }) }}</p>
         </div>
-        <el-button :loading="loading" @click="load(true)"><el-icon><Refresh /></el-icon> 刷新</el-button>
+        <el-button :loading="loading" @click="load(true)"><el-icon><Refresh /></el-icon> {{ t('common.refresh') }}</el-button>
       </div>
     </div>
 
     <el-row :gutter="20">
       <el-col :xs="24" :lg="12">
-        <div class="section-title"><el-icon><Notification /></el-icon> 热门新闻</div>
+        <div class="section-title"><el-icon><Notification /></el-icon> {{ t('sentiment.hotNews') }}</div>
         <el-card v-for="(n, i) in data?.news_list || []" :key="i" class="news-card" shadow="never">
-          <div class="news-source"><el-icon><Link /></el-icon> {{ n.source || '未知来源' }}</div>
+          <div class="news-source"><el-icon><Link /></el-icon> {{ n.source || t('sentiment.unknownSource') }}</div>
           <a v-if="n.url" :href="n.url" target="_blank" class="news-title">{{ n.title }}</a>
           <div v-else class="news-title">{{ n.title }}</div>
         </el-card>
-        <el-empty v-if="data && !data.news_list.length" description="暂无热门新闻" />
+        <el-empty v-if="data && !data.news_list.length" :description="t('sentiment.emptyNews')" />
       </el-col>
 
       <el-col :xs="24" :lg="12">
-        <div class="section-title"><el-icon><PieChart /></el-icon> 板块得分排行</div>
+        <div class="section-title"><el-icon><PieChart /></el-icon> {{ t('sentiment.sectorRank') }}</div>
         <el-card v-for="(s, i) in data?.sectors || []" :key="i" class="sector-card" shadow="never"
           :style="{ borderLeft: `4px solid ${sectorColor(s.sentiment)}` }">
           <div style="display:flex;justify-content:space-between;align-items:center">
@@ -66,7 +67,7 @@ onMounted(() => load())
             </el-tag>
           </div>
         </el-card>
-        <el-empty v-if="data && !data.sectors.length" description="暂无板块数据" />
+        <el-empty v-if="data && !data.sectors.length" :description="t('sentiment.emptySectors')" />
       </el-col>
     </el-row>
   </div>

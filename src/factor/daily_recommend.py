@@ -11,6 +11,7 @@ import sys
 import threading
 
 from src.utils.ttl_cache import TTLCache
+from src.utils.i18n import vmsg
 
 logger = logging.getLogger(__name__)
 
@@ -672,29 +673,31 @@ def calculate_stock_score(stock_code: str, stock_name: str, sector: str, sector_
         technical_score * TECHNICAL_WEIGHT
     )
     
-    # 生成推荐理由
+    # 生成推荐理由（vmsg：en 下取目录英译，zh 下逐字返回原中文模板；
+    # 无请求上下文时 ContextVar 默认 zh，因此定时/Agent 路径不受影响）
     reason_parts = []
     if price_score >= PRICE_HIGH_THRESHOLD:
-        reason_parts.append("价格走势强劲")
+        reason_parts.append(vmsg("recommend.reason.priceStrong", "价格走势强劲"))
     elif price_score >= PRICE_MEDIUM_THRESHOLD:
-        reason_parts.append("价格趋势向好")
+        reason_parts.append(vmsg("recommend.reason.priceUp", "价格趋势向好"))
     
     if volume_score >= VOLUME_HIGH_THRESHOLD:
-        reason_parts.append("成交量活跃")
+        reason_parts.append(vmsg("recommend.reason.volumeActive", "成交量活跃"))
     elif volume_score >= VOLUME_MEDIUM_THRESHOLD:
-        reason_parts.append("成交量较大")
+        reason_parts.append(vmsg("recommend.reason.volumeHigh", "成交量较大"))
     
     if sentiment_score >= SENTIMENT_HIGH_THRESHOLD:
-        reason_parts.append("板块热度高")
+        reason_parts.append(vmsg("recommend.reason.sectorHot", "板块热度高"))
     elif sentiment_score >= SENTIMENT_MEDIUM_THRESHOLD:
-        reason_parts.append("板块关注度较好")
+        reason_parts.append(vmsg("recommend.reason.sectorWatch", "板块关注度较好"))
     
     if technical_score >= TECHNICAL_HIGH_THRESHOLD:
-        reason_parts.append("技术形态强势")
+        reason_parts.append(vmsg("recommend.reason.technicalStrong", "技术形态强势"))
     elif technical_score >= TECHNICAL_MEDIUM_THRESHOLD:
-        reason_parts.append("技术面支撑良好")
+        reason_parts.append(vmsg("recommend.reason.technicalSupport", "技术面支撑良好"))
     
-    reason = "，".join(reason_parts) if reason_parts else "综合考量推荐"
+    separator = vmsg("recommend.reason.separator", "，")
+    reason = separator.join(reason_parts) if reason_parts else vmsg("recommend.reason.fallback", "综合考量推荐")
     
     return {
         "code": stock_code,

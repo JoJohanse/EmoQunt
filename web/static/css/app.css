@@ -421,3 +421,14 @@ a:hover { color: var(--brand-end); }
     .hero-gradient h1 { font-size: 1.5rem; }
     .metric-card .metric-value { font-size: 1.15rem; }
 }
+
+/* ---------- 语言切换（导航末项） ----------
+   与常规导航项拉开间距并以细分隔线区隔「功能区 vs 导航区」；
+   仅 ≥lg（992px，导航横排）生效，移动端折叠菜单内保持普通 nav-link 便于触达 */
+@media (min-width: 992px) {
+    .app-navbar .nav-item-lang .nav-link {
+        margin-left: 0.5rem;
+        padding-left: 1.25rem;
+        border-left: 1px solid rgba(255, 255, 255, 0.35);
+    }
+}

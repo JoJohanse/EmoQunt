@@ -14,6 +14,8 @@ import {
   klineXAxis,
 } from '@/chart/kline'
 import { useBacktestHistoryStore } from '@/stores/backtestHistory'
+import { t } from '@/locales'
+import { fmtCurrency, fmtNum } from '@/lib/format'
 import { VChart } from '@/composables/useECharts'
 
 const route = useRoute()
@@ -42,7 +44,9 @@ if (historyId) {
   const rec = historyStore.records.find((r) => r.id === historyId)
   if (rec) {
     form.value = { ...rec.params }
-    ElMessage.info(`已回填历史回测参数：${rec.strategyName} · ${rec.stockCode}`)
+    ElMessage.info(
+      t('backtest.formRestored', { name: rec.strategyName, code: rec.stockCode }),
+    )
   }
 }
 
@@ -53,7 +57,9 @@ watch(
       const rec = historyStore.records.find((r) => r.id === hid)
       if (rec) {
         form.value = { ...rec.params }
-        ElMessage.info(`已回填历史回测参数：${rec.strategyName} · ${rec.stockCode}`)
+        ElMessage.info(
+          t('backtest.formRestored', { name: rec.strategyName, code: rec.stockCode }),
+        )
       }
     }
   },
@@ -67,19 +73,15 @@ watch(
       form.value.strategy_name = strategies.value[0].name
     }
   } catch (e: any) {
-    ElMessage.warning('策略列表加载失败：' + e.message)
+    ElMessage.warning(t('backtest.strategiesLoadFailed') + e.message)
   }
 })()
 
 const isUS = computed(() => form.value.market === 'us')
-const currencyLabel = computed(() => (isUS.value ? '美元' : '元'))
-const stockHint = computed(() =>
-  isUS.value ? '美股字母代码，如 AAPL、MSFT、BRK.B' : '不带前缀的 6 位 A 股代码',
-)
+const currencyLabel = computed(() => t(isUS.value ? 'backtest.currency.usd' : 'backtest.currency.cny'))
+const stockHint = computed(() => t(isUS.value ? 'backtest.stockHint.us' : 'backtest.stockHint.zh_a'))
 const commissionHint = computed(() =>
-  isUS.value
-    ? '美股仅佣金（双边），无印花税/过户费'
-    : 'A 股已自动叠加印花税（卖出 0.05%）与过户费（双边 0.001%）',
+  t(isUS.value ? 'backtest.commissionHint.us' : 'backtest.commissionHint.zh_a'),
 )
 
 function onMarketChange() {
@@ -89,7 +91,7 @@ function onMarketChange() {
 
 async function runBacktest() {
   if (!form.value.strategy_name) {
-    ElMessage.warning('请选择策略')
+    ElMessage.warning(t('backtest.selectStrategyRequired'))
     return
   }
   loading.value = true
@@ -98,13 +100,32 @@ async function runBacktest() {
     result.value = await backtestApi.run(form.value)
     // 记录回测历史并记忆表单（localStorage，首页"最近回测"展示）
     historyStore.add(form.value, result.value)
-    ElMessage.success('回测完成')
+    ElMessage.success(t('backtest.done'))
   } catch (e: any) {
-    ElMessage.error('回测失败：' + e.message)
+    ElMessage.error(t('backtest.runFailed') + e.message)
   } finally {
     loading.value = false
   }
 }
+
+// 指标显示译文：键是后端 JSON 的中文契约字段名，值是当前语言下的标签
+const metricLabel = computed<Record<string, string>>(() => ({
+  总收益率: t('backtest.metric.总收益率'),
+  年化收益率: t('backtest.metric.年化收益率'),
+  夏普比率: t('backtest.metric.夏普比率'),
+  最大回撤: t('backtest.metric.最大回撤'),
+  胜率: t('backtest.metric.胜率'),
+  盈亏比: t('backtest.metric.盈亏比'),
+  信息比率: t('backtest.metric.信息比率'),
+  年化波动率: t('backtest.metric.年化波动率'),
+  卡玛比率: t('backtest.metric.卡玛比率'),
+  下行标准差: t('backtest.metric.下行标准差'),
+  'VaR (95%)': t('backtest.metric.var95'),
+  'CVaR (95%)': t('backtest.metric.cvar95'),
+  交易次数: t('backtest.metric.交易次数'),
+  盈利交易数: t('backtest.metric.盈利交易数'),
+  亏损交易数: t('backtest.metric.亏损交易数'),
+}))
 
 // 指标卡片
 const metricCards = computed(() => {
@@ -112,35 +133,37 @@ const metricCards = computed(() => {
   const m = result.value.metrics
   const market = result.value.market
   const fmtPct = (v: number) => (v * 100).toFixed(2) + '%'
-  const fmtNum = (v: number) => v.toFixed(2)
+  const fmtFixed = (v: number) => v.toFixed(2)
   // 正/负收益的语义色调：A股红涨绿跌 / 美股绿涨红跌（此前固定绿涨，A股正收益误显示为绿）
   const retTone = (v: number) => deltaTone(market, v >= 0 ? 'up' : 'down')
-  const opt = (key: keyof BacktestMetrics, label: string, fmt: (v: number) => string, type: (v: number) => 'success' | 'danger' | 'neutral', group: string) =>
-    m[key] !== undefined ? [{ label, value: fmt(m[key] as number), type: type(m[key] as number), group }] : []
+  const opt = (key: keyof BacktestMetrics, fmt: (v: number) => string, type: (v: number) => 'success' | 'danger' | 'neutral', group: string) =>
+    m[key] !== undefined ? [{ label: metricLabel.value[key], value: fmt(m[key] as number), type: type(m[key] as number), group }] : []
   return [
-    { label: '总收益率', value: fmtPct(m.总收益率), type: retTone(m.总收益率), group: 'return' },
-    { label: '年化收益率', value: fmtPct(m.年化收益率), type: retTone(m.年化收益率), group: 'return' },
-    { label: '夏普比率', value: fmtNum(m.夏普比率), type: retTone(m.夏普比率), group: 'return' },
-    { label: '最大回撤', value: fmtPct(m.最大回撤), type: 'danger', group: 'risk' },
-    { label: '胜率', value: fmtPct(m.胜率), type: 'neutral', group: 'return' },
-    { label: '盈亏比', value: fmtNum(m.盈亏比), type: m.盈亏比 >= 1 ? 'success' : 'danger', group: 'return' },
+    { label: metricLabel.value.总收益率, value: fmtPct(m.总收益率), type: retTone(m.总收益率), group: 'return' },
+    { label: metricLabel.value.年化收益率, value: fmtPct(m.年化收益率), type: retTone(m.年化收益率), group: 'return' },
+    { label: metricLabel.value.夏普比率, value: fmtFixed(m.夏普比率), type: retTone(m.夏普比率), group: 'return' },
+    { label: metricLabel.value.最大回撤, value: fmtPct(m.最大回撤), type: 'danger', group: 'risk' },
+    { label: metricLabel.value.胜率, value: fmtPct(m.胜率), type: 'neutral', group: 'return' },
+    { label: metricLabel.value.盈亏比, value: fmtFixed(m.盈亏比), type: m.盈亏比 >= 1 ? 'success' : 'danger', group: 'return' },
     ...(m.Alpha !== undefined ? [{ label: 'Alpha', value: fmtPct(m.Alpha), type: retTone(m.Alpha), group: 'benchmark' }] : []),
-    ...(m.Beta !== undefined ? [{ label: 'Beta', value: fmtNum(m.Beta), type: 'neutral', group: 'benchmark' }] : []),
-    ...(m.信息比率 !== undefined ? [{ label: '信息比率', value: fmtNum(m.信息比率), type: retTone(m.信息比率), group: 'benchmark' }] : []),
+    ...(m.Beta !== undefined ? [{ label: 'Beta', value: fmtFixed(m.Beta), type: 'neutral', group: 'benchmark' }] : []),
+    ...(m.信息比率 !== undefined ? [{ label: metricLabel.value.信息比率, value: fmtFixed(m.信息比率), type: retTone(m.信息比率), group: 'benchmark' }] : []),
     // 完整绩效报告新增指标（可选）
-    ...opt('年化波动率', '年化波动率', fmtPct, (v) => (v <= 0.25 ? 'success' : 'danger'), 'risk'),
-    ...opt('卡玛比率', '卡玛比率', fmtNum, (v) => (v >= 1 ? 'success' : 'danger'), 'return'),
-    ...opt('下行标准差', '下行标准差', fmtPct, () => 'neutral', 'risk'),
-    ...opt('VaR (95%)', 'VaR(95%)', fmtNum, () => 'danger', 'risk'),
-    ...opt('CVaR (95%)', 'CVaR(95%)', fmtNum, () => 'danger', 'risk'),
-    ...opt('交易次数', '交易次数', fmtNum, () => 'neutral', 'return'),
-    ...opt('盈利交易数', '盈利交易', fmtNum, () => 'success', 'return'),
-    ...opt('亏损交易数', '亏损交易', fmtNum, () => 'danger', 'return'),
+    ...opt('年化波动率', fmtPct, (v) => (v <= 0.25 ? 'success' : 'danger'), 'risk'),
+    ...opt('卡玛比率', fmtFixed, (v) => (v >= 1 ? 'success' : 'danger'), 'return'),
+    ...opt('下行标准差', fmtPct, () => 'neutral', 'risk'),
+    ...opt('VaR (95%)', fmtFixed, () => 'danger', 'risk'),
+    ...opt('CVaR (95%)', fmtFixed, () => 'danger', 'risk'),
+    ...opt('交易次数', fmtFixed, () => 'neutral', 'return'),
+    ...opt('盈利交易数', fmtFixed, () => 'success', 'return'),
+    ...opt('亏损交易数', fmtFixed, () => 'danger', 'return'),
   ]
 })
 
 // 风险报告（VaR/压力测试）——独立面板
 const riskReport = computed(() => result.value?.risk_report ?? null)
+// 风险面板金额所用的市场口径（与最近一次回测结果一致，无结果时回退当前表单）
+const resultMarket = computed<Market>(() => result.value?.market ?? form.value.market)
 const stressRows = computed(() => {
   const s = riskReport.value?.stress_test
   if (!s) return []
@@ -152,14 +175,12 @@ const equityOption = computed(() => {
   if (!result.value) return {}
   const r = result.value
   // 基准名称按市场确定：A股=沪深300，美股=标普500
-  const benchmarkName = r.market === 'us' ? '标普500' : '沪深300'
-  // 货币格式化（金额，非百分比）
-  const fmtMoney = (v: number) =>
-    v.toLocaleString('zh-CN', { maximumFractionDigits: 2 }) +
-    (r.market === 'us' ? ' $' : ' 元')
+  const benchmarkName = t(r.market === 'us' ? 'backtest.benchmark.sp500' : 'backtest.benchmark.csi300')
+  // 货币格式化（金额，非百分比）：符号由市场决定、千分位随当前语言
+  const fmtMoney = (v: number) => fmtCurrency(v, r.market)
   const series: any[] = [
     {
-      name: '策略净值',
+      name: t('backtest.series.strategyNav'),
       type: 'line',
       data: r.equity_curve,
       smooth: true,
@@ -194,8 +215,8 @@ const equityOption = computed(() => {
     yAxis: {
       type: 'value',
       scale: true,
-      axisLabel: { formatter: (v: number) => v.toLocaleString('zh-CN', { maximumFractionDigits: 0 }) },
-      name: isUS.value ? '美元' : '元',
+      axisLabel: { formatter: (v: number) => fmtNum(v, { maximumFractionDigits: 0 }) },
+      name: currencyLabel.value,
     },
     series,
   }
@@ -216,7 +237,7 @@ const drawdownOption = computed(() => {
     yAxis: { type: 'value', axisLabel: { formatter: (v: number) => (v * 100).toFixed(0) + '%' } },
     series: [
       {
-        name: '回撤',
+        name: t('backtest.series.drawdown'),
         type: 'line',
         data: r.drawdown,
         showSymbol: false,
@@ -244,7 +265,7 @@ const returnsOption = computed(() => {
     yAxis: { type: 'value', axisLabel: { formatter: (v: number) => (v * 100).toFixed(1) + '%' } },
     series: [
       {
-        name: '日收益率',
+        name: t('backtest.series.dailyReturns'),
         type: 'bar',
         data: r.daily_returns.map((v) => ({
           value: v,
@@ -322,9 +343,9 @@ const tradesKlineOption = computed(() => {
         const chg = chgVsPrevClose(k.ohlcv, idx).chgPct
         return (
           `<b>${k.dates[idx]}</b><br/>` +
-          `开 ${o[0].toFixed(2)} 收 ${o[1].toFixed(2)}<br/>` +
-          `低 ${o[2].toFixed(2)} 高 ${o[3].toFixed(2)}<br/>` +
-          `涨跌 ${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`
+          `${t('backtest.tooltip.open')} ${o[0].toFixed(2)} ${t('backtest.tooltip.close')} ${o[1].toFixed(2)}<br/>` +
+          `${t('backtest.tooltip.low')} ${o[2].toFixed(2)} ${t('backtest.tooltip.high')} ${o[3].toFixed(2)}<br/>` +
+          `${t('backtest.tooltip.change')} ${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%`
         )
       },
     },
@@ -337,7 +358,7 @@ const tradesKlineOption = computed(() => {
     dataZoom: klineDataZoom({ sliderBottom: 12 }),
     series: [
       {
-        name: '日K',
+        name: t('backtest.series.dailyK'),
         type: 'candlestick',
         data: k.ohlcv,
         itemStyle: candleItemStyle(k.market),
@@ -350,7 +371,12 @@ const tradesKlineOption = computed(() => {
                 silent: true,
                 animation: false,
                 lineStyle: { type: 'dotted', width: 1.2, color: '#f59e0b' },
-                label: { formatter: () => `成本均价 ${cost.toFixed(2)}`, color: '#b45309', fontSize: 11 },
+                label: {
+                  // formatter 在 ECharts 渲染时执行，闭包内调用 t() 仍随语言切换
+                  formatter: () => `${t('backtest.avgCost')} ${cost.toFixed(2)}`,
+                  color: '#b45309',
+                  fontSize: 11,
+                },
                 data: [{ yAxis: +cost.toFixed(2) }],
               },
             }
@@ -362,24 +388,24 @@ const tradesKlineOption = computed(() => {
 </script>
 
 <template>
-  <div v-loading.fullscreen="loading" element-loading-text="正在运行回测，请稍候...">
+  <div v-loading.fullscreen="loading" :element-loading-text="t('backtest.running')">
     <div class="page-hero">
-      <h1><el-icon><TrendCharts /></el-icon> 策略回测</h1>
-      <p class="subtitle">选择市场、策略与标的，运行回测查看动态绩效图表（Alpha/Beta、回撤、日收益）</p>
+      <h1><el-icon><TrendCharts /></el-icon> {{ t('layout.nav.backtest') }}</h1>
+      <p class="subtitle">{{ t('backtest.subtitle') }}</p>
     </div>
 
     <el-card shadow="never" class="form-card">
       <el-form :model="form" label-width="110px" label-position="right">
-        <el-form-item label="市场">
+        <el-form-item :label="t('backtest.form.market')">
           <el-radio-group v-model="form.market" @change="onMarketChange">
-            <el-radio-button value="zh_a">A 股</el-radio-button>
-            <el-radio-button value="us">美股</el-radio-button>
+            <el-radio-button value="zh_a">{{ t('backtest.market.zh_a') }}</el-radio-button>
+            <el-radio-button value="us">{{ t('backtest.market.us') }}</el-radio-button>
           </el-radio-group>
         </el-form-item>
         <el-row :gutter="20">
           <el-col :xs="24" :md="12">
-            <el-form-item label="选择策略">
-              <el-select v-model="form.strategy_name" placeholder="请选择策略" style="width: 100%">
+            <el-form-item :label="t('backtest.form.strategy')">
+              <el-select v-model="form.strategy_name" :placeholder="t('backtest.form.strategyPlaceholder')" style="width: 100%">
                 <el-option
                   v-for="s in strategies"
                   :key="s.name"
@@ -390,36 +416,36 @@ const tradesKlineOption = computed(() => {
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="12">
-            <el-form-item label="股票代码">
+            <el-form-item :label="t('backtest.form.stockCode')">
               <el-input v-model="form.stock_code" :placeholder="stockHint" />
             </el-form-item>
           </el-col>
         </el-row>
         <el-row :gutter="20">
           <el-col :xs="12" :md="6">
-            <el-form-item label="初始资金">
+            <el-form-item :label="t('backtest.form.initialCapital')">
               <el-input-number v-model="form.initial_capital" :min="1000" style="width: 100%" />
             </el-form-item>
           </el-col>
           <el-col :xs="12" :md="6">
-            <el-form-item label="佣金费率">
+            <el-form-item :label="t('backtest.form.commissionRate')">
               <el-input-number v-model="form.commission_rate" :step="0.0001" :min="0" :max="0.01" :precision="4" style="width: 100%" />
             </el-form-item>
           </el-col>
           <el-col :xs="12" :md="6">
-            <el-form-item label="开始日期">
+            <el-form-item :label="t('backtest.form.startDate')">
               <el-date-picker v-model="form.start_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
             </el-form-item>
           </el-col>
           <el-col :xs="12" :md="6">
-            <el-form-item label="结束日期">
+            <el-form-item :label="t('backtest.form.endDate')">
               <el-date-picker v-model="form.end_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
             </el-form-item>
           </el-col>
         </el-row>
         <el-form-item>
           <el-button type="primary" :loading="loading" @click="runBacktest">
-            <el-icon><VideoPlay /></el-icon> 运行回测
+            <el-icon><VideoPlay /></el-icon> {{ t('backtest.form.run') }}
           </el-button>
           <small class="hint">{{ commissionHint }}</small>
         </el-form-item>
@@ -427,7 +453,7 @@ const tradesKlineOption = computed(() => {
     </el-card>
 
     <template v-if="result">
-      <div class="section-title"><el-icon><DataAnalysis /></el-icon> 绩效指标</div>
+      <div class="section-title"><el-icon><DataAnalysis /></el-icon> {{ t('backtest.section.metrics') }}</div>
       <el-row :gutter="12" class="metrics-row">
         <el-col v-for="mc in metricCards" :key="mc.label" :xs="8" :sm="6" :md="4" :lg="3">
           <div class="metric-card" :class="'g-' + mc.group">
@@ -437,7 +463,7 @@ const tradesKlineOption = computed(() => {
         </el-col>
       </el-row>
 
-      <div class="section-title"><el-icon><CandlestickChart /></el-icon> 回测 K 线 · 买卖点标注</div>
+      <div class="section-title"><el-icon><CandlestickChart /></el-icon> {{ t('backtest.section.tradesKline') }}</div>
       <el-card shadow="never" class="chart-card">
         <div v-if="loadingTradesKline" style="padding: 16px">
           <el-skeleton animated :rows="5" />
@@ -450,75 +476,78 @@ const tradesKlineOption = computed(() => {
             :update-options="{ notMerge: true }"
             autoresize
           />
-          <el-empty v-else :image-size="60" description="K线数据加载失败或回测区间无效" />
+          <el-empty v-else :image-size="60" :description="t('backtest.empty.kline')" />
         </template>
         <div v-if="!loadingTradesKline && result && !(result.trades ?? []).length" class="trades-hint">
-          回测期间无成交记录（策略未触发买卖信号）
+          {{ t('backtest.noTrades') }}
         </div>
       </el-card>
 
-      <div class="section-title"><el-icon><TrendCharts /></el-icon> 累计收益曲线</div>
+      <div class="section-title"><el-icon><TrendCharts /></el-icon> {{ t('backtest.section.equity') }}</div>
       <el-card shadow="never" class="chart-card">
         <v-chart class="chart" :option="equityOption" autoresize />
       </el-card>
 
-      <div class="section-title"><el-icon><Bottom /></el-icon> 最大回撤曲线</div>
+      <div class="section-title"><el-icon><Bottom /></el-icon> {{ t('backtest.section.drawdown') }}</div>
       <el-card shadow="never" class="chart-card">
         <v-chart class="chart" :option="drawdownOption" autoresize />
       </el-card>
 
-      <div class="section-title"><el-icon><Histogram /></el-icon> 日收益率分布</div>
+      <div class="section-title"><el-icon><Histogram /></el-icon> {{ t('backtest.section.dailyReturns') }}</div>
       <el-card shadow="never" class="chart-card">
         <v-chart class="chart" :option="returnsOption" autoresize />
       </el-card>
 
       <!-- 风险分析面板（激活 RiskManager）-->
       <template v-if="riskReport">
-        <div class="section-title"><el-icon><Warning /></el-icon> 风险分析</div>
+        <div class="section-title"><el-icon><Warning /></el-icon> {{ t('backtest.risk.title') }}</div>
         <el-card shadow="never" class="risk-card">
           <el-row :gutter="12">
             <el-col :xs="12" :sm="8" :md="6">
               <div class="risk-item">
-                <div class="risk-label">历史 VaR (95%)</div>
-                <div class="risk-value v-danger">{{ currencyLabel }} {{ riskReport.var_analysis.historical_var.toFixed(2) }}</div>
+                <div class="risk-label">{{ t('backtest.risk.historicalVar') }}</div>
+                <div class="risk-value v-danger">{{ fmtCurrency(riskReport.var_analysis.historical_var, resultMarket) }}</div>
               </div>
             </el-col>
             <el-col :xs="12" :sm="8" :md="6">
               <div class="risk-item">
-                <div class="risk-label">参数 VaR (95%)</div>
-                <div class="risk-value v-danger">{{ currencyLabel }} {{ riskReport.var_analysis.parametric_var.toFixed(2) }}</div>
+                <div class="risk-label">{{ t('backtest.risk.parametricVar') }}</div>
+                <div class="risk-value v-danger">{{ fmtCurrency(riskReport.var_analysis.parametric_var, resultMarket) }}</div>
               </div>
             </el-col>
             <el-col :xs="12" :sm="8" :md="6">
               <div class="risk-item">
-                <div class="risk-label">CVaR (95%)</div>
-                <div class="risk-value v-danger">{{ currencyLabel }} {{ riskReport.var_analysis.cvar.toFixed(2) }}</div>
+                <div class="risk-label">{{ t('backtest.risk.cvar') }}</div>
+                <div class="risk-value v-danger">{{ fmtCurrency(riskReport.var_analysis.cvar, resultMarket) }}</div>
               </div>
             </el-col>
             <el-col :xs="12" :sm="8" :md="6">
               <div class="risk-item">
-                <div class="risk-label">年化波动率</div>
+                <!-- 与指标卡片同一术语：复用 metric.* 译文，避免同一词两处漂移 -->
+                <div class="risk-label">{{ t('backtest.metric.年化波动率') }}</div>
                 <div class="risk-value">{{ (riskReport.volatility * 100).toFixed(2) }}%</div>
               </div>
             </el-col>
             <el-col :xs="12" :sm="8" :md="6">
               <div class="risk-item">
-                <div class="risk-label">当前回撤</div>
+                <div class="risk-label">{{ t('backtest.risk.currentDrawdown') }}</div>
                 <div class="risk-value v-danger">{{ (riskReport.current_drawdown * 100).toFixed(2) }}%</div>
               </div>
             </el-col>
             <el-col :xs="12" :sm="8" :md="6">
               <div class="risk-item">
-                <div class="risk-label">回撤上限</div>
+                <div class="risk-label">{{ t('backtest.risk.maxDrawdownLimit') }}</div>
                 <div class="risk-value">{{ (riskReport.max_drawdown_limit * 100).toFixed(1) }}%</div>
               </div>
             </el-col>
           </el-row>
 
-          <div class="stress-title">压力测试场景（基准 VaR：{{ currencyLabel }} {{ stressRows.length ? stressRows[0].value.toFixed(2) : '0.00' }}）</div>
+          <div class="stress-title">
+            {{ t('backtest.risk.stressTitle', { value: fmtCurrency(stressRows.length ? stressRows[0].value : 0, resultMarket) }) }}
+          </div>
           <el-table :data="stressRows" stripe size="small" style="width: 100%">
-            <el-table-column prop="scenario" label="场景" />
-            <el-table-column label="VaR（元）">
+            <el-table-column prop="scenario" :label="t('backtest.risk.scenario')" />
+            <el-table-column :label="t('backtest.risk.varColumn', { unit: currencyLabel })">
               <template #default="{ row }">{{ row.value.toFixed(2) }}</template>
             </el-table-column>
           </el-table>
@@ -526,7 +555,7 @@ const tradesKlineOption = computed(() => {
       </template>
     </template>
 
-    <el-empty v-else-if="!loading" description="运行回测后在此查看动态绩效图表" />
+    <el-empty v-else-if="!loading" :description="t('backtest.empty.result')" />
   </div>
 </template>
 

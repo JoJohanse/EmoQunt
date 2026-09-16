@@ -8,7 +8,7 @@ Web界面 - 量化策略回测系统
 """
 from fastapi import FastAPI, Request, Form
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
@@ -21,6 +21,9 @@ load_env()
 
 from src.utils.paths import get_logs_dir, get_output_dir, get_web_dir, get_frontend_dist_dir, ensure_dir
 from src.utils.logger import get_logger
+from src.utils.i18n import (
+    LANG_COOKIE, get_lang, i18n_js_bundle, normalize_lang, set_request_lang, t, tr_error, vmsg,
+)
 from src.utils.validators import (
     validate_stock_code, validate_date_range,
     validate_strategy_name, sanitize_string,
@@ -67,6 +70,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Qdt_test Web Interface", lifespan=lifespan)
 templates = Jinja2Templates(directory=str(get_web_dir() / "templates"))
 
+# 模板 i18n 全局：t() 取文案、lang() 取当前语言、i18n_js() 供内联脚本注入 window.__I18N__
+templates.env.globals["t"] = t
+templates.env.globals["lang"] = get_lang
+templates.env.globals["i18n_js"] = i18n_js_bundle
+
 ensure_dir(get_web_dir() / "static")
 ensure_dir(get_web_dir() / "templates")
 ensure_dir(get_logs_dir())
@@ -91,6 +99,18 @@ async def add_security_headers(request: Request, call_next):
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
     return response
 
+
+@app.middleware("http")
+async def add_request_language(request: Request, call_next):
+    """请求语言解析：把 emoqunt_lang cookie 写入 i18n 的 ContextVar。
+
+    注册在安全响应头中间件之后（即更外层），`call_next` 会在写入语言之后
+    才派生下游任务，因此 ContextVar 能传播到 async 路由与线程池里的 `def` 路由
+    （含 Jinja2 渲染与服务层 vmsg 消息）。cookie 缺失/非法一律回落 zh-CN。
+    """
+    set_request_lang(request.cookies.get(LANG_COOKIE))
+    return await call_next(request)
+
 SPA_DIST_DIR = str(get_frontend_dist_dir())
 _spa_assets_dir = os.path.join(SPA_DIST_DIR, "assets")
 if os.path.isdir(_spa_assets_dir):
@@ -104,31 +124,73 @@ async def spa_fallback(full_path: str):
     if os.path.exists(index_path):
         return FileResponse(index_path)
     return HTMLResponse(
-        "<h1>Vue3 前端未构建</h1><p>请在 frontend/ 目录执行 <code>npm install &amp;&amp; npm run build</code></p>",
+        f"<h1>{t('spa.notBuiltTitle', 'Vue3 前端未构建')}</h1>"
+        f"<p>{t('spa.notBuiltBody', '请在 frontend/ 目录执行 <code>npm install &amp;&amp; npm run build</code>')}</p>",
         status_code=503,
     )
+
+
+# ---------------------------------------------------------------------------
+# 语言切换
+# ---------------------------------------------------------------------------
+def _safe_next_url(next_url: str) -> str:
+    """
+    校验语言切换的重定向目标：仅接受站内绝对路径。
+
+    拒绝 ``//host`` 这类协议相对 URL 与含反斜杠的变体（开放重定向），
+    非法取值一律回落首页。
+
+    :param next_url: 原始 next 参数
+    :return: 可安全重定向的站内路径
+    """
+    candidate = (next_url or "").strip()
+    if not candidate.startswith("/") or candidate.startswith("//") or "\\" in candidate:
+        return "/"
+    return candidate
+
+
+@app.get("/set-lang")
+async def set_language(lang: str = "", next: str = "/"):
+    """切换界面语言：写入 emoqunt_lang cookie 后重定向回站内 next。
+
+    cookie 需被模板内联脚本读取，故 httponly=False；有效期一年。lang 非法
+    （不在 SUPPORTED_LANGS 别名内）时回落默认语言 zh-CN。
+    """
+    response = RedirectResponse(_safe_next_url(next), status_code=302)
+    response.set_cookie(
+        LANG_COOKIE, normalize_lang(lang),
+        max_age=60 * 60 * 24 * 365, path="/", httponly=False, samesite="lax",
+    )
+    return response
 
 
 # ---------------------------------------------------------------------------
 # 辅助函数
 # ---------------------------------------------------------------------------
 def _api_error(message: str, status_code: int) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"error": message})
+    """JSON 错误响应（出口统一过 tr_error：服务层中文文案 → 英文）。
+
+    注意：状态码由调用方在**翻译之前**决定（如 `403 if "不存在" in ...`），
+    tr_error 只改出口文案、不改判定依据。
+    """
+    return JSONResponse(status_code=status_code, content={"error": tr_error(message)})
 
 
 def _handle_error(request: Request, error: Exception, operation: str = "操作") -> HTMLResponse:
     """HTML 路由统一错误处理"""
     if isinstance(error, ValidationError):
         logger.warning(f"{operation}验证失败: {str(error)}")
-        error_msg = str(error)
+        # 校验消息已在 validators 产出点本地化（vmsg），tr_error 仅兜住服务层中文
+        error_msg = tr_error(str(error))
     elif isinstance(error, ValueError):
         logger.warning(f"{operation}参数错误: {str(error)}")
-        error_msg = str(error)
+        error_msg = tr_error(str(error))
     else:
         logger.error(f"{operation}执行出错: {str(error)}", exc_info=True)
-        error_msg = f"{operation}执行失败，请稍后重试"
+        op = vmsg(f"common.op.{operation}", operation)
+        error_msg = vmsg("common.opFailed", "{op}执行失败，请稍后重试", op=op)
     return templates.TemplateResponse("error.html", {
-        "request": request, "error": error_msg, "title": "错误",
+        "request": request, "error": error_msg, "title": t("title.error", "错误"),
     })
 
 
@@ -141,7 +203,7 @@ async def home(request: Request):
     from src.services.system import needs_setup_guide
     return templates.TemplateResponse("index.html", {
         "request": request, "strategies": list_strategy_names(),
-        "title": "量化策略回测系统", "nav_active": "home",
+        "title": t("title.home", "量化策略回测系统"), "nav_active": "home",
         "show_setup_banner": needs_setup_guide(),
     })
 
@@ -155,7 +217,7 @@ def setup_guide_page(request: Request):
     from src.services.system import get_setup_status
     status = get_setup_status()
     return templates.TemplateResponse("setup.html", {
-        "request": request, "title": "安装引导", "nav_active": "setup",
+        "request": request, "title": t("title.setup", "安装引导"), "nav_active": "setup",
         "checks": status["checks"], "needs_setup": status["needs_setup"],
         "generated_at": status["generated_at"],
     })
@@ -170,7 +232,7 @@ async def backtest_form(request: Request):
         preselected_market = "zh_a"
     return templates.TemplateResponse("backtest_form.html", {
         "request": request, "strategies": list_strategy_names(),
-        "title": "策略回测", "nav_active": "backtest",
+        "title": t("title.backtest", "策略回测"), "nav_active": "backtest",
         "preselected_strategy": preselected_strategy,
         "preselected_market": preselected_market,
     })
@@ -211,7 +273,7 @@ def run_backtest(
             "equity_chart_url": result["equity_chart_url"],
             "drawdown_chart_url": result["drawdown_chart_url"],
             "dashboard_url": result["dashboard_url"],
-            "title": "回测结果", "nav_active": "backtest", "market": params["market"],
+            "title": t("title.backtestResult", "回测结果"), "nav_active": "backtest", "market": params["market"],
         })
     except ValidationError as e:
         return _handle_error(request, e, "回测参数验证")
@@ -227,7 +289,7 @@ async def strategies_list(request: Request):
         strategy_details = list_strategy_details()
         return templates.TemplateResponse("strategies.html", {
             "request": request, "strategy_details": strategy_details,
-            "templates": get_templates(), "title": "策略列表", "nav_active": "strategies",
+            "templates": get_templates(), "title": t("title.strategies", "策略列表"), "nav_active": "strategies",
         })
     except Exception as e:
         return _handle_error(request, e, "策略列表加载")
@@ -240,7 +302,7 @@ def sentiment_analysis(request: Request):
         from src.services.sentiment import get_sentiment_data
         data = get_sentiment_data()
         return templates.TemplateResponse("sentiment_analysis.html", {
-            "request": request, "title": "舆情分析", "nav_active": "sentiment",
+            "request": request, "title": t("title.sentiment", "舆情分析"), "nav_active": "sentiment",
             "news_list": data["news_list"], "sectors": data["sectors"],
             "news_count": data["news_count"], "update_time": data["update_time"],
         })
@@ -260,7 +322,7 @@ def refresh_sentiment_page(request: Request):
         data = refresh_sentiment()
         logger.info("舆情分析刷新成功")
         return templates.TemplateResponse("sentiment_analysis.html", {
-            "request": request, "title": "舆情分析", "nav_active": "sentiment",
+            "request": request, "title": t("title.sentiment", "舆情分析"), "nav_active": "sentiment",
             "news_list": data["news_list"], "sectors": data["sectors"],
             "news_count": data["news_count"], "update_time": data["update_time"],
         })
@@ -275,7 +337,8 @@ def daily_recommend_page(request: Request):
         from src.services.recommend import get_recommendation
         data = get_recommendation()
         return templates.TemplateResponse("daily_recommend.html", {
-            "request": request, "data": data, "title": "每日股票推荐", "nav_active": "recommend",
+            "request": request, "data": data,
+            "title": t("title.dailyRecommend", "每日股票推荐"), "nav_active": "recommend",
         })
     except Exception as e:
         return _handle_error(request, e, "每日推荐页面加载")
@@ -288,7 +351,8 @@ def refresh_recommend_page(request: Request):
         from src.services.recommend import refresh_recommendation
         data = refresh_recommendation()
         return templates.TemplateResponse("daily_recommend.html", {
-            "request": request, "data": data, "title": "每日股票推荐", "nav_active": "recommend",
+            "request": request, "data": data,
+            "title": t("title.dailyRecommend", "每日股票推荐"), "nav_active": "recommend",
         })
     except Exception as e:
         return _handle_error(request, e, "每日推荐刷新")
@@ -314,7 +378,7 @@ def analyze_sentiment(request: Request, strategy: str = Form(...), stock_code: s
         return templates.TemplateResponse("sentiment_result.html", {
             "request": request, "sentiment_result": result["sentiment_result"],
             "sentiment_chart_url": result["sentiment_chart_url"],
-            "news_data": result["news_data"], "title": "舆情分析结果", "nav_active": "sentiment",
+            "news_data": result["news_data"], "title": t("title.sentimentResult", "舆情分析结果"), "nav_active": "sentiment",
         })
     except ValidationError as e:
         return _handle_error(request, e, "舆情分析参数验证")
@@ -322,7 +386,7 @@ def analyze_sentiment(request: Request, strategy: str = Form(...), stock_code: s
         # HS300 业务规则错误（service 抛出）直接向用户展示文案；其余 ValueError 记日志
         logger.warning(f"舆情分析业务错误: {e}")
         return templates.TemplateResponse("error.html", {
-            "request": request, "error": str(e), "title": "错误",
+            "request": request, "error": tr_error(str(e)), "title": t("title.error", "错误"),
         })
     except Exception as e:
         return _handle_error(request, e, "舆情分析执行")
@@ -468,14 +532,14 @@ async def run_backtest_api(request: Request):
         payload = await request.json()
         params, error = validate_backtest_params(payload)
         if error:
-            return JSONResponse({"error": error}, status_code=400)
+            return JSONResponse({"error": tr_error(error)}, status_code=400)
         return await run_in_threadpool(run_json, **params)
     except ValueError as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse({"error": tr_error(str(e))}, status_code=400)
     except Exception as e:
         # 500 不回显异常细节（可能泄露内部路径/依赖），完整堆栈只进日志
         logger.error(f"回测API失败: {e}", exc_info=True)
-        return JSONResponse({"error": "回测失败，请稍后重试"}, status_code=500)
+        return JSONResponse({"error": tr_error("回测失败，请稍后重试")}, status_code=500)
 
 
 @app.post("/api/strategies/compare")
@@ -487,11 +551,11 @@ async def compare_strategies_api(request: Request):
         payload = await request.json()
         params, error = validate_compare_params(payload)
         if error:
-            return JSONResponse({"error": error}, status_code=400)
+            return JSONResponse({"error": tr_error(error)}, status_code=400)
         return await run_in_threadpool(compare_strategies, **params)
     except Exception as e:
         logger.error(f"策略对比API失败: {e}", exc_info=True)
-        return JSONResponse({"error": "策略对比失败，请稍后重试"}, status_code=500)
+        return JSONResponse({"error": tr_error("策略对比失败，请稍后重试")}, status_code=500)
 
 
 @app.post("/api/factor/analyze")
@@ -502,12 +566,13 @@ async def analyze_factor_api(request: Request):
         factor_type = str(payload.get("factor_type", "momentum"))
         if factor_type not in ("momentum", "rsi", "volatility", "volume_ratio"):
             return JSONResponse(
-                {"error": "factor_type 必须是 momentum/rsi/volatility/volume_ratio"}, status_code=400)
+                {"error": tr_error("factor_type 必须是 momentum/rsi/volatility/volume_ratio")},
+                status_code=400)
         start_date = str(payload.get("start_date", ""))
         end_date = str(payload.get("end_date", ""))
         valid, error = validate_date_range(start_date, end_date)
         if not valid:
-            return JSONResponse({"error": error}, status_code=400)
+            return JSONResponse({"error": tr_error(error)}, status_code=400)
         universe = str(payload.get("universe", "hs300"))
         n_quantiles = int(payload.get("n_quantiles", 5))
         forward_period = int(payload.get("forward_period", 5))
@@ -520,7 +585,7 @@ async def analyze_factor_api(request: Request):
         )
     except Exception as e:
         logger.error(f"因子分析API失败: {e}", exc_info=True)
-        return JSONResponse({"error": "因子分析失败，请稍后重试"}, status_code=500)
+        return JSONResponse({"error": tr_error("因子分析失败，请稍后重试")}, status_code=500)
 
 
 @app.get("/api/kline")
@@ -536,13 +601,13 @@ def get_kline_api(stock_code: str, market: str = "zh_a", days: int = 180,
     try:
         valid, error = validate_stock_code(stock_code, market=market)
         if not valid:
-            return JSONResponse({"error": error}, status_code=400)
+            return JSONResponse({"error": tr_error(error)}, status_code=400)
         from src.services.kline import get_kline
         return get_kline(stock_code, market, days, period, adjust or None, kind,
                          start_date=start_date, end_date=end_date)
     except Exception as e:
         logger.error(f"获取K线数据失败: {e}", exc_info=True)
-        return JSONResponse({"error": "获取K线数据失败，请稍后重试"}, status_code=500)
+        return JSONResponse({"error": tr_error("获取K线数据失败，请稍后重试")}, status_code=500)
 
 
 @app.get("/api/sentiment/data")
@@ -553,7 +618,7 @@ def get_sentiment_data_api():
         return get_sentiment_data()
     except Exception as e:
         logger.error(f"获取舆情数据失败: {e}", exc_info=True)
-        return JSONResponse({"error": "获取舆情数据失败，请稍后重试"}, status_code=500)
+        return JSONResponse({"error": tr_error("获取舆情数据失败，请稍后重试")}, status_code=500)
 
 
 @app.get("/api/sentiment")
@@ -567,7 +632,7 @@ def get_sentiment_api():
     except Exception as e:
         logger.error(f"获取舆情分析结果时出错: {e}")
         from datetime import datetime
-        return {"error": "获取舆情数据失败", "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        return {"error": tr_error("获取舆情数据失败"), "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 
 @app.get("/api/sentiment/calendar")
@@ -643,7 +708,7 @@ def get_market_sectors_api():
         return get_sector_board()
     except Exception as e:
         logger.error(f"获取行业板块行情失败: {e}", exc_info=True)
-        return JSONResponse({"error": "获取板块行情失败，请稍后重试"}, status_code=500)
+        return JSONResponse({"error": tr_error("获取板块行情失败，请稍后重试")}, status_code=500)
 
 
 @app.get("/api/market/breadth")
@@ -654,7 +719,7 @@ def get_market_breadth_api():
         return get_market_breadth()
     except Exception as e:
         logger.error(f"获取市场宽度失败: {e}", exc_info=True)
-        return JSONResponse({"error": "获取市场宽度失败，请稍后重试"}, status_code=500)
+        return JSONResponse({"error": tr_error("获取市场宽度失败，请稍后重试")}, status_code=500)
 
 
 @app.get("/api/data/source-health")
@@ -668,7 +733,7 @@ def get_source_health_api():
         return {"sources": snapshot()}
     except Exception as e:
         logger.error(f"获取数据源健康失败: {e}", exc_info=True)
-        return JSONResponse({"error": "获取数据源健康失败"}, status_code=500)
+        return JSONResponse({"error": tr_error("获取数据源健康失败")}, status_code=500)
 
 
 # ===========================================================================
@@ -692,7 +757,8 @@ async def agent_chat(request: Request):
     async def event_stream():
         try:
             if not messages:
-                yield 'data: {"type":"error","content":"消息不能为空"}\n\n'
+                yield 'data: ' + _json.dumps(
+                    {"type": "error", "content": tr_error("消息不能为空")}, ensure_ascii=False) + '\n\n'
                 return
             from src.agent import stream_agent_events
             # 消费统一事件生成器（薄适配器：仅把元组格式化为 SSE）
@@ -712,7 +778,7 @@ async def agent_chat(request: Request):
             logger.exception("Agent SSE 失败")
             # SSE 错误通道同样不回显异常细节，只给用户可理解的提示
             yield 'data: ' + _json.dumps(
-                {"type": "error", "content": "AI 助手服务异常，请稍后重试"},
+                {"type": "error", "content": tr_error("AI 助手服务异常，请稍后重试")},
                 ensure_ascii=False) + '\n\n'
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -725,14 +791,14 @@ async def agent_chat_sync(request: Request):
         payload = await request.json()
         messages = payload.get("messages", [])
         if not messages:
-            return JSONResponse({"error": "消息不能为空"}, status_code=400)
+            return JSONResponse({"error": tr_error("消息不能为空")}, status_code=400)
         from src.agent import run_agent
         return {"reply": await run_in_threadpool(run_agent, messages)}
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, status_code=503)
     except Exception as e:
         logger.error(f"Agent 同步对话失败: {e}", exc_info=True)
-        return JSONResponse({"error": "对话失败，请稍后重试"}, status_code=500)
+        return JSONResponse({"error": tr_error("对话失败，请稍后重试")}, status_code=500)
 
 
 if __name__ == "__main__":

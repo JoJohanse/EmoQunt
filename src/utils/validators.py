@@ -2,6 +2,9 @@
 输入验证模块
 
 提供各种输入验证函数，用于验证Web接口参数
+
+文案国际化：所有面向用户的消息在**产出点**用 ``vmsg(key, 中文模板, **params)``
+翻译（en 走 src/utils/i18n_data/validators.py 目录，zh 逐字不变）。
 """
 
 import re
@@ -9,12 +12,27 @@ from datetime import datetime
 from typing import Tuple, Optional, List
 import logging
 
+from src.utils.i18n import vmsg
+
 logger = logging.getLogger(__name__)
 
 
 class ValidationError(Exception):
     """验证错误异常"""
     pass
+
+
+def _localized_param(name: str, kind: str) -> str:
+    """
+    本地化「本身是中文的参数」（日期名 dateName / 字段名 fieldName）。
+
+    zh 下原样返回入参（消息逐字不变），en 下查目录换成英文（如 开始日期 → start date）。
+
+    :param name: 中文参数值（如 "开始日期"）
+    :param kind: 目录前缀（"dateName" 或 "fieldName"）
+    :return: 当前语言下的参数文案
+    """
+    return vmsg(f"validator.{kind}.{name}", name)
 
 
 # 常量定义
@@ -43,11 +61,15 @@ def validate_us_stock_code(stock_code: str) -> Tuple[bool, Optional[str]]:
     :return: (是否有效, 错误信息)
     """
     if not stock_code:
-        return False, "美股代码不能为空"
+        return False, vmsg("validator.usCodeEmpty", "美股代码不能为空")
 
     clean_code = stock_code.strip()
     if not US_STOCK_CODE_PATTERN.match(clean_code):
-        return False, f"美股代码格式错误: {stock_code}，应为1-6位字母/数字（如 AAPL、BRK.B），不能纯数字"
+        return False, vmsg(
+            "validator.usCodeFormat",
+            "美股代码格式错误: {code}，应为1-6位字母/数字（如 AAPL、BRK.B），不能纯数字",
+            code=stock_code,
+        )
 
     return True, None
 
@@ -64,7 +86,7 @@ def validate_stock_code(stock_code: str, market: str = 'zh_a') -> Tuple[bool, Op
         return validate_us_stock_code(stock_code)
 
     if not stock_code:
-        return False, "股票代码不能为空"
+        return False, vmsg("validator.codeEmpty", "股票代码不能为空")
 
     # 去除可能的前缀
     clean_code = stock_code.strip()
@@ -72,12 +94,16 @@ def validate_stock_code(stock_code: str, market: str = 'zh_a') -> Tuple[bool, Op
         clean_code = clean_code[2:]
 
     if not STOCK_CODE_PATTERN.match(clean_code):
-        return False, f"股票代码格式错误: {stock_code}，应为6位数字"
+        return False, vmsg(
+            "validator.codeFormat", "股票代码格式错误: {code}，应为6位数字", code=stock_code,
+        )
 
     # 验证股票代码开头
     first_digit = clean_code[0]
     if first_digit not in ('0', '3', '6'):
-        return False, f"股票代码 {stock_code} 不是有效的A股代码"
+        return False, vmsg(
+            "validator.codeInvalid", "股票代码 {code} 不是有效的A股代码", code=stock_code,
+        )
 
     return True, None
 
@@ -91,22 +117,36 @@ def validate_date(date_str: str, date_name: str = "日期") -> Tuple[bool, Optio
     :return: (是否有效, 错误信息)
     """
     if not date_str:
-        return False, f"{date_name}不能为空"
-    
+        return False, vmsg("validator.dateEmpty", "{name}不能为空", name=_localized_param(date_name, "dateName"))
+
     if not DATE_PATTERN.match(date_str):
-        return False, f"{date_name}格式错误: {date_str}，应为 YYYY-MM-DD"
-    
+        return False, vmsg(
+            "validator.dateFormat", "{name}格式错误: {date}，应为 YYYY-MM-DD",
+            name=_localized_param(date_name, "dateName"), date=date_str,
+        )
+
     try:
         date_obj = datetime.strptime(date_str, '%Y-%m-%d')
     except ValueError as e:
-        return False, f"{date_name}无效: {date_str}"
-    
+        return False, vmsg(
+            "validator.dateInvalid", "{name}无效: {date}",
+            name=_localized_param(date_name, "dateName"), date=date_str,
+        )
+
     if date_obj < MIN_DATE:
-        return False, f"{date_name}不能早于 {MIN_DATE.strftime('%Y-%m-%d')}"
-    
+        return False, vmsg(
+            "validator.dateTooEarly", "{name}不能早于 {min}",
+            name=_localized_param(date_name, "dateName"),
+            min=MIN_DATE.strftime('%Y-%m-%d'),
+        )
+
     if date_obj > MAX_DATE:
-        return False, f"{date_name}不能晚于 {MAX_DATE.strftime('%Y-%m-%d')}"
-    
+        return False, vmsg(
+            "validator.dateTooLate", "{name}不能晚于 {max}",
+            name=_localized_param(date_name, "dateName"),
+            max=MAX_DATE.strftime('%Y-%m-%d'),
+        )
+
     return True, None
 
 
@@ -132,16 +172,19 @@ def validate_date_range(start_date: str, end_date: str) -> Tuple[bool, Optional[
     end = datetime.strptime(end_date, '%Y-%m-%d')
     
     if start > end:
-        return False, f"开始日期 {start_date} 不能晚于结束日期 {end_date}"
-    
+        return False, vmsg(
+            "validator.dateRangeOrder", "开始日期 {start} 不能晚于结束日期 {end}",
+            start=start_date, end=end_date,
+        )
+
     # 验证时间跨度不超过5年
     days_diff = (end - start).days
     if days_diff > 365 * 5:
-        return False, f"回测时间跨度不能超过5年"
-    
+        return False, vmsg("validator.dateRangeTooLong", "回测时间跨度不能超过5年")
+
     if days_diff < 30:
-        return False, f"回测时间跨度不能少于30天"
-    
+        return False, vmsg("validator.dateRangeTooShort", "回测时间跨度不能少于30天")
+
     return True, None
 
 
@@ -153,14 +196,20 @@ def validate_initial_capital(capital: float) -> Tuple[bool, Optional[str]]:
     :return: (是否有效, 错误信息)
     """
     if not isinstance(capital, (int, float)):
-        return False, f"初始资金必须是数字"
-    
+        return False, vmsg("validator.capitalNotNumber", "初始资金必须是数字")
+
     if capital < MIN_INITIAL_CAPITAL:
-        return False, f"初始资金不能少于 {MIN_INITIAL_CAPITAL:,.0f} 元"
-    
+        return False, vmsg(
+            "validator.capitalTooSmall", "初始资金不能少于 {min} 元",
+            min=f"{MIN_INITIAL_CAPITAL:,.0f}",
+        )
+
     if capital > MAX_INITIAL_CAPITAL:
-        return False, f"初始资金不能超过 {MAX_INITIAL_CAPITAL:,.0f} 元"
-    
+        return False, vmsg(
+            "validator.capitalTooLarge", "初始资金不能超过 {max} 元",
+            max=f"{MAX_INITIAL_CAPITAL:,.0f}",
+        )
+
     return True, None
 
 
@@ -172,14 +221,17 @@ def validate_commission_rate(rate: float) -> Tuple[bool, Optional[str]]:
     :return: (是否有效, 错误信息)
     """
     if not isinstance(rate, (int, float)):
-        return False, f"佣金费率必须是数字"
-    
+        return False, vmsg("validator.commissionNotNumber", "佣金费率必须是数字")
+
     if rate < MIN_COMMISSION_RATE:
-        return False, f"佣金费率不能为负数"
-    
+        return False, vmsg("validator.commissionNegative", "佣金费率不能为负数")
+
     if rate > MAX_COMMISSION_RATE:
-        return False, f"佣金费率不能超过 {MAX_COMMISSION_RATE * 100}%"
-    
+        return False, vmsg(
+            "validator.commissionTooHigh", "佣金费率不能超过 {max}%",
+            max=f"{MAX_COMMISSION_RATE * 100}",
+        )
+
     return True, None
 
 
@@ -191,20 +243,20 @@ def validate_strategy_name(name: str) -> Tuple[bool, Optional[str]]:
     :return: (是否有效, 错误信息)
     """
     if not name:
-        return False, "策略名称不能为空"
-    
+        return False, vmsg("validator.nameEmpty", "策略名称不能为空")
+
     name = name.strip()
-    
+
     if len(name) < 2:
-        return False, "策略名称长度不能少于2个字符"
-    
+        return False, vmsg("validator.nameTooShort", "策略名称长度不能少于2个字符")
+
     if len(name) > 50:
-        return False, "策略名称长度不能超过50个字符"
-    
+        return False, vmsg("validator.nameTooLong", "策略名称长度不能超过50个字符")
+
     # 检查非法字符
     if not re.match(r'^[\w\u4e00-\u9fa5\-]+$', name):
-        return False, "策略名称只能包含中文、英文、数字、下划线和连字符"
-    
+        return False, vmsg("validator.nameBadChars", "策略名称只能包含中文、英文、数字、下划线和连字符")
+
     return True, None
 
 
@@ -283,11 +335,11 @@ def validate_api_key(api_key: str) -> Tuple[bool, Optional[str]]:
     :return: (是否有效, 错误信息)
     """
     if not api_key:
-        return False, "API密钥不能为空"
-    
+        return False, vmsg("validator.apiKeyEmpty", "API密钥不能为空")
+
     if len(api_key) < 10:
-        return False, "API密钥格式错误"
-    
+        return False, vmsg("validator.apiKeyFormat", "API密钥格式错误")
+
     return True, None
 
 
@@ -302,10 +354,16 @@ def validate_positive_integer(value, field_name: str = "值") -> Tuple[bool, Opt
     try:
         num = int(value)
         if num <= 0:
-            return False, f"{field_name}必须是正整数"
+            return False, vmsg(
+                "validator.positiveInt", "{name}必须是正整数",
+                name=_localized_param(field_name, "fieldName"),
+            )
         return True, None
     except (ValueError, TypeError):
-        return False, f"{field_name}必须是整数"
+        return False, vmsg(
+            "validator.intRequired", "{name}必须是整数",
+            name=_localized_param(field_name, "fieldName"),
+        )
 
 
 def validate_float_range(
@@ -326,10 +384,17 @@ def validate_float_range(
     try:
         num = float(value)
         if num < min_val or num > max_val:
-            return False, f"{field_name}必须在 {min_val} 和 {max_val} 之间"
+            return False, vmsg(
+                "validator.floatRange", "{name}必须在 {min} 和 {max} 之间",
+                name=_localized_param(field_name, "fieldName"),
+                min=min_val, max=max_val,
+            )
         return True, None
     except (ValueError, TypeError):
-        return False, f"{field_name}必须是数字"
+        return False, vmsg(
+            "validator.numberRequired", "{name}必须是数字",
+            name=_localized_param(field_name, "fieldName"),
+        )
 
 
 # 预定义的验证器
