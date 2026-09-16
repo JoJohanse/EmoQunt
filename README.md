@@ -23,7 +23,7 @@
 
 ## 🖼 页面预览
 
-> 截图由 `conda run -n qdt python docs/screenshots/_capture.py` 在本机源码服务上自动采集，为 2026-08 第四轮迭代后界面。
+> 截图由 `conda run -n qdt python docs/screenshots/_capture.py` 在本机源码服务上自动采集，为 2026-09 双语版界面；加 `--lang en` 可采集英文界面（输出 `*-en.png`，供 [README_EN](README_EN.md) 引用）。
 
 <table>
   <tr>
@@ -108,6 +108,12 @@
 
 ### 🧾 Jinja2 经典版（`/`）
 - `base.html` + `app.css` 设计令牌，Bootstrap 5.3 + Font Awesome 6；8 个页面；回测表单记忆上次输入
+
+### 🌍 双语界面（中文/English）
+- **两套前端全量双语**：SPA 顶栏与 Jinja2 导航栏各有一键语言切换（中文 ⇄ English），SPA 存 localStorage、经典版存 `emoqunt_lang` cookie，SPA 切换时同步写 cookie，两套前端语言偏好互通
+- **零依赖 i18n**：SPA 为手写引擎（`frontend/src/locales/`，按视图分模块的 zh/en 词表 + 响应式 `t()`）；后端为 `src/utils/i18n.py`（ContextVar 请求语言 + `src/utils/i18n_data/` 词表），Jinja2 模板经全局 `t()` 渲染
+- **后端消息同步翻译**：表单校验错误、策略 CRUD 错误、推荐理由、Agent 工具提示、matplotlib 图表标签均按请求语言返回；AI 助手在英文模式下使用英文系统提示词回复
+- **边界说明**：行情/板块/新闻标题等**数据本身**（来自 akshare 等中文数据源）与策略描述保持原语言；回测指标 JSON 键名（`总收益率` 等）是 API 契约，仅展示层翻译
 
 ---
 

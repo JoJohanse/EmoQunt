@@ -24,28 +24,28 @@ management — with industry sentiment factors and realistic trading costs. Ship
 
 ## 🖼 Screenshots
 
-> Captured automatically via `conda run -n qdt python docs/screenshots/_capture.py` against the local source stack; all shots are from the 2026-08 round-4 iteration.
+> Captured automatically via `conda run -n qdt python docs/screenshots/_capture.py --lang en` against the local source stack (the `--lang en` flag switches the UI to English and emits the `*-en.png` shots below; run it without the flag to regenerate the Chinese shots for the Chinese README). The AI tool-card shot is kept from the Chinese UI — it requires a configured LLM key and its content is data-bound.
 
 <table>
   <tr>
     <td colspan="2" align="center">
-      <img src="docs/screenshots/spa-home-light.png" alt="SPA home dashboard" width="100%"/><br/>
+      <img src="docs/screenshots/spa-home-light-en.png" alt="SPA home dashboard" width="100%"/><br/>
       <b>SPA home dashboard</b> — 10 draggable cards: quick entries · index strip (sparklines) · market breadth · K-line board · sector heatmap · top sectors · news source filter · recommendations · allocation donut · data-source heartbeats + sentiment calendar
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/spa-kline.png" alt="K-line board" width="100%"/><br/>
+      <img src="docs/screenshots/spa-kline-en.png" alt="K-line board" width="100%"/><br/>
       <b>K-line board</b> — candles + MA/BOLL overlays + MACD/KDJ/RSI sub-panels + last-price line + month-boundary ticks, day/week/month &amp; adjust switching
     </td>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/spa-backtest-trades.png" alt="Backtest trade markers" width="100%"/><br/>
+      <img src="docs/screenshots/spa-backtest-trades-en.png" alt="Backtest trade markers" width="100%"/><br/>
       <b>Backtest K-line trade markers</b> — backend <code>trades</code> passthrough, B/S arrows + weighted average-cost line, aligned with the backtest date range
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/spa-home-tour.png" alt="First-visit tour" width="100%"/><br/>
+      <img src="docs/screenshots/spa-home-tour-en.png" alt="First-visit tour" width="100%"/><br/>
       <b>First-visit tour</b> — driver.js, 7 steps; shown once, replayable
     </td>
     <td width="50%" valign="top">
@@ -55,27 +55,27 @@ management — with industry sentiment factors and realistic trading costs. Ship
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/spa-home-dark.png" alt="Dark mode" width="100%"/><br/>
+      <img src="docs/screenshots/spa-home-dark-en.png" alt="Dark mode" width="100%"/><br/>
       <b>Dark mode</b> — persists across reloads
     </td>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/spa-backtest.png" alt="Backtest result" width="100%"/><br/>
+      <img src="docs/screenshots/spa-backtest-en.png" alt="Backtest result" width="100%"/><br/>
       <b>Backtest result</b> — metric cards + dynamic equity/drawdown/return charts + risk panel
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/spa-kline-week.png" alt="Weekly K-line" width="100%"/><br/>
+      <img src="docs/screenshots/spa-kline-week-en.png" alt="Weekly K-line" width="100%"/><br/>
       <b>Weekly K-line</b> — server-side aggregation, three linked panes
     </td>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/spa-strategies.png" alt="Strategy list" width="100%"/><br/>
+      <img src="docs/screenshots/spa-strategies-en.png" alt="Strategy list" width="100%"/><br/>
       <b>Strategy list</b>
     </td>
   </tr>
   <tr>
     <td colspan="2" align="center">
-      <img src="docs/screenshots/web-sentiment.png" alt="Sentiment analysis" width="100%"/><br/>
+      <img src="docs/screenshots/web-sentiment-en.png" alt="Sentiment analysis" width="100%"/><br/>
       <b>Classic sentiment analysis</b> (Jinja2, <code>/sentiment</code>)
     </td>
   </tr>
@@ -109,6 +109,12 @@ management — with industry sentiment factors and realistic trading costs. Ship
 
 ### 🧾 Classic Jinja2 frontend (`/`)
 - `base.html` + `app.css` design tokens, Bootstrap 5.3 + Font Awesome 6; 8 pages; the backtest form remembers your last input
+
+### 🌍 Bilingual UI (Chinese/English)
+- **Both frontends fully bilingual**: one-click language toggle in the SPA header and the Jinja2 navbar (中文 ⇄ English); the SPA persists to localStorage, the classic frontend to the `emoqunt_lang` cookie, and the SPA mirrors its choice into the cookie so the two frontends share one preference
+- **Zero-dependency i18n**: the SPA uses a hand-rolled engine (`frontend/src/locales/`, per-view zh/en catalogs + a reactive `t()`); the backend uses `src/utils/i18n.py` (per-request ContextVar + `src/utils/i18n_data/` catalogs), consumed by Jinja2 templates through a global `t()`
+- **Backend messages translate too**: form validation errors, strategy CRUD errors, recommendation reasons, agent tool notes, and matplotlib chart labels all follow the request language; the AI assistant replies in English under the English locale via a localized system prompt
+- **Boundary**: data itself (quotes / sectors / news titles from Chinese sources such as akshare) and strategy descriptions keep their original language; backtest metric JSON keys (`总收益率` etc.) are the API contract and are translated only at display time
 
 ---
 
