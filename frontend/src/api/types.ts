@@ -350,3 +350,82 @@ export type SseEvent =
   | { type: 'done' }
   | { type: 'error'; content: string }
 
+
+// ==================== 策略库 v2（代码策略）与运行历史 ====================
+
+/** 代码策略卡片（列表项，不含源码全文） */
+export interface CodeStrategySummary {
+  id: number
+  name: string
+  market: Market
+  description: string
+  tags: string
+  params: Record<string, string | number | boolean>
+  created_at: string
+  updated_at: string
+  last_run: {
+    id: number
+    updated_at: string
+    stock_code: string
+    metrics: Partial<Record<'总收益率' | '夏普比率' | '最大回撤' | '交易次数', number>>
+  } | null
+}
+
+/** 代码策略详情（含源码全文与生效参数） */
+export interface CodeStrategyDetail extends Omit<CodeStrategySummary, 'last_run'> {
+  source: string
+  default_params: Record<string, string | number | boolean>
+}
+
+/** 策略版本快照（不含源码全文） */
+export interface StrategyVersion {
+  id: number
+  strategy_id: number
+  name: string
+  market: Market
+  description: string
+  tags: string
+  note: string
+  created_at: string
+}
+
+/** 源码校验结果 */
+export interface LibraryValidateResult {
+  ok: boolean
+  errors: string[]
+  params: Record<string, string | number | boolean>
+}
+
+/** 回测阶段耗时 */
+export interface RunStage {
+  stage: string
+  ms: number
+}
+
+/** 运行记录摘要（列表用） */
+export interface BacktestRunSummary {
+  id: number
+  strategy_name: string
+  strategy_kind: 'template' | 'code'
+  strategy_id: number | null
+  stock_code: string
+  market: Market
+  start_date: string
+  end_date: string
+  initial_capital: number
+  commission_rate: number
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+  error: string | null
+  metrics?: BacktestMetrics
+  stages: RunStage[]
+  duration_ms: number | null
+  created_at: string
+  updated_at: string
+}
+
+/** 运行记录详情（含时序与成交） */
+export interface BacktestRunDetail extends BacktestRunSummary {
+  dates: string[]
+  equity_curve: number[]
+  trades: BacktestTrade[]
+}

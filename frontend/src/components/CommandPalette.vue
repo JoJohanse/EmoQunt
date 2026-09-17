@@ -34,6 +34,7 @@ const navItems = computed<CmdItem[]>(() => [
   { id: 'nav-sentiment', label: t('layout.nav.sentiment'), group: t('palette.groupNav'), path: '/sentiment', keywords: 'sentiment news' },
   { id: 'nav-recommend', label: t('layout.nav.recommend'), group: t('palette.groupNav'), path: '/daily-recommend', keywords: 'recommend' },
   { id: 'nav-strategies', label: t('layout.nav.strategies'), group: t('palette.groupNav'), path: '/strategies', keywords: 'strategies' },
+  { id: 'nav-strategy-library', label: t('layout.nav.strategyLibrary'), group: t('palette.groupNav'), path: '/strategy-library', keywords: 'strategy library code python' },
 ])
 
 const allItems = computed<CmdItem[]>(() => {

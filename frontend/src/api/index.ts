@@ -3,18 +3,25 @@ import { t } from '@/locales'
 import type {
   BacktestRequest,
   BacktestResult,
+  BacktestRunDetail,
+  BacktestRunSummary,
+  CodeStrategyDetail,
+  CodeStrategySummary,
   CompareRequest,
   CompareResult,
   DailyRecommendData,
   FactorAnalysisRequest,
   FactorAnalysisResult,
   KlineData,
+  LibraryValidateResult,
+  Market,
   MarketBreadth,
   SectorBoardData,
   SourceHealthData,
   SentimentCalendarItem,
   SentimentData,
   StrategyDetail,
+  StrategyVersion,
 } from './types'
 
 const http = axios.create({
@@ -151,6 +158,50 @@ export const marketApi = {
   /** 数据源健康心跳（进程内存态，未启用的源无记录） */
   sourceHealth(): Promise<SourceHealthData> {
     return http.get('/data/source-health').then((r) => r.data)
+  },
+}
+
+/** 策略库 v2（代码策略）API */
+export const libraryApi = {
+  list(params: { market?: string; q?: string } = {}): Promise<{ strategies: CodeStrategySummary[] }> {
+    return http.get('/v2/strategies', { params }).then((r) => r.data)
+  },
+  detail(id: number): Promise<CodeStrategyDetail> {
+    return http.get(`/v2/strategies/${id}`).then((r) => r.data)
+  },
+  create(payload: { name: string; description?: string; market: Market; source: string; params?: Record<string, any>; tags?: string }): Promise<{ id: number; name: string }> {
+    return http.post('/v2/strategies', payload).then((r) => r.data)
+  },
+  update(id: number, payload: { source?: string; description?: string; params?: Record<string, any>; tags?: string; note?: string }): Promise<{ id: number; updated: boolean }> {
+    return http.put(`/v2/strategies/${id}`, payload).then((r) => r.data)
+  },
+  remove(id: number): Promise<{ id: number; deleted: boolean }> {
+    return http.delete(`/v2/strategies/${id}`).then((r) => r.data)
+  },
+  validate(source: string): Promise<LibraryValidateResult> {
+    return http.post('/v2/strategies/validate', { source }).then((r) => r.data)
+  },
+  versions(id: number): Promise<{ versions: StrategyVersion[] }> {
+    return http.get(`/v2/strategies/${id}/versions`).then((r) => r.data)
+  },
+  versionSource(versionId: number): Promise<StrategyVersion & { source: string; params: Record<string, any> }> {
+    return http.get(`/v2/strategies/versions/${versionId}`).then((r) => r.data)
+  },
+  restoreVersion(id: number, versionId: number): Promise<{ id: number; restored_from: number }> {
+    return http.post(`/v2/strategies/${id}/versions/${versionId}/restore`).then((r) => r.data)
+  },
+}
+
+/** 运行历史 API（异步回测） */
+export const runsApi = {
+  submit(params: BacktestRequest & { strategy_kind: 'template' | 'code'; strategy_id?: number }): Promise<{ id: number; status: string }> {
+    return http.post('/v2/backtest/runs', params).then((r) => r.data)
+  },
+  list(params: { strategy_kind?: string; strategy_id?: number; market?: string; status?: string; limit?: number; offset?: number } = {}): Promise<{ runs: BacktestRunSummary[] }> {
+    return http.get('/v2/backtest/runs', { params }).then((r) => r.data)
+  },
+  detail(id: number): Promise<BacktestRunDetail> {
+    return http.get(`/v2/backtest/runs/${id}`).then((r) => r.data)
   },
 }
 

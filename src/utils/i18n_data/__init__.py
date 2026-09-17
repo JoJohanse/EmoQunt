@@ -19,4 +19,5 @@ MESSAGE_MODULES = (
     "recommend",   # 每日推荐页文案（daily_recommend.html 模板 Agent）
     "charts",      # matplotlib 图表标签（可视化 Agent）
     "agent",       # Agent 工具错误/提示文案（src/agent/tools.py）
+    "library",     # 策略库/运行历史文案（code_validator、v2 服务与路由）
 )

@@ -134,11 +134,17 @@ def run_json(
     commission_rate: float = 0.0003,
     market: str = "zh_a",
     slippage_rate: float = 0.0005,
+    strategy_kind: str = "template",
+    strategy_id: Optional[int] = None,
 ) -> Dict:
     """运行回测并返回 JSON 时序（委托 backtest_manager.run_backtest_json）。
 
     默认基准指数按市场映射（美股 SP500 / A股 000300），同步阻塞，调用方
     （路由/工具）需自行放线程池。
+
+    :param strategy_kind: 'template'（默认，strategies.json 参数策略）或
+                          'code'（策略库代码策略，strategy_id 必填）
+    :param strategy_id: 代码策略 id；template 路径忽略
     """
     from src.backtest.backtest_manager import run_backtest_json
 
@@ -148,6 +154,7 @@ def run_json(
         initial_capital=initial_capital, commission_rate=commission_rate,
         benchmark_index=default_benchmark_index(market), market=market,
         slippage_rate=slippage_rate,
+        strategy_kind=strategy_kind, strategy_id=strategy_id,
     )
 
 

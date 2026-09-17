@@ -59,6 +59,11 @@ def get_user_strategies_dir() -> Path:
     return PROJECT_ROOT / "src" / "Strategy" / "user_strategies"
 
 
+def get_data_dir() -> Path:
+    """获取本地业务数据目录（策略库 SQLite 等运行时数据，区别于 stock_data 行情缓存）"""
+    return PROJECT_ROOT / "data"
+
+
 def get_web_dir() -> Path:
     """获取 web 模板/静态资源目录"""
     return PROJECT_ROOT / "web"

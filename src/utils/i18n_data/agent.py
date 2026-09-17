@@ -66,4 +66,21 @@ MESSAGES = {
         "zh": "策略列表查询失败: {err}",
         "en": "Strategy list lookup failed: {err}",
     },
+    # create_strategy / update_strategy / get_strategy（策略库写工具）
+    "agentTool.createStrategyFailed": {
+        "zh": "创建策略失败: {err}",
+        "en": "Failed to create strategy: {err}",
+    },
+    "agentTool.updateStrategyFailed": {
+        "zh": "更新策略失败: {err}",
+        "en": "Failed to update strategy: {err}",
+    },
+    "agentTool.updateStrategyNothing": {
+        "zh": "未提供任何要更新的字段",
+        "en": "No fields to update were provided",
+    },
+    "agentTool.getStrategyFailed": {
+        "zh": "策略详情查询失败: {err}",
+        "en": "Strategy detail lookup failed: {err}",
+    },
 }

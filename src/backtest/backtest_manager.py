@@ -2,9 +2,10 @@ import backtrader as bt
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 import os
 import sys
+import time
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -538,26 +539,54 @@ def _run_backtest_core(
     slippage_rate: float = 0.0005,
     market: str = "zh_a",
     apply_sentiment_filter: bool = True,
+    strategy_kind: str = "template",
+    strategy_id: Optional[int] = None,
+    progress_cb=None,
 ) -> Dict:
     """回测核心流水线（深模块）：装配→数据→策略→回测→指标→基准。
 
     统一了原 run_backtest_with_charts 与 run_backtest_json 共享的 8 段流水线。
     两个入口函数变为输出适配器：with_charts 生成 PNG，json 返回时序数组。
 
+    :param strategy_kind: 'template'（strategies.json 参数策略，默认）或
+                          'code'（策略库代码策略，经 code_loader 物化）
+    :param strategy_id: code 策略的策略库 id；template 路径忽略
+    :param progress_cb: 可选阶段回调 ``cb(stage_name)``（阶段化运行历史用，
+                        不传时零开销、行为与旧版逐字一致）
     :return: 结构化结果字典，含：
         - daily_returns (pd.Series), equity (pd.Series), equity_full (pd.Series)
         - drawdown (pd.Series), benchmark_returns (pd.Series|None)
         - metrics_raw (dict, 中文 key 数值), alpha/beta/info_ratio (float|None)
         - market, strategy_name, stock_code
+        - stages ([{stage, ms}]，仅 progress_cb 提供时填充)
     """
     import logging
-    from src.Strategy.Strategy import create_user_strategy_class
-    from src.Strategy.strategy_manager import get_user_strategy
-    from src.data.data_manager import (
-        get_index_data, load_sentiment_snapshots, build_stock_sentiment_series,
-    )
 
     logger = logging.getLogger(__name__)
+
+    stages: List[Dict] = []
+    _stage_t0 = time.perf_counter() if progress_cb else None
+
+    def _enter(stage: str) -> None:
+        """打开新阶段：回调 + 关闭上一阶段计时。"""
+        nonlocal _stage_t0
+        if progress_cb is None:
+            return
+        try:
+            progress_cb(stage)
+        except Exception:
+            logger.debug("progress_cb 回调失败", exc_info=True)
+        now = time.perf_counter()
+        if stages:
+            stages[-1]["ms"] = round((now - _stage_t0) * 1000)
+        stages.append({"stage": stage})
+        _stage_t0 = now
+
+    def _close_stages() -> None:
+        if progress_cb is not None and stages:
+            stages[-1]["ms"] = round((time.perf_counter() - _stage_t0) * 1000)
+
+    _enter("fetch_data")
 
     cerebro = bt.Cerebro()
     cerebro.broker.setcash(initial_capital)
@@ -595,31 +624,60 @@ def _run_backtest_core(
         volume=VOLUME, openinterest=-1,
     ))
 
-    user_config = get_user_strategy(strategy_name)
-    if not user_config:
-        raise ValueError(f"未找到用户策略: {strategy_name}")
+    _enter("load_strategy")
 
-    # 情绪过滤（仅 A 股）
-    sentiment_series = None
-    sentiment_sector = None
-    if apply_sentiment_filter and market != 'us':
-        try:
-            panel = load_sentiment_snapshots()
-            if panel is not None and not panel.empty:
-                code_no_prefix = stock.get_code_without_prefix()
-                series, sector = build_stock_sentiment_series(panel, code_no_prefix)
-                if series is not None and not series.empty:
-                    sentiment_series = series
-                    sentiment_sector = sector
-                    logger.info(f"情绪过滤已启用: 股票{stock_code} -> 行业{sector}, "
-                                f"{len(series)}个历史快照")
-        except Exception as e:
-            logger.warning(f"加载情绪数据失败，回测将以纯均线策略运行: {e}")
-
-    strategy_class = create_user_strategy_class(
-        user_config, sentiment_series=sentiment_series, sentiment_sector=sentiment_sector,
+    from src.Strategy.Strategy import create_user_strategy_class
+    from src.Strategy.strategy_manager import get_user_strategy
+    from src.data.data_manager import (
+        get_index_data, load_sentiment_snapshots, build_stock_sentiment_series,
     )
-    cerebro.addstrategy(strategy_class)
+
+    if strategy_kind == "code":
+        # 代码策略：源码经 code_loader 编译物化；情绪序列同样可用（SDK 另有
+        # eq_data.get_sentiment，这里不做模板式软过滤——代码策略自己决定用法）
+        from src.Strategy.code_loader import build_backtrader_strategy
+        from src.services.strategy_library import get_code_strategy
+
+        row = get_code_strategy(strategy_id, strategy_name)
+        if row is None:
+            raise ValueError(f"未找到代码策略: id={strategy_id} name={strategy_name}")
+        strategy_class = build_backtrader_strategy(
+            row["source"], row["params"],
+            run_info={
+                "start_date": start_date, "end_date": end_date,
+                "stock_code": stock_code, "market": market,
+            },
+        )
+        strategy_class._emoqunt_strategy_name = row["name"]
+        cerebro.addstrategy(strategy_class)
+    else:
+        user_config = get_user_strategy(strategy_name)
+        if not user_config:
+            raise ValueError(f"未找到用户策略: {strategy_name}")
+
+        # 情绪过滤（仅 A 股）
+        sentiment_series = None
+        sentiment_sector = None
+        if apply_sentiment_filter and market != 'us':
+            try:
+                panel = load_sentiment_snapshots()
+                if panel is not None and not panel.empty:
+                    code_no_prefix = stock.get_code_without_prefix()
+                    series, sector = build_stock_sentiment_series(panel, code_no_prefix)
+                    if series is not None and not series.empty:
+                        sentiment_series = series
+                        sentiment_sector = sector
+                        logger.info(f"情绪过滤已启用: 股票{stock_code} -> 行业{sector}, "
+                                    f"{len(series)}个历史快照")
+            except Exception as e:
+                logger.warning(f"加载情绪数据失败，回测将以纯均线策略运行: {e}")
+
+        strategy_class = create_user_strategy_class(
+            user_config, sentiment_series=sentiment_series, sentiment_sector=sentiment_sector,
+        )
+        cerebro.addstrategy(strategy_class)
+
+    _enter("backtest")
 
     results = cerebro.run()
     strat = results[0]
@@ -667,10 +725,14 @@ def _run_backtest_core(
     except Exception as e:
         logger.warning(f"成交记录提取失败: {e}")
 
+    _enter("metrics")
+
     metrics_raw = calculate_strategy_metrics(
         equity_full, win_rate_override=win_rate_real,
         profit_loss_ratio_override=profit_loss_real,
     )
+
+    _enter("benchmark")
 
     # 基准 + Alpha/Beta
     benchmark_returns = None
@@ -702,9 +764,12 @@ def _run_backtest_core(
         logger.warning(f"获取基准/计算Alpha/Beta失败: {e}")
 
     # ---- 完整绩效报告 + 风险报告（激活休眠的 PerformanceAnalyzer / RiskManager）----
+    _enter("enrich")
     performance_report, risk_report = _build_enrichment_reports(
         daily_returns, equity, strat, initial_capital, perf_analyzer=perf_analyzer,
     )
+
+    _close_stages()
 
     return {
         "strategy_name": strategy_name,
@@ -723,6 +788,7 @@ def _run_backtest_core(
         "trades": trades,
         "performance_report": performance_report,
         "risk_report": risk_report,
+        "stages": stages,
     }
 
 
@@ -896,10 +962,15 @@ def run_backtest_json(
     benchmark_index: str = "000300",
     market: str = "zh_a",
     slippage_rate: float = 0.0005,
+    strategy_kind: str = "template",
+    strategy_id: Optional[int] = None,
 ) -> Dict:
     """运行回测并返回 JSON 可序列化时序数据（Vue3 前端 ECharts 用）。
 
     输出适配器：调用 _run_backtest_core，把结果序列化为前端可消费的数组。
+
+    :param strategy_kind: 'template'（默认）或 'code'（策略库代码策略）
+    :param strategy_id: code 策略 id；template 路径忽略
     """
     core = _run_backtest_core(
         strategy_name=strategy_name, stock_code=stock_code,
@@ -907,6 +978,7 @@ def run_backtest_json(
         initial_capital=initial_capital, commission_rate=commission_rate,
         benchmark_index=benchmark_index, slippage_rate=slippage_rate,
         market=market, apply_sentiment_filter=False,  # JSON 路径不用情绪过滤（与原行为一致）
+        strategy_kind=strategy_kind, strategy_id=strategy_id,
     )
 
     metrics, risk_report = _format_metrics_json(

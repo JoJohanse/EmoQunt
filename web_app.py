@@ -44,6 +44,12 @@ async def lifespan(app: FastAPI):
     # 策略列表缓存归 src.services.strategies 所有（读走缓存、变更自动失效）
     from src.services.strategies import ensure_loaded as _ensure_strategies_loaded
     _ensure_strategies_loaded()
+    # 业务库（策略库/运行历史）：幂等建表 + 遗留运行清扫（queued/running → failed）
+    try:
+        from src.store.db import init_db as _init_store
+        await run_in_threadpool(_init_store)
+    except Exception as e:
+        logger.warning(f"业务库初始化失败（策略库/运行历史不可用）: {e}")
     # 数据缓存层：懒初始化连接（幂等，失败静默降级），再做连通性日志
     try:
         from src.data.db import healthcheck as _db_healthcheck, init_pool
@@ -60,6 +66,11 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        try:
+            from src.services.task_runner import shutdown_executor
+            shutdown_executor(wait=False)
+        except Exception as e:
+            logger.debug(f"任务执行器关闭失败: {e}")
         try:
             from src.data.db import close_pool as _db_close_pool
             _db_close_pool()
@@ -734,6 +745,199 @@ def get_source_health_api():
     except Exception as e:
         logger.error(f"获取数据源健康失败: {e}", exc_info=True)
         return JSONResponse({"error": tr_error("获取数据源健康失败")}, status_code=500)
+
+
+# ===========================================================================
+# 策略库 v2（代码策略 CRUD/校验/版本）+ 运行历史（异步回测）
+# 业务编排在 src.services.strategy_library / backtest_runs；错误契约：
+# ValueError 含"不存在" → 404，其余 ValueError → 400（出口过 tr_error）。
+# ===========================================================================
+def _v2_error_response(e: ValueError) -> JSONResponse:
+    """v2 统一错误映射：找不到资源 → 404，参数/校验问题 → 400。"""
+    message = tr_error(str(e))
+    status = 404 if "不存在" in str(e) else 400
+    return JSONResponse({"error": message}, status_code=status)
+
+
+# ---- 运行历史 ----
+@app.post("/api/v2/backtest/runs")
+async def v2_submit_backtest_run(request: Request):
+    """提交异步回测（立即返回 run id，结果经 GET 轮询/历史页查看）。"""
+    try:
+        payload = await request.json()
+        from src.services.backtest_runs import submit_run
+        return await run_in_threadpool(submit_run, payload)
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"提交回测运行失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("提交回测失败，请稍后重试")}, status_code=500)
+
+
+@app.get("/api/v2/backtest/runs")
+def v2_list_backtest_runs(strategy_kind: str = "", strategy_id: int = 0, market: str = "",
+                          status: str = "", limit: int = 50, offset: int = 0):
+    """运行历史列表（摘要，不含时序）。"""
+    try:
+        from src.services.backtest_runs import list_runs
+        return {"runs": list_runs(
+            strategy_kind=strategy_kind or None, strategy_id=strategy_id or None,
+            market=market or None, status=status or None, limit=limit, offset=offset,
+        )}
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"查询运行历史失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("查询运行历史失败，请稍后重试")}, status_code=500)
+
+
+@app.get("/api/v2/backtest/runs/{run_id:int}")
+def v2_get_backtest_run(run_id: int):
+    """运行详情（含指标/净值/成交全量与阶段耗时）。"""
+    try:
+        from src.services.backtest_runs import get_run_detail
+        run = get_run_detail(run_id)
+        if run is None:
+            return JSONResponse({"error": tr_error("运行记录不存在")}, status_code=404)
+        return run
+    except Exception as e:
+        logger.error(f"查询运行详情失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("查询运行详情失败，请稍后重试")}, status_code=500)
+
+
+# ---- 代码策略 ----
+@app.get("/api/v2/strategies")
+def v2_list_strategies(market: str = "", q: str = "", limit: int = 200, offset: int = 0):
+    """策略库列表（卡片：不含源码全文，附最近成功回测摘要）。"""
+    try:
+        from src.services.strategy_library import list_strategies
+        return {"strategies": list_strategies(market=market or None, q=q or "",
+                                              limit=limit, offset=offset)}
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"查询策略库失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("查询策略库失败，请稍后重试")}, status_code=500)
+
+
+@app.post("/api/v2/strategies")
+async def v2_create_strategy(request: Request):
+    """创建代码策略（名称/市场/描述/源码/参数；源码先过 ast 校验）。"""
+    try:
+        payload = await request.json()
+        from src.services.strategy_library import create_code_strategy
+        return await run_in_threadpool(
+            create_code_strategy,
+            str(payload.get("name", "")), str(payload.get("description", "")),
+            str(payload.get("market", "zh_a")), str(payload.get("source", "")),
+            payload.get("params"), str(payload.get("tags", "")),
+        )
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"创建代码策略失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("创建策略失败，请稍后重试")}, status_code=500)
+
+
+@app.post("/api/v2/strategies/validate")
+def v2_validate_strategy_source(payload: dict = None):
+    """源码校验（编辑器实时调用）：返回 {ok, errors, params(默认参数)}。"""
+    try:
+        from src.services.strategy_library import validate_source
+        return validate_source((payload or {}).get("source", ""))
+    except Exception as e:
+        logger.error(f"源码校验失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("校验失败，请稍后重试")}, status_code=500)
+
+
+@app.get("/api/v2/strategies/{strategy_id:int}")
+def v2_get_strategy(strategy_id: int):
+    """策略详情（含源码与生效参数）。"""
+    try:
+        from src.services.strategy_library import get_strategy_detail
+        detail = get_strategy_detail(strategy_id)
+        if detail is None:
+            return JSONResponse({"error": tr_error("策略不存在")}, status_code=404)
+        return detail
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"查询策略详情失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("查询策略失败，请稍后重试")}, status_code=500)
+
+
+@app.put("/api/v2/strategies/{strategy_id:int}")
+async def v2_update_strategy(strategy_id: int, request: Request):
+    """更新代码策略（先快照版本；仅更新传入字段）。"""
+    try:
+        payload = await request.json()
+        from src.services.strategy_library import update_code_strategy
+        return await run_in_threadpool(
+            update_code_strategy,
+            strategy_id,
+            payload.get("description"), payload.get("source"), payload.get("params"),
+            payload.get("tags"),
+            str(payload["market"]) if "market" in payload else None,
+            str(payload.get("note", "")),
+        )
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"更新代码策略失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("更新策略失败，请稍后重试")}, status_code=500)
+
+
+@app.delete("/api/v2/strategies/{strategy_id:int}")
+def v2_delete_strategy(strategy_id: int):
+    """删除代码策略（删除前自动快照）。"""
+    try:
+        from src.services.strategy_library import delete_code_strategy
+        return delete_code_strategy(strategy_id)
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"删除代码策略失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("删除策略失败，请稍后重试")}, status_code=500)
+
+
+@app.get("/api/v2/strategies/{strategy_id:int}/versions")
+def v2_list_strategy_versions(strategy_id: int):
+    """版本列表（新→旧，不含源码全文）。"""
+    try:
+        from src.services.strategy_library import list_versions
+        return {"versions": list_versions(strategy_id)}
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"查询版本列表失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("查询版本失败，请稍后重试")}, status_code=500)
+
+
+@app.get("/api/v2/strategies/versions/{version_id:int}")
+def v2_get_strategy_version(version_id: int):
+    """版本全文（源码+参数）。"""
+    try:
+        from src.services.strategy_library import get_version_source
+        version = get_version_source(version_id)
+        if version is None:
+            return JSONResponse({"error": tr_error("版本不存在")}, status_code=404)
+        return version
+    except Exception as e:
+        logger.error(f"查询版本详情失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("查询版本失败，请稍后重试")}, status_code=500)
+
+
+@app.post("/api/v2/strategies/{strategy_id:int}/versions/{version_id:int}/restore")
+def v2_restore_strategy_version(strategy_id: int, version_id: int):
+    """回滚到指定版本（当前态先快照）。"""
+    try:
+        from src.services.strategy_library import restore_version
+        return restore_version(strategy_id, version_id)
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"版本回滚失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("版本回滚失败，请稍后重试")}, status_code=500)
 
 
 # ===========================================================================

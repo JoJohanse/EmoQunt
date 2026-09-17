@@ -26,6 +26,18 @@ const router = createRouter({
       meta: { titleKey: 'layout.nav.strategies' },
     },
     {
+      path: '/strategy-library',
+      name: 'strategy-library',
+      component: () => import('@/views/StrategyLibraryView.vue'),
+      meta: { titleKey: 'layout.nav.strategyLibrary' },
+    },
+    {
+      path: '/strategy-library/:id',
+      name: 'strategy-library-detail',
+      component: () => import('@/views/StrategyDetailView.vue'),
+      meta: { titleKey: 'layout.nav.strategyLibrary' },
+    },
+    {
       path: '/sentiment',
       name: 'sentiment',
       component: () => import('@/views/SentimentView.vue'),

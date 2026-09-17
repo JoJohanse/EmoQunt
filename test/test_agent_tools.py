@@ -36,12 +36,14 @@ class TestHelpers:
 # 工具注册与元数据
 # ---------------------------------------------------------------------------
 class TestToolRegistry:
-    def test_seven_tools_registered(self):
+    def test_tools_registered(self):
+        """策略库上线后注册表扩到 10 个：原 7 个只读工具 + 3 个策略库写工具。"""
         names = [t.name for t in ALL_TOOLS]
-        assert len(names) == 7
+        assert len(names) == 10
         for expected in ["get_stock_quote", "get_index_quote", "run_backtest",
                          "get_sentiment", "get_stock_signal",
-                         "get_daily_recommendations", "list_strategies"]:
+                         "get_daily_recommendations", "list_strategies",
+                         "create_strategy", "update_strategy", "get_strategy"]:
             assert expected in names, f"{expected} 缺失"
 
     def test_tools_have_docstrings(self):

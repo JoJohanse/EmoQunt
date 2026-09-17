@@ -123,16 +123,19 @@ def get_index_quote(index_code: str = "000300", market: str = "zh_a", days: int 
 
 @tool
 def run_backtest(strategy_name: str, stock_code: str, start_date: str, end_date: str,
-                 market: str = "zh_a", initial_capital: float = 100000.0) -> str:
-    """运行策略回测，返回绩效指标摘要（总收益/年化/夏普/最大回撤/胜率/Alpha/Beta/信息比率）。
+                 market: str = "zh_a", initial_capital: float = 100000.0,
+                 strategy_kind: str = "template", strategy_id: int = 0) -> str:
+    """运行策略回测，返回绩效指标摘要（总收益/年化/夏普/最大回撤/胜率/盈亏比/Alpha/Beta/信息比率）。
 
     Args:
-        strategy_name: 策略名称（须已存在，如 'test'）。
+        strategy_name: 策略名称。template 类填策略名；code 类填策略库中的名称。
         stock_code: 股票代码。
         start_date: 开始日期 YYYY-MM-DD。
         end_date: 结束日期 YYYY-MM-DD。
         market: 市场，'zh_a'（默认）或 'us'。
         initial_capital: 初始资金，默认 100000。
+        strategy_kind: 'template'（模板策略，默认）或 'code'（策略库代码策略）。
+        strategy_id: strategy_kind 为 'code' 时必填的策略库 id。
     """
     try:
         from src.services.backtest import run_json, validate_backtest_params
@@ -144,6 +147,17 @@ def run_backtest(strategy_name: str, stock_code: str, start_date: str, end_date:
         })
         if error:
             return _err(error)
+        if strategy_kind not in ("template", "code"):
+            return _err(vmsg("library.badStrategyKind", "strategy_kind 仅支持 template 或 code"))
+        if strategy_kind == "code":
+            from src.services.strategy_library import get_code_strategy
+            row = get_code_strategy(int(strategy_id) if strategy_id else None, strategy_name)
+            if row is None:
+                return _err(vmsg("library.codeStrategyNotFound",
+                                 "代码策略不存在（需提供有效的 strategy_id）"))
+            params["strategy_kind"] = "code"
+            params["strategy_id"] = int(row["id"])
+            params["strategy_name"] = row["name"]
         result = run_json(**params)
         m = result.get("metrics", {})
         # 摘要：仅指标，不含完整时序（太长）；键名为 LLM 友好的 *_pct 形态，
@@ -266,23 +280,115 @@ def get_daily_recommendations(top_n: int = 10) -> str:
 
 @tool
 def list_strategies() -> str:
-    """列出所有可用的回测策略（名称、描述、是否自定义、模板）与策略模板。"""
+    """列出所有可用的回测策略（模板策略 + 策略库代码策略）与模板。
+
+    返回每个策略的名称、描述、种类（template/code）、id（code 类回测时需要）。
+    """
     try:
         from src.Strategy.strategy_manager import load_user_strategies, get_strategy_templates
+        from src.services.strategy_library import list_strategies as list_code_strategies
+
         user = load_user_strategies()
         templates = get_strategy_templates()
         strategies = []
         for name, cfg in user.items():
             strategies.append({
                 "name": name, "description": cfg.get("description", ""),
-                "is_user_strategy": True, "template": cfg.get("template", ""),
+                "kind": "template", "template": cfg.get("template", ""),
             })
+        try:
+            for s in list_code_strategies():
+                strategies.append({
+                    "name": s.get("name"), "description": s.get("description", ""),
+                    "kind": "code", "id": s.get("id"), "market": s.get("market"),
+                    "last_run": s.get("last_run"),
+                })
+        except Exception:
+            pass  # 策略库不可用时仅列模板策略
         out_templates = [{"key": k, "name": v.get("name", ""), "description": v.get("description", "")}
                          for k, v in templates.items()]
         return _json({"strategies": strategies, "templates": out_templates})
     except Exception as e:
         logger.exception("list_strategies failed")
         return _err(vmsg("agentTool.strategiesFailed", "策略列表查询失败: {err}", err=e))
+
+
+@tool
+def create_strategy(name: str, source: str, description: str = "", market: str = "zh_a") -> str:
+    """创建代码策略（AI 生成策略的落库入口）：校验源码后保存到策略库。
+
+    Args:
+        name: 策略名称（2-50字符，中文/英文/数字/下划线/连字符）。
+        source: 完整 Python 源码，必须定义 initialize(context) 与 handle_data(context, data)，
+                可选 STRATEGY_PARAMS 字典（带中文注释，作为可调参数）。
+        description: 策略描述（一句话说明策略逻辑）。
+        market: 市场，'zh_a'（默认）或 'us'。
+
+    返回 {"id": 策略id, "params": 生效参数}。源码不合法时返回 errors 列表，应修正后重试。
+    """
+    try:
+        from src.services.strategy_library import create_code_strategy
+        result = create_code_strategy(name=name, description=description,
+                                      market=market, source=source)
+        return _json(result)
+    except ValueError as e:
+        return _err(str(e))
+    except Exception as e:
+        logger.exception("create_strategy tool failed")
+        return _err(vmsg("agentTool.createStrategyFailed", "创建策略失败: {err}", err=e))
+
+
+@tool
+def update_strategy(strategy_id: int, source: str = "", description: str = "",
+                    params: str = "") -> str:
+    """更新策略库代码策略（源码/描述/参数；更新前自动保存版本快照，可回滚）。
+
+    Args:
+        strategy_id: 策略库 id。
+        source: 新的完整源码（传空字符串表示不修改代码）。
+        description: 新描述（传空字符串表示不修改）。
+        params: 新参数 JSON 字符串，如 '{"ma_window": 20}'（传空表示不修改）。
+    """
+    try:
+        import json as _json
+        from src.services.strategy_library import update_code_strategy
+        kwargs = {"strategy_id": int(strategy_id)}
+        if source:
+            kwargs["source"] = source
+        if description:
+            kwargs["description"] = description
+        if params:
+            try:
+                kwargs["params"] = _json.loads(params)
+            except ValueError:
+                return _err(vmsg("library.paramsInvalid", "params 必须是键值参数对象"))
+        if "source" not in kwargs and "description" not in kwargs and "params" not in kwargs:
+            return _err(vmsg("agentTool.updateStrategyNothing", "未提供任何要更新的字段"))
+        result = update_code_strategy(**kwargs)
+        return _json(result)
+    except ValueError as e:
+        return _err(str(e))
+    except Exception as e:
+        logger.exception("update_strategy tool failed")
+        return _err(vmsg("agentTool.updateStrategyFailed", "更新策略失败: {err}", err=e))
+
+
+@tool
+def get_strategy(strategy_id: int) -> str:
+    """查看策略库代码策略详情：源码全文、生效参数、源码默认参数。
+
+    Args:
+        strategy_id: 策略库 id。
+    """
+    try:
+        from src.services.strategy_library import get_strategy_detail
+        detail = get_strategy_detail(int(strategy_id))
+        if detail is None:
+            return _err(vmsg("library.strategyNotFound", "策略不存在"))
+        return _json(detail)
+    except Exception as e:
+        logger.exception("get_strategy tool failed")
+        return _err(vmsg("agentTool.getStrategyFailed", "策略详情查询失败: {err}", err=e))
 
 
 # 工具列表（供 agent 使用）
@@ -294,4 +400,7 @@ ALL_TOOLS = [
     get_stock_signal,
     get_daily_recommendations,
     list_strategies,
+    create_strategy,
+    update_strategy,
+    get_strategy,
 ]

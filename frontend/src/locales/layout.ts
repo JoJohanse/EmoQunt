@@ -16,6 +16,7 @@ export const zh: Messages = {
     recommend: '每日推荐',
     compare: '策略对比',
     factor: '因子分析',
+    strategyLibrary: '策略库',
   },
   group: {
     research: '回测研究',
@@ -50,6 +51,7 @@ export const en: Messages = {
     recommend: 'Daily Picks',
     compare: 'Compare',
     factor: 'Factor Analysis',
+    strategyLibrary: 'Strategy Library',
   },
   group: {
     research: 'Backtesting',

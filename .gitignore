@@ -17,6 +17,7 @@ __pycache__/
 
 # Generated outputs, logs, and caches
 logs/
+data/
 output/
 nes_data/sentiment_results/
 nes_data/trendradar/output/
