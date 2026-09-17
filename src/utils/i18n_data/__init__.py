@@ -21,4 +21,5 @@ MESSAGE_MODULES = (
     "agent",       # Agent 工具错误/提示文案（src/agent/tools.py）
     "library",     # 策略库/运行历史文案（code_validator、v2 服务与路由）
     "tuning",      # 参数调优文案（src/services/tuning.py）
+    "factorlib",   # 因子库文案（src/services/factor_library.py）
 )

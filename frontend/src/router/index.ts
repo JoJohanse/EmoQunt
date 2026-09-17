@@ -73,6 +73,18 @@ const router = createRouter({
       component: () => import('@/views/FactorAnalysisView.vue'),
       meta: { titleKey: 'layout.nav.factor' },
     },
+    {
+      path: '/factor-library',
+      name: 'factor-library',
+      component: () => import('@/views/FactorLibraryView.vue'),
+      meta: { titleKey: 'layout.nav.factorLibrary' },
+    },
+    {
+      path: '/factor-library/:id',
+      name: 'factor-library-detail',
+      component: () => import('@/views/FactorDetailView.vue'),
+      meta: { titleKey: 'layout.nav.factorLibrary' },
+    },
   ],
 })
 

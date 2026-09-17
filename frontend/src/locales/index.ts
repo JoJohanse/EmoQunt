@@ -14,6 +14,7 @@ import { en as paletteEn, zh as paletteZh } from './palette'
 import { en as libraryEn, zh as libraryZh } from './library'
 import { en as runsEn, zh as runsZh } from './runs'
 import { en as tuningEn, zh as tuningZh } from './tuning'
+import { en as factorlibEn, zh as factorlibZh } from './factorlib'
 
 /**
  * 手写 i18n 引擎（零依赖）——只服务本 SPA 的 zh-CN / en-US 两语言。
@@ -41,7 +42,7 @@ import { en as tuningEn, zh as tuningZh } from './tuning'
  * ── 键名契约（视图翻译 agent 必读）────────────────────────────────────────
  * 1) namespace 白名单 = 文件名（新增视图文案必须新开或并入对应模块）：
  *    common / layout / home / tour / backtest / compare / factor / sentiment /
- *    recommend / strategies / chat / palette / library / runs / tuning
+ *    recommend / strategies / chat / palette / library / runs / tuning / factorlib
  * 2) 跨模块共享的导航键一律住在 layout.ts 的 nav 组下（路由 meta.titleKey 与
  *    CommandPalette 都引用它们），任何视图模块都不得重复定义：
  *      nav.home      首页       / Home
@@ -81,6 +82,7 @@ const messages: Record<Locale, Messages> = {
     library: libraryZh,
     runs: runsZh,
     tuning: tuningZh,
+    factorlib: factorlibZh,
   },
   'en-US': {
     common: commonEn,
@@ -98,6 +100,7 @@ const messages: Record<Locale, Messages> = {
     library: libraryEn,
     runs: runsEn,
     tuning: tuningEn,
+    factorlib: factorlibEn,
   },
 }
 

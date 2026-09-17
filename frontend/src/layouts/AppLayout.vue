@@ -37,6 +37,7 @@ const favTitleMap = computed<Record<string, string>>(() => ({
   '/strategies': t('layout.nav.strategies'),
   '/strategy-library': t('layout.nav.strategyLibrary'),
   '/runs': t('layout.nav.runHistory'),
+  '/factor-library': t('layout.nav.factorLibrary'),
 }))
 
 /** 语言切换按钮标签显示「目标语言」：中文界面显示 EN，英文界面显示 中文 */
@@ -175,6 +176,15 @@ const langLabel = computed(() => (uiStore.lang === 'en-US' ? '中文' : 'EN'))
                 <span class="menu-label">{{ t('layout.nav.runHistory') }}</span>
                 <el-button text size="small" class="fav-btn" @click.stop="favoritesStore.toggle('/runs')">
                   <el-icon><StarFilled v-if="favoritesStore.isFavorite('/runs')" /><Star v-else /></el-icon>
+                </el-button>
+              </template>
+            </el-menu-item>
+            <el-menu-item index="/factor-library">
+              <el-icon><DataAnalysis /></el-icon>
+              <template #title>
+                <span class="menu-label">{{ t('layout.nav.factorLibrary') }}</span>
+                <el-button text size="small" class="fav-btn" @click.stop="favoritesStore.toggle('/factor-library')">
+                  <el-icon><StarFilled v-if="favoritesStore.isFavorite('/factor-library')" /><Star v-else /></el-icon>
                 </el-button>
               </template>
             </el-menu-item>

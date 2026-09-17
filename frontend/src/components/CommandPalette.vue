@@ -36,6 +36,7 @@ const navItems = computed<CmdItem[]>(() => [
   { id: 'nav-strategies', label: t('layout.nav.strategies'), group: t('palette.groupNav'), path: '/strategies', keywords: 'strategies' },
   { id: 'nav-strategy-library', label: t('layout.nav.strategyLibrary'), group: t('palette.groupNav'), path: '/strategy-library', keywords: 'strategy library code python' },
   { id: 'nav-runs', label: t('layout.nav.runHistory'), group: t('palette.groupNav'), path: '/runs', keywords: 'runs history backtest log' },
+  { id: 'nav-factor-library', label: t('layout.nav.factorLibrary'), group: t('palette.groupNav'), path: '/factor-library', keywords: 'factor library ic quantile python' },
 ])
 
 const allItems = computed<CmdItem[]>(() => {

@@ -1,4 +1,8 @@
-"""代码策略源码校验器（ast 白名单，"防呆不防恶"）。
+"""代码源码校验器（ast 白名单，"防呆不防恶"）。
+
+策略与因子（v2 D5）共用同一校验出口，仅必备函数与参数约定不同：
+- 代码策略：必备 initialize(context)/handle_data(context, data) + STRATEGY_PARAMS；
+- 因子：必备 compute(df)（require_params=False，FACTOR_PARAMS 等自定义常量不受限）。
 
 保存/加载代码策略前的唯一校验出口（loader 内再跑一遍属纵深防御）：
 1. 源码大小上限 + 语法解析；
@@ -42,13 +46,19 @@ REQUIRED_FUNCTIONS = ("initialize", "handle_data")
 _PARAM_TYPES = (int, float, bool, str)
 
 
-def validate_source(source: str) -> Tuple[List[str], Dict[str, Any]]:
-    """校验代码策略源码。
+def validate_source(source: str, required_functions: Tuple[str, ...] = REQUIRED_FUNCTIONS,
+                    require_params: bool = True) -> Tuple[List[str], Dict[str, Any]]:
+    """校验代码源码（策略与因子共用同一 ast 白名单）。
 
     :param source: Python 源码
+    :param required_functions: 模块顶层必备函数；策略用默认值，
+                               因子库传 ``("compute",)``（D5：compute(df)->Series）
+    :param require_params: 是否校验 STRATEGY_PARAMS 字面量 dict；
+                           因子源码无此约定，传 False 跳过（FACTOR_PARAMS
+                           等自定义常量不受限）
     :return: (errors, param_defaults)。errors 为空表示通过；
              param_defaults 为 STRATEGY_PARAMS 字面量提取的默认参数
-            （源码未声明时为空 dict）。
+            （源码未声明或 require_params=False 时为空 dict）。
     """
     errors: List[str] = []
     defaults: Dict[str, Any] = {}
@@ -69,7 +79,7 @@ def validate_source(source: str) -> Tuple[List[str], Dict[str, Any]]:
     for node in tree.body:
         if isinstance(node, ast.FunctionDef):
             top_functions.add(node.name)
-        if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+        if require_params and isinstance(node, ast.Assign) and len(node.targets) == 1 \
                 and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "STRATEGY_PARAMS":
             ok, val_or_err = _extract_params_literal(node.value)
             if ok:
@@ -81,7 +91,7 @@ def validate_source(source: str) -> Tuple[List[str], Dict[str, Any]]:
                     "（第 {line} 行）: {err}",
                     line=getattr(node, "lineno", 0), err=val_or_err,
                 ))
-    for fn in REQUIRED_FUNCTIONS:
+    for fn in required_functions:
         if fn not in top_functions:
             errors.append(vmsg("library.sourceMissingFunction",
                                "缺少必备函数 {name}（模块顶层定义）", name=fn))

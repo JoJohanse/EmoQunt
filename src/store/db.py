@@ -1,4 +1,4 @@
-"""业务 SQLite 存储层：策略库（代码策略）+ 回测运行记录 + 参数调优任务。
+"""业务 SQLite 存储层：策略库（代码策略）+ 回测运行记录 + 参数调优任务 + 因子库。
 
 与行情缓存层 src/data/db.py（PostgreSQL/Redis，可选降级）职责分离：
 本模块是策略/运行/调优的**唯一真相**，故障上抛而非静默降级。
@@ -134,6 +134,31 @@ CREATE TABLE IF NOT EXISTS tuning_runs (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_tuning_runs_task ON tuning_runs(task_id, combo_index);
+
+CREATE TABLE IF NOT EXISTS factors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    market TEXT NOT NULL DEFAULT 'zh_a',
+    description TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL,
+    tags TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_factors_updated ON factors(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS factor_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    factor_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    market TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL,
+    tags TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_factor_versions_factor ON factor_versions(factor_id, id DESC);
 """
 
 _local = threading.local()
@@ -676,6 +701,136 @@ def row_to_tuning_run_dict(row: sqlite3.Row, unpack_series: bool = False) -> Dic
     if unpack_series:
         out["dates"] = json.loads(row["dates_json"]) if row["dates_json"] else []
         out["equity_curve"] = _unpack_series(row["equity_zlib"]) if row["equity_zlib"] else []
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 因子库（factors / factor_versions 表）——服务层见 src/services/factor_library.py
+# ---------------------------------------------------------------------------
+def insert_factor(name: str, market: str, description: str, source: str, tags: str = "") -> int:
+    """插入因子，返回新 id。名称唯一由表约束保证（冲突上抛 IntegrityError）。"""
+    _ensure_init()
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO factors (name, market, description, source, tags, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (name, market, description, source, tags, _now(), _now()),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def get_factor_row(factor_id: int) -> Optional[sqlite3.Row]:
+    _ensure_init()
+    return get_conn().execute("SELECT * FROM factors WHERE id = ?", (factor_id,)).fetchone()
+
+
+def get_factor_row_by_name(name: str) -> Optional[sqlite3.Row]:
+    _ensure_init()
+    return get_conn().execute("SELECT * FROM factors WHERE name = ?", (name,)).fetchone()
+
+
+def list_factor_rows(market: Optional[str] = None, q: str = "",
+                     limit: int = 200, offset: int = 0) -> List[sqlite3.Row]:
+    """因子列表（q 对名称/描述/标签 LIKE；按 updated_at 降序）。"""
+    _ensure_init()
+    sql = "SELECT * FROM factors WHERE 1=1"
+    args: List[Any] = []
+    if market:
+        sql += " AND market = ?"
+        args.append(market)
+    if q:
+        like = f"%{q}%"
+        sql += " AND (name LIKE ? OR description LIKE ? OR tags LIKE ?)"
+        args += [like, like, like]
+    sql += " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
+    args += [int(limit), int(offset)]
+    return get_conn().execute(sql, args).fetchall()
+
+
+def update_factor_row(factor_id: int, fields: Dict[str, Any]) -> bool:
+    """更新指定列（白名单键），返回是否有行被更新。updated_at 自动刷新。"""
+    _ensure_init()
+    allowed = {"name", "market", "description", "source", "tags"}
+    sets, args = [], []
+    for key, value in fields.items():
+        if key not in allowed or value is None:
+            continue
+        sets.append(f"{key} = ?")
+        args.append(value)
+    if not sets:
+        return False
+    sets.append("updated_at = ?")
+    args.append(_now())
+    args.append(factor_id)
+    conn = get_conn()
+    cur = conn.execute(f"UPDATE factors SET {', '.join(sets)} WHERE id = ?", args)
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def delete_factor_row(factor_id: int) -> bool:
+    _ensure_init()
+    conn = get_conn()
+    cur = conn.execute("DELETE FROM factors WHERE id = ?", (factor_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def insert_factor_version(factor_id: int, name: str, market: str, description: str,
+                          source: str, tags: str, note: str = "") -> int:
+    """为因子插入一条版本快照（更新/删除前调用），返回版本 id。"""
+    _ensure_init()
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO factor_versions (factor_id, name, market, description, source, tags, note, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (factor_id, name, market, description, source, tags, note, _now()),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def list_factor_versions(factor_id: int, limit: int = 50) -> List[sqlite3.Row]:
+    """因子版本列表（新→旧；不含 source 大字段）。"""
+    _ensure_init()
+    return get_conn().execute(
+        "SELECT id, factor_id, name, market, description, tags, note, created_at "
+        "FROM factor_versions WHERE factor_id = ? ORDER BY id DESC LIMIT ?",
+        (factor_id, int(limit)),
+    ).fetchall()
+
+
+def get_factor_version(version_id: int) -> Optional[sqlite3.Row]:
+    _ensure_init()
+    return get_conn().execute("SELECT * FROM factor_versions WHERE id = ?", (version_id,)).fetchone()
+
+
+def prune_factor_versions(factor_id: int, keep: int = 20) -> None:
+    """只保留最近 keep 个版本（快照含全文，防膨胀）。"""
+    _ensure_init()
+    conn = get_conn()
+    conn.execute(
+        "DELETE FROM factor_versions WHERE factor_id = ? AND id NOT IN "
+        "(SELECT id FROM factor_versions WHERE factor_id = ? ORDER BY id DESC LIMIT ?)",
+        (factor_id, factor_id, int(keep)),
+    )
+    conn.commit()
+
+
+def row_to_factor_dict(row: sqlite3.Row, include_source: bool = True) -> Dict[str, Any]:
+    """因子行 → API dict。"""
+    out = {
+        "id": row["id"],
+        "name": row["name"],
+        "market": row["market"],
+        "description": row["description"],
+        "tags": row["tags"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+    if include_source:
+        out["source"] = row["source"]
     return out
 
 

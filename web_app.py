@@ -1001,6 +1001,159 @@ async def v2_apply_tuning_params(task_id: int, request: Request):
         return JSONResponse({"error": tr_error("应用参数失败，请稍后重试")}, status_code=500)
 
 
+# ---- 因子库（Python 因子 CRUD + 横截面分析；zh_a 限定，v2 方案 D5）----
+@app.get("/api/v2/factors")
+def v2_list_factors(market: str = "", q: str = "", limit: int = 200, offset: int = 0):
+    """因子列表（不含源码全文）。"""
+    try:
+        from src.services.factor_library import list_factors
+        return {"factors": list_factors(market=market or None, q=q or "",
+                                        limit=limit, offset=offset)}
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"查询因子库失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("查询因子库失败，请稍后重试")}, status_code=500)
+
+
+@app.post("/api/v2/factors")
+async def v2_create_factor(request: Request):
+    """创建因子（名称/描述/源码；源码先过 ast 校验，市场限 zh_a）。"""
+    try:
+        payload = await request.json()
+        from src.services.factor_library import create_factor
+        return await run_in_threadpool(
+            create_factor,
+            str(payload.get("name", "")), str(payload.get("description", "")),
+            str(payload.get("market", "zh_a")), str(payload.get("source", "")),
+            str(payload.get("tags", "")),
+        )
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"创建因子失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("创建因子失败，请稍后重试")}, status_code=500)
+
+
+@app.post("/api/v2/factors/validate")
+def v2_validate_factor_source(payload: dict = None):
+    """因子源码校验（编辑器实时调用）：返回 {ok, errors}。"""
+    try:
+        from src.services.factor_library import validate_factor_source
+        return validate_factor_source((payload or {}).get("source", ""))
+    except Exception as e:
+        logger.error(f"因子源码校验失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("校验失败，请稍后重试")}, status_code=500)
+
+
+@app.get("/api/v2/factors/{factor_id:int}")
+def v2_get_factor(factor_id: int):
+    """因子详情（含源码全文）。"""
+    try:
+        from src.services.factor_library import get_factor_detail
+        detail = get_factor_detail(factor_id)
+        if detail is None:
+            return JSONResponse({"error": tr_error("因子不存在")}, status_code=404)
+        return detail
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"查询因子失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("查询因子失败，请稍后重试")}, status_code=500)
+
+
+@app.put("/api/v2/factors/{factor_id:int}")
+async def v2_update_factor(factor_id: int, request: Request):
+    """更新因子（先快照版本；仅更新传入字段）。"""
+    try:
+        payload = await request.json()
+        from src.services.factor_library import update_factor
+        return await run_in_threadpool(
+            update_factor,
+            factor_id,
+            payload.get("description"), payload.get("source"), payload.get("tags"),
+            str(payload["market"]) if "market" in payload else None,
+            str(payload.get("note", "")),
+        )
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"更新因子失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("更新因子失败，请稍后重试")}, status_code=500)
+
+
+@app.delete("/api/v2/factors/{factor_id:int}")
+def v2_delete_factor(factor_id: int):
+    """删除因子（删除前自动快照）。"""
+    try:
+        from src.services.factor_library import delete_factor
+        return delete_factor(factor_id)
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"删除因子失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("删除因子失败，请稍后重试")}, status_code=500)
+
+
+@app.get("/api/v2/factors/{factor_id:int}/versions")
+def v2_list_factor_versions(factor_id: int):
+    """因子版本列表（新→旧，不含源码全文）。"""
+    try:
+        from src.services.factor_library import list_versions
+        return {"versions": list_versions(factor_id)}
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"查询因子版本失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("查询因子版本失败，请稍后重试")}, status_code=500)
+
+
+@app.get("/api/v2/factors/versions/{version_id:int}")
+def v2_get_factor_version(version_id: int):
+    """因子版本全文（源码）。"""
+    try:
+        from src.services.factor_library import get_version_source
+        version = get_version_source(version_id)
+        if version is None:
+            return JSONResponse({"error": tr_error("因子版本不存在")}, status_code=404)
+        return version
+    except Exception as e:
+        logger.error(f"查询因子版本失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("查询因子版本失败，请稍后重试")}, status_code=500)
+
+
+@app.post("/api/v2/factors/{factor_id:int}/versions/{version_id:int}/restore")
+def v2_restore_factor_version(factor_id: int, version_id: int):
+    """因子回滚到指定版本（当前态先快照）。"""
+    try:
+        from src.services.factor_library import restore_version
+        return restore_version(factor_id, version_id)
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"因子版本回滚失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("因子版本回滚失败，请稍后重试")}, status_code=500)
+
+
+@app.post("/api/v2/factors/{factor_id:int}/analyze")
+async def v2_analyze_factor(factor_id: int, request: Request):
+    """运行用户因子横截面分析（HS300；同步执行走线程池，分钟级）。"""
+    try:
+        payload = await request.json() or {}
+        from src.services.factor_library import analyze_user_factor
+        return await run_in_threadpool(
+            analyze_user_factor,
+            factor_id,
+            str(payload.get("start_date", "")), str(payload.get("end_date", "")),
+            int(payload.get("n_quantiles", 5)), int(payload.get("forward_period", 5)),
+        )
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"因子分析失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("因子分析失败，请稍后重试")}, status_code=500)
+
+
 # ===========================================================================
 # AI 投资助手（SSE 流式 + 同步）
 # ===========================================================================

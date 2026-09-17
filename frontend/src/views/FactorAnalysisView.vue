@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { factorApi } from '@/api'
 import type { FactorAnalysisRequest, FactorAnalysisResult, FactorType } from '@/api/types'
-import { VChart } from '@/composables/useECharts'
 import { t } from '@/locales'
+import FactorAnalysisPanel from '@/components/FactorAnalysisPanel.vue'
 
 const loading = ref(false)
 const result = ref<FactorAnalysisResult | null>(null)
@@ -44,62 +44,6 @@ async function runAnalysis() {
   }
 }
 
-// IC 时序图
-const icOption = computed(() => {
-  if (!result.value || !result.value.ic_series.length) return {}
-  const dates = result.value.ic_series.map((d) => d.date)
-  return {
-    tooltip: { trigger: 'axis' },
-    legend: { top: 0, data: ['IC', 'Rank IC'] },
-    grid: { left: 50, right: 30, top: 40, bottom: 60 },
-    xAxis: { type: 'category', data: dates },
-    yAxis: { type: 'value', name: 'IC' },
-    dataZoom: [{ type: 'inside' }, { type: 'slider' }],
-    series: [
-      { name: 'IC', type: 'bar', data: result.value.ic_series.map((d) => d.ic) },
-      { name: 'Rank IC', type: 'line', showSymbol: false, data: result.value.ic_series.map((d) => d.rank_ic) },
-    ],
-  }
-})
-
-// 分层累计收益曲线
-const quantOption = computed(() => {
-  const r = result.value
-  if (!r || !r.quantile_cumreturns.length) return {}
-  const dates = r.quantile_cumreturns.map((d) => d.date)
-  const labels = r.quantile_labels
-  const series = labels.map((label, i) => ({
-    name: label,
-    type: 'line',
-    showSymbol: false,
-    data: r.quantile_cumreturns.map((d) => d.values[i]),
-  }))
-  return {
-    tooltip: { trigger: 'axis' },
-    legend: { top: 0 },
-    grid: { left: 50, right: 30, top: 40, bottom: 60 },
-    xAxis: { type: 'category', data: dates },
-    yAxis: { type: 'value', name: t('factor.chart.cumNavAxis') },
-    dataZoom: [{ type: 'inside' }, { type: 'slider' }],
-    series,
-  }
-})
-
-// IC 概览卡片（标签随语言切换重算）
-const icCards = computed(() => {
-  if (!result.value) return []
-  const s = result.value.ic_stats
-  const fmt = (v: number | null | undefined, nd = 4) =>
-    v === null || v === undefined ? '—' : v.toFixed(nd)
-  return [
-    { label: t('factor.cards.icMean'), value: fmt(s.ic_mean) },
-    { label: t('factor.cards.rankIcMean'), value: fmt(s.rank_ic_mean) },
-    { label: t('factor.cards.icir'), value: fmt(s.ic_ir) },
-    { label: t('factor.cards.rankIcir'), value: fmt(s.rank_ic_ir) },
-    { label: t('factor.cards.icWinRate'), value: fmt(s.ic_win_rate) },
-    { label: t('factor.cards.icPositiveRate'), value: fmt(s.ic_positive_rate) },
-  ]
-})
 </script>
 
 <template>
@@ -152,51 +96,7 @@ const icCards = computed(() => {
       </el-form>
     </el-card>
 
-    <template v-if="result">
-      <div class="section-title"><el-icon><DataLine /></el-icon> {{ t('factor.section.icOverview') }}</div>
-      <el-row :gutter="12" class="metrics-row">
-        <el-col v-for="c in icCards" :key="c.label" :xs="8" :sm="4">
-          <div class="metric-card">
-            <div class="metric-label">{{ c.label }}</div>
-            <div class="metric-value">{{ c.value }}</div>
-          </div>
-        </el-col>
-      </el-row>
-      <div class="meta">
-        {{ t('factor.meta.universe', { n: result.universe_size }) }} ·
-        {{ t('factor.meta.monotonicity') }}
-        <el-tag :type="result.monotonicity.monotonic ? 'success' : 'info'" size="small">
-          {{ result.monotonicity.monotonic ? t('factor.meta.monotonic') : t('factor.meta.notMonotonic') }}
-        </el-tag>
-        {{ t('factor.meta.ratio', { ratio: result.monotonicity.monotonicity_ratio ?? '—' }) }}
-      </div>
-
-      <div class="section-title"><el-icon><TrendCharts /></el-icon> {{ t('factor.section.icSeries') }}</div>
-      <el-card shadow="never" class="chart-card">
-        <v-chart class="chart" :option="icOption" autoresize />
-      </el-card>
-
-      <div class="section-title"><el-icon><DataLine /></el-icon> {{ t('factor.section.quantileCumReturns') }}</div>
-      <el-card shadow="never" class="chart-card">
-        <v-chart class="chart" :option="quantOption" autoresize />
-      </el-card>
-
-      <div class="section-title"><el-icon><DataAnalysis /></el-icon> {{ t('factor.section.quantileStats') }}</div>
-      <el-card shadow="never">
-        <el-table :data="result.quantile_stats" stripe style="width: 100%">
-          <el-table-column prop="quantile" :label="t('factor.table.quantile')" />
-          <el-table-column :label="t('factor.table.meanReturn')">
-            <template #default="{ row }">{{ row.mean_return == null ? '—' : (row.mean_return * 100).toFixed(4) + '%' }}</template>
-          </el-table-column>
-          <el-table-column :label="t('factor.table.sharpe')">
-            <template #default="{ row }">{{ row.sharpe_ratio == null ? '—' : row.sharpe_ratio.toFixed(4) }}</template>
-          </el-table-column>
-          <el-table-column :label="t('factor.table.winRate')">
-            <template #default="{ row }">{{ row.win_rate == null ? '—' : (row.win_rate * 100).toFixed(2) + '%' }}</template>
-          </el-table-column>
-        </el-table>
-      </el-card>
-    </template>
+    <FactorAnalysisPanel v-if="result" :result="result" />
     <el-empty v-else-if="!loading" :description="t('factor.empty')" />
   </div>
 </template>
@@ -206,8 +106,7 @@ const icCards = computed(() => {
   max-width: 1200px;
   margin: 0 auto;
 }
-.form-card,
-.chart-card {
+.form-card {
   border-radius: var(--radius);
   margin-bottom: 1.25rem;
 }
@@ -215,35 +114,5 @@ const icCards = computed(() => {
   color: var(--text-muted);
   margin-left: 12px;
   font-size: 0.85rem;
-}
-.chart {
-  height: 380px;
-  width: 100%;
-}
-.metrics-row {
-  margin-bottom: 0.5rem;
-}
-.metric-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 8px;
-  text-align: center;
-  margin-bottom: 12px;
-  border-top: 3px solid var(--brand-start);
-}
-.metric-label {
-  color: var(--text-muted);
-  font-size: 0.82rem;
-  margin-bottom: 4px;
-}
-.metric-value {
-  font-size: 1.2rem;
-  font-weight: 700;
-}
-.meta {
-  color: var(--text-muted);
-  margin-bottom: 1.25rem;
-  font-size: 0.9rem;
 }
 </style>

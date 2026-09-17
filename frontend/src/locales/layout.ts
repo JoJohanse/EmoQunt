@@ -18,6 +18,7 @@ export const zh: Messages = {
     factor: '因子分析',
     strategyLibrary: '策略库',
     runHistory: '运行历史',
+    factorLibrary: '因子库',
   },
   group: {
     research: '回测研究',
@@ -54,6 +55,7 @@ export const en: Messages = {
     factor: 'Factor Analysis',
     strategyLibrary: 'Strategy Library',
     runHistory: 'Run History',
+    factorLibrary: 'Factor Library',
   },
   group: {
     research: 'Backtesting',

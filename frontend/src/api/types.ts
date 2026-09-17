@@ -472,3 +472,31 @@ export interface TuningTask {
   updated_at: string
   combos?: TuningCombo[]
 }
+
+/** 因子库条目（列表项，不含源码全文） */
+export interface FactorSummary {
+  id: number
+  name: string
+  market: Market
+  description: string
+  tags: string
+  created_at: string
+  updated_at: string
+}
+
+/** 因子详情（含源码全文；契约 compute(df)->Series，zh_a 限定） */
+export interface FactorDetail extends FactorSummary {
+  source: string
+}
+
+/** 因子版本快照（不含源码全文） */
+export interface FactorVersion {
+  id: number
+  factor_id: number
+  name: string
+  market: Market
+  description: string
+  tags: string
+  note: string
+  created_at: string
+}

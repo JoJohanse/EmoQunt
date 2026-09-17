@@ -92,11 +92,15 @@ def _fetch_one(code: str, start_date: str, end_date: str) -> pd.DataFrame:
 
 def _build_panels(
     codes: List[str], start_date: str, end_date: str, factor_type: str, forward_period: int,
+    compute_fn=None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, int]:
     """构建因子面板 + 前瞻收益面板。
 
+    :param compute_fn: 可选自定义计算函数 ``fn(df) -> Series``（因子库用户因子，
+                       v2 D5）；缺省用内置 _compute_factor(factor_type)
     :return: (factor_panel, forward_returns_panel, fetched_count)
     """
+    fn = compute_fn or (lambda df: _compute_factor(df, factor_type))
     factor_series_dict: Dict[str, pd.Series] = {}
     fwd_ret_dict: Dict[str, pd.Series] = {}
     fetched = 0
@@ -107,8 +111,8 @@ def _build_panels(
         if df.empty:
             return
         fetched += 1
-        f = _compute_factor(df, factor_type)
-        if f.empty:
+        f = fn(df)
+        if f is None or f.empty:
             return
         factor_series_dict[code] = f
         # 前瞻收益：未来 N 日收益（shift(-N)），对齐到因子日期
@@ -148,11 +152,10 @@ def analyze_factor(
     n_quantiles: int = 5,
     forward_period: int = 5,
 ) -> Dict:
-    """因子分析主入口。
+    """因子分析主入口（内置因子）。
 
     :return: JSON 可序列化的 dict（IC 统计/IC 时序/分层/单调性），或 {"error": ...}
     """
-    from src.analysis import FactorAnalyzer
     from src.data.data_manager import get_hs300_stocks
 
     if factor_type not in FACTOR_TYPES:
@@ -176,6 +179,53 @@ def analyze_factor(
     )
     if factor_panel.empty or fwd_panel.empty:
         return {"error": f"有效数据不足（取到 {fetched} 只），无法构建因子面板"}
+
+    return _analyze_panels(factor_panel, fwd_panel, fetched, factor_type, n_quantiles)
+
+
+def analyze_compute_fn(
+    compute_fn,
+    factor_label: str,
+    start_date: str,
+    end_date: str,
+    n_quantiles: int = 5,
+    forward_period: int = 5,
+) -> Dict:
+    """因子分析入口（因子库用户 Python 因子，v2 D5）。
+
+    与 analyze_factor 共用取数/面板/分析/序列化管线，仅把内置
+    _compute_factor 换成调用方注入的 ``fn(df) -> Series``。
+
+    :param factor_label: 结果里的 factor_type 字段（用户因子名）
+    :return: JSON 可序列化的 dict，或 {"error": ...}
+    """
+    from src.data.data_manager import get_hs300_stocks
+
+    try:
+        codes = get_hs300_stocks()
+    except Exception as e:
+        return {"error": f"获取股票池失败: {e}"}
+    if not codes:
+        return {"error": "股票池为空"}
+
+    sd = start_date.replace("-", "")
+    ed = end_date.replace("-", "")
+
+    factor_panel, fwd_panel, fetched = _build_panels(
+        codes, sd, ed, None, forward_period, compute_fn=compute_fn,
+    )
+    if factor_panel.empty or fwd_panel.empty:
+        return {"error": f"有效数据不足（取到 {fetched} 只），无法构建因子面板"}
+
+    return _analyze_panels(factor_panel, fwd_panel, fetched, factor_label, n_quantiles)
+
+
+def _analyze_panels(
+    factor_panel: pd.DataFrame, fwd_panel: pd.DataFrame, fetched: int,
+    factor_label: str, n_quantiles: int,
+) -> Dict:
+    """跑 FactorAnalyzer 并序列化为 JSON 契约（analyze_factor/analyze_compute_fn 共用唯一出口）。"""
+    from src.analysis import FactorAnalyzer
 
     try:
         analyzer = FactorAnalyzer(factor_panel, fwd_panel)
@@ -245,7 +295,7 @@ def analyze_factor(
         quant_cum_meta = []
 
     return {
-        "factor_type": factor_type,
+        "factor_type": factor_label,
         "ic_stats": ic_stats_out,
         "ic_series": ic_series_out,
         "quantile_stats": quant_rows,

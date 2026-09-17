@@ -575,8 +575,9 @@ def get_hs300_stocks():
             logger.info(f"发现本地缓存文件: {cache_file}")
             hs300_df = pd.read_csv(cache_file, encoding='utf-8')
             
-            # 处理股票代码格式
-            stock_list = hs300_df['股票代码'].tolist()
+            # 处理股票代码格式（CSV 数值列会把 002600 读成 2600，必须补齐前导零，
+            # 否则 Stock 解析出非法代码、三个数据源全挂）
+            stock_list = hs300_df['股票代码'].astype(str).str.zfill(6).tolist()
             
             logger.info(f"从缓存文件加载沪深300成分股，共{len(stock_list)}只股票")
             return stock_list
@@ -585,8 +586,8 @@ def get_hs300_stocks():
             logger.info("本地缓存文件不存在，正在从akshare获取沪深300成分股列表")
             hs300_df = ak.index_stock_info(index_code="000300")
             
-            # 处理股票代码格式
-            stock_list = hs300_df['成分券代码'].tolist()
+            # 处理股票代码格式（同上：补齐前导零）
+            stock_list = hs300_df['成分券代码'].astype(str).str.zfill(6).tolist()
             
             # 保存到缓存文件
             hs300_df.to_csv(cache_file, encoding='utf-8', index=False)

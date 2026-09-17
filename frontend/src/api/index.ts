@@ -21,6 +21,9 @@ import type {
   SentimentCalendarItem,
   SentimentData,
   StrategyDetail,
+  FactorDetail,
+  FactorSummary,
+  FactorVersion,
   StrategyVersion,
   TuningTask,
 } from './types'
@@ -203,6 +206,40 @@ export const runsApi = {
   },
   detail(id: number): Promise<BacktestRunDetail> {
     return http.get(`/v2/backtest/runs/${id}`).then((r) => r.data)
+  },
+}
+
+/** 因子库 API（Python 因子 CRUD + 横截面分析；zh_a 限定） */
+export const factorLibApi = {
+  list(params: { market?: string; q?: string } = {}): Promise<{ factors: FactorSummary[] }> {
+    return http.get('/v2/factors', { params }).then((r) => r.data)
+  },
+  detail(id: number): Promise<FactorDetail> {
+    return http.get(`/v2/factors/${id}`).then((r) => r.data)
+  },
+  create(payload: { name: string; description?: string; market?: string; source: string; tags?: string }): Promise<{ id: number; name: string }> {
+    return http.post('/v2/factors', payload).then((r) => r.data)
+  },
+  update(id: number, payload: { source?: string; description?: string; tags?: string; note?: string }): Promise<{ id: number; updated: boolean }> {
+    return http.put(`/v2/factors/${id}`, payload).then((r) => r.data)
+  },
+  remove(id: number): Promise<{ id: number; deleted: boolean }> {
+    return http.delete(`/v2/factors/${id}`).then((r) => r.data)
+  },
+  validate(source: string): Promise<{ ok: boolean; errors: string[] }> {
+    return http.post('/v2/factors/validate', { source }).then((r) => r.data)
+  },
+  versions(id: number): Promise<{ versions: FactorVersion[] }> {
+    return http.get(`/v2/factors/${id}/versions`).then((r) => r.data)
+  },
+  versionSource(versionId: number): Promise<FactorVersion & { source: string }> {
+    return http.get(`/v2/factors/versions/${versionId}`).then((r) => r.data)
+  },
+  restoreVersion(id: number, versionId: number): Promise<{ id: number; restored_from: number }> {
+    return http.post(`/v2/factors/${id}/versions/${versionId}/restore`).then((r) => r.data)
+  },
+  analyze(id: number, payload: { start_date: string; end_date: string; n_quantiles?: number; forward_period?: number }): Promise<FactorAnalysisResult> {
+    return http.post(`/v2/factors/${id}/analyze`, payload).then((r) => r.data)
   },
 }
 
