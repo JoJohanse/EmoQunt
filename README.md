@@ -1,294 +1,295 @@
 <div align="center">
 
-# 📈 EmoQunt 量化系统
+# 📈 EmoQunt
 
-**情感驱动的 A 股 / 美股量化回测平台**
+**Sentiment-driven A-share / US-stock quantitative backtesting platform**
 
-[English](README_EN.md) | 中文
+[中文](README_ZH.md) | English
 
-融合行业情绪因子与真实交易成本，提供从策略构建、回测、因子分析到绩效与风险管理的一站式 Web 体验；
-配备 **Vue3 现代化 SPA**（`/spa/*`）与 Jinja2 经典版（`/`）双前端。
+A one-stop web experience for strategy building, backtesting, factor analysis and performance/risk
+management — with industry sentiment factors and realistic trading costs. Ships with a modern
+**Vue3 SPA** (`/spa/*`) and a classic Jinja2 frontend (`/`).
 
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-后端-009688?logo=fastapi&logoColor=white)
-![backtrader](https://img.shields.io/badge/backtrader-回测引擎-8A2BE2)
+![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688?logo=fastapi&logoColor=white)
+![backtrader](https://img.shields.io/badge/backtrader-engine-8A2BE2)
 ![Vue](https://img.shields.io/badge/Vue%203-4FC08D?logo=vuedotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
-![ECharts](https://img.shields.io/badge/ECharts-图表-AA344D)
+![ECharts](https://img.shields.io/badge/ECharts-charts-AA344D)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
 </div>
 
 ---
 
-## 🖼 页面预览
+## 🖼 Screenshots
 
-> 截图由 `conda run -n qdt python docs/screenshots/_capture.py` 在本机源码服务上自动采集，为 2026-09 双语版界面；加 `--lang en` 可采集英文界面（输出 `*-en.png`，供 [README_EN](README_EN.md) 引用）。
+> Captured automatically via `conda run -n qdt python docs/screenshots/_capture.py --lang en` against the local source stack (the `--lang en` flag switches the UI to English and emits the `*-en.png` shots below; run it without the flag to regenerate the Chinese shots for [README_ZH](README_ZH.md)). The AI tool-card shot is kept from the Chinese UI — it requires a configured LLM key and its content is data-bound.
 
 <table>
   <tr>
     <td colspan="2" align="center">
-      <img src="docs/screenshots/spa-home-light.png" alt="SPA 首页看板" width="100%"/><br/>
-      <b>SPA 首页看板</b> — 10 张可拖拽卡片：快捷入口 · 指数速览（sparkline）· 市场宽度 · 行情看板 · 行业热力图 · 热门板块 · 快讯来源分组 · 个股推荐 · 自选分布环图 · 数据源心跳 + 情绪日历
+      <img src="docs/screenshots/spa-home-light-en.png" alt="SPA home dashboard" width="100%"/><br/>
+      <b>SPA home dashboard</b> — 10 draggable cards: quick entries · index strip (sparklines) · market breadth · K-line board · sector heatmap · top sectors · news source filter · recommendations · allocation donut · data-source heartbeats + sentiment calendar
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/spa-kline.png" alt="K 线看板" width="100%"/><br/>
-      <b>K 线看板</b> — 蜡烛 + MA/BOLL 叠加 + MACD/KDJ/RSI 副图 + 最新价虚线 + 月边界刻度，日/周/月与复权切换
+      <img src="docs/screenshots/spa-kline-en.png" alt="K-line board" width="100%"/><br/>
+      <b>K-line board</b> — candles + MA/BOLL overlays + MACD/KDJ/RSI sub-panels + last-price line + month-boundary ticks, day/week/month &amp; adjust switching
     </td>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/spa-backtest-trades.png" alt="回测买卖点标注" width="100%"/><br/>
-      <b>回测 K 线 · 买卖点标注</b> — 后端 <code>trades</code> 透传，B/S 箭头 + 加权成本均价线，区间与回测日期精确对齐
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <img src="docs/screenshots/spa-home-tour.png" alt="首访导览" width="100%"/><br/>
-      <b>首访导览</b> — driver.js 七步引导，看过不再弹、可随时重放
-    </td>
-    <td width="50%" valign="top">
-      <img src="docs/screenshots/spa-chat-tool-card.png" alt="AI 工具卡片" width="100%"/><br/>
-      <b>AI 工具结果卡片</b> — Generative UI：行情摘要卡片 + 一键"在首页查看主图"
+      <img src="docs/screenshots/spa-backtest-trades-en.png" alt="Backtest trade markers" width="100%"/><br/>
+      <b>Backtest K-line trade markers</b> — backend <code>trades</code> passthrough, B/S arrows + weighted average-cost line, aligned with the backtest date range
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/spa-home-dark.png" alt="暗色模式" width="100%"/><br/>
-      <b>暗色模式</b> — 主题切换后刷新仍保持
+      <img src="docs/screenshots/spa-home-tour-en.png" alt="First-visit tour" width="100%"/><br/>
+      <b>First-visit tour</b> — driver.js, 7 steps; shown once, replayable
     </td>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/spa-backtest.png" alt="回测结果" width="100%"/><br/>
-      <b>回测结果页</b> — 绩效指标 + 动态收益/回撤/日收益图表 + 风险分析
+      <img src="docs/screenshots/spa-chat-tool-card.png" alt="AI tool card" width="100%"/><br/>
+      <b>AI tool-result card</b> — Generative UI: quote card with one-click "open on homepage"
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/spa-kline-week.png" alt="周线" width="100%"/><br/>
-      <b>K 线周线</b> — 服务端聚合，三窗格联动缩放
+      <img src="docs/screenshots/spa-home-dark-en.png" alt="Dark mode" width="100%"/><br/>
+      <b>Dark mode</b> — persists across reloads
     </td>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/spa-strategies.png" alt="策略列表" width="100%"/><br/>
-      <b>策略列表</b>
+      <img src="docs/screenshots/spa-backtest-en.png" alt="Backtest result" width="100%"/><br/>
+      <b>Backtest result</b> — metric cards + dynamic equity/drawdown/return charts + risk panel
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/spa-kline-week-en.png" alt="Weekly K-line" width="100%"/><br/>
+      <b>Weekly K-line</b> — server-side aggregation, three linked panes
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/spa-strategies-en.png" alt="Strategy list" width="100%"/><br/>
+      <b>Strategy list</b>
     </td>
   </tr>
   <tr>
     <td colspan="2" align="center">
-      <img src="docs/screenshots/web-sentiment.png" alt="舆情分析" width="100%"/><br/>
-      <b>经典版舆情分析</b>（Jinja2，<code>/sentiment</code>）
+      <img src="docs/screenshots/web-sentiment-en.png" alt="Sentiment analysis" width="100%"/><br/>
+      <b>Classic sentiment analysis</b> (Jinja2, <code>/sentiment</code>)
     </td>
   </tr>
 </table>
 
 ---
 
-## ✨ 功能特点
+## ✨ Features
 
-### 🧮 回测引擎
-- **双市场成本模型**：A股 `AShareCommInfo`（佣金双边含最低 5 元、印花税**仅卖出** 0.05%、过户费双边 0.001%）与美股 `USStockCommInfo`（对称佣金），按 `market` 参数自动路由；滑点始终启用（费率可配）
-- **基准与风险调整收益**：A股自动对比沪深300、美股对比标普500，计算 Alpha / Beta / 信息比率并绘制对比曲线
-- **情绪过滤策略**：均线交叉信号可由历史情绪快照过滤（"截至当日最近快照"，避免未来函数）
-- **交易级胜率与买卖点**：胜率按已平仓交易计算；逐笔成交透传前端，回测 K 线标注 B/S 买卖点与成本均价线
-- **绩效与风险分析**：总/年化收益率、夏普、最大回撤、卡玛比率、VaR/CVaR、下行标准差、压力测试场景
+### 🧮 Backtesting engine
+- **Dual-market cost models**: A-share `AShareCommInfo` (two-sided commission with 5 RMB minimum, sell-side-only 0.05% stamp duty, 0.001% transfer fee) vs US `USStockCommInfo` (symmetric commission); slippage always on (rate configurable)
+- **Benchmark & risk-adjusted returns**: CSI 300 (A-share) / S&P 500 (US) benchmarks with Alpha / Beta / Information Ratio and overlay curves
+- **Sentiment-filtered strategies**: crossover signals filtered by historical sentiment snapshots ("latest snapshot on or before the day" — look-ahead safe)
+- **Trade-level win rate & trade markers**: per-fill `trades` passed to the SPA, rendered as B/S arrows plus an average-cost line on the backtest K-line
+- **Performance & risk analytics**: total/annualized return, Sharpe, max drawdown, Calmar, VaR/CVaR, downside deviation, stress-test scenarios
 
-### 🗄 数据层（多源容错）
-- **A股回退链**：Tushare Pro（可选，需 `TUSHARE_TOKEN`）→ akshare 新浪源 → 东财源 → baostock，由统一 FetchRunner 驱动，任一环节失败自动降级
-- **美股两级回退**：yfinance（主）→ akshare 新浪源
-- **数据源健康心跳**：每个取数层的成败被记录（进程内、每源近 7 次），`GET /api/data/source-health` 暴露并在首页渲染为心跳条——"为何某股无数据"一目了然
-- **可选 PostgreSQL + Redis 缓存**（`docker-compose.yml` 一键启动）：读序 Redis → PG → CSV → 网络，不可用时静默降级为纯网络模式
-- 行情结果缓存至本地 `stock_data/`；情绪快照位于 `nes_data/sentiment_results/{YYYYMMDD}.json`，供情绪日历与回测情绪过滤使用
+### 🗄 Data layer (multi-source failover)
+- **A-share fallback chain**: Tushare Pro (optional, needs `TUSHARE_TOKEN`) → akshare Sina → Eastmoney → baostock, driven by a unified FetchRunner with automatic degradation
+- **US two-tier fallback**: yfinance (primary) → akshare Sina
+- **Data-source health beats**: every fetch layer records success/failure (in-process, last 7 per source) exposed at `GET /api/data/source-health` and rendered as a homepage heartbeat bar
+- **Optional PostgreSQL + Redis cache** (one-command `docker-compose.yml`): read order Redis → PG → CSV → network; silently degrades to pure network mode
+- Market data cached under `stock_data/`; sentiment snapshots at `nes_data/sentiment_results/{YYYYMMDD}.json` feed the homepage calendar and the backtest sentiment filter
 
-### 🖥 Vue3 SPA（`/spa/*`）
-- **导航**：可折叠分组侧边栏 + 面包屑 + 暗色模式 + 全局命令面板 `Cmd+K` + 顶部标签页 + 侧边栏收藏 + 首访导览（driver.js 七步，可重放）
-- **首页看板**：功能快捷入口、指数速览（行内 sparkline，点击切主图）、自选股面板（增删、行内 sparkline、价格滚动与涨跌闪烁、点击切主图）、最近回测（一键重跑参数回填）、热门板块、当日舆情（来源分组过滤）、个股推荐（点击下钻主图）、自选分布环图（市场/涨跌/行业三维）、数据源心跳条、情绪日历；**可拖拽网格布局**持久化，行情 SWR 式轮询刷新
-- **动态 ECharts**：回测收益/回撤/日收益曲线；K 线蜡烛图 + 成交量 + 指标叠加 + 吸顶数值面板
-- **SPA 独有页面**：策略对比（多策略净值叠加 + 指标表）、因子分析（IC / 分层 / 单调性）
-- **浏览器本地持久化**：UI 偏好、自选股、回测历史与表单、AI 对话、收藏/标签页/布局/K 线偏好——刷新全部保持
-- **AI 投资助手**：全局抽屉对话，LangGraph ReAct agent，SSE 流式 + Markdown；**工具结果卡片化**（行情/舆情/推荐/回测/信号六类卡片，一键跳转主图）
+### 🖥 Vue3 SPA (`/spa/*`)
+- **Navigation**: collapsible grouped sidebar + breadcrumbs + dark mode + global command palette `Cmd+K` + top tab bar + sidebar favorites + first-visit tour (driver.js, replayable)
+- **Home dashboard**: quick entries, index strip (inline sparklines; click to open the chart), watchlist panel (add/remove, inline sparklines, animated price & change flash; click to switch chart), recent backtests (one-click re-run with parameter refill), top sectors, news with source filter tabs, recommendations (click to drill into the chart), allocation donut (market / daily change / industry), data-source heartbeat bar, sentiment calendar; **draggable grid layout** persisted; SWR-style polling for quotes
+- **Dynamic ECharts**: equity/drawdown/daily-return curves; candlestick K-line + volume + indicator overlays + pinned tooltip panel
+- **SPA-exclusive pages**: strategy comparison (overlaid equity + metrics table), factor analysis (IC / quantile returns / monotonicity)
+- **Browser-local persistence**: UI prefs, watchlist, backtest history & form, AI chat, favorites/tabs/layout/K-line preferences — all survive a refresh
+- **AI investment assistant**: global drawer chat, LangGraph ReAct agent, SSE streaming + Markdown; **tool-result cards** (quote/sentiment/recommendation/backtest/signal, one click opens the chart)
 
-### 🧾 Jinja2 经典版（`/`）
-- `base.html` + `app.css` 设计令牌，Bootstrap 5.3 + Font Awesome 6；8 个页面；回测表单记忆上次输入
+### 🧾 Classic Jinja2 frontend (`/`)
+- `base.html` + `app.css` design tokens, Bootstrap 5.3 + Font Awesome 6; 8 pages; the backtest form remembers your last input
 
-### 🌍 双语界面（中文/English）
-- **两套前端全量双语**：SPA 顶栏与 Jinja2 导航栏各有一键语言切换（中文 ⇄ English），SPA 存 localStorage、经典版存 `emoqunt_lang` cookie，SPA 切换时同步写 cookie，两套前端语言偏好互通
-- **零依赖 i18n**：SPA 为手写引擎（`frontend/src/locales/`，按视图分模块的 zh/en 词表 + 响应式 `t()`）；后端为 `src/utils/i18n.py`（ContextVar 请求语言 + `src/utils/i18n_data/` 词表），Jinja2 模板经全局 `t()` 渲染
-- **后端消息同步翻译**：表单校验错误、策略 CRUD 错误、推荐理由、Agent 工具提示、matplotlib 图表标签均按请求语言返回；AI 助手在英文模式下使用英文系统提示词回复
-- **边界说明**：行情/板块/新闻标题等**数据本身**（来自 akshare 等中文数据源）与策略描述保持原语言；回测指标 JSON 键名（`总收益率` 等）是 API 契约，仅展示层翻译
+### 🌍 Bilingual UI (Chinese/English)
+- **Both frontends fully bilingual**: one-click language toggle in the SPA header and the Jinja2 navbar (中文 ⇄ English); the SPA persists to localStorage, the classic frontend to the `emoqunt_lang` cookie, and the SPA mirrors its choice into the cookie so the two frontends share one preference
+- **Zero-dependency i18n**: the SPA uses a hand-rolled engine (`frontend/src/locales/`, per-view zh/en catalogs + a reactive `t()`); the backend uses `src/utils/i18n.py` (per-request ContextVar + `src/utils/i18n_data/` catalogs), consumed by Jinja2 templates through a global `t()`
+- **Backend messages translate too**: form validation errors, strategy CRUD errors, recommendation reasons, agent tool notes, and matplotlib chart labels all follow the request language; the AI assistant replies in English under the English locale via a localized system prompt
+- **Boundary**: data itself (quotes / sectors / news titles from Chinese sources such as akshare) and strategy descriptions keep their original language; backtest metric JSON keys (`总收益率` etc.) are the API contract and are translated only at display time
 
 ---
 
-## 🚀 快速开始
+## 🚀 Quick Start
 
-### 1. 环境要求
-- Python 3.11+（推荐 conda 环境）+ Node.js 18+（仅 SPA 构建需要）
-- 网络访问（akshare 行情、TrendRadar 舆情、LLM API）
+### 1. Requirements
+- Python 3.11+ (conda recommended) + Node.js 18+ (only for building the SPA)
+- Network access (akshare quotes, TrendRadar news, LLM API)
 
-### 2. 安装依赖
+### 2. Install
 ```bash
 pip install -r requirements.txt
-cd frontend && npm install && npm run build   # 构建 SPA（未构建时 /spa/* 返回 503）
+cd frontend && npm install && npm run build   # build the SPA (/spa/* returns 503 without it)
 ```
 
-### 3. 配置
+### 3. Configure
 ```bash
-cp .env.example .env    # 填入 LLM API_KEY / LLM_MODEL / LLM_BASE_URL（AI 助手与情绪分析需要）
-                        # 可选 TUSHARE_TOKEN 启用 Tushare 首选数据源
+cp .env.example .env    # fill in LLM API_KEY / LLM_MODEL / LLM_BASE_URL (AI assistant & sentiment)
+                        # optional TUSHARE_TOKEN enables the primary Tushare data tier
 ```
-回测/风险参数在 `config/config.yaml`（环境变量 `QDT_` 前缀可覆盖）。
+Backtest/risk parameters live in `config/config.yaml` (overridable via `QDT_`-prefixed env vars).
 
-### 4. 启动
+### 4. Run
 ```bash
 python web_app.py            # http://127.0.0.1:8000
 ```
-- 经典版前端：http://localhost:8000/
-- **Vue3 SPA**：http://localhost:8000/spa/
-- SPA 开发模式：`cd frontend && npm run dev` → http://localhost:5173/spa/（`/api` 自动代理）
+- Classic frontend: http://localhost:8000/
+- **Vue3 SPA**: http://localhost:8000/spa/
+- SPA dev mode: `cd frontend && npm run dev` → http://localhost:5173/spa/ (`/api` proxied)
 
-### 5. 可选：启用数据库缓存层
+### 5. Optional: database cache layer
 ```bash
-docker compose up -d         # PostgreSQL 16 + Redis 7（国内源 docker.m.daocloud.io）
+docker compose up -d         # PostgreSQL 16 + Redis 7 (via domestic mirror docker.m.daocloud.io)
 ```
 
-### 6. 运行测试
+### 6. Tests
 ```bash
-pytest test/test_backtest.py -v    # 测试文件需显式指定（test/ 下另有手动脚本）
+pytest test/test_backtest.py -v    # pick test files explicitly (test/ also contains manual scripts)
 ```
 
 ---
 
-## 🧭 使用指南
+## 🧭 Usage
 
-### Vue3 SPA 路由
+### Vue3 SPA routes
 
-| 路由 | 功能 |
-|------|------|
-| `/spa/` | 首页看板：快捷入口、指数速览、自选股、K 线主图、最近回测、板块/舆情/推荐、自选分布、数据源心跳 |
-| `/spa/backtest` | 策略回测（表单记忆 + 动态图表 + 买卖点标注 + 风险分析；支持 `?historyId=` 回填） |
-| `/spa/strategies` | 策略列表（查看/删除） |
-| `/spa/sentiment` | 舆情分析（新闻 + 板块得分） |
-| `/spa/daily-recommend` | 每日推荐 |
-| `/spa/strategy-compare` | 多策略对比（2~5 个策略净值叠加 + 指标表） |
-| `/spa/factor-analysis` | 因子分析（IC / 分层回测 / 单调性） |
+| Route | Purpose |
+|-------|---------|
+| `/spa/` | Home dashboard: quick entries, index strip, watchlist, K-line board, recent backtests, sectors/news/recommendations, allocation donut, source heartbeats |
+| `/spa/backtest` | Backtest (form memory + dynamic charts + trade markers + risk analysis; supports `?historyId=` refill) |
+| `/spa/strategies` | Strategy list (view/delete) |
+| `/spa/sentiment` | Sentiment analysis (news + sector scores) |
+| `/spa/daily-recommend` | Daily recommendations |
+| `/spa/strategy-compare` | Strategy comparison (2–5 equity curves + metrics table) |
+| `/spa/factor-analysis` | Factor analysis (IC / quantile backtests / monotonicity) |
 
-### 经典版（Jinja2）路由
+### Classic (Jinja2) routes
 
-| 路由 | 功能 |
-|------|------|
-| `/` | 首页，功能入口与系统特性 |
-| `/backtest` · `/run_backtest` | 回测表单与结果（绩效指标卡 + 收益/回撤/仪表板图表） |
-| `/strategies` | 策略列表，创建/编辑/删除自定义策略 |
-| `/sentiment` · `/analyze_sentiment` | 舆情分析与个股情绪结果 |
-| `/daily_recommend` | 每日推荐（Top3 板块 + 排名股票表） |
+| Route | Purpose |
+|-------|---------|
+| `/` | Home — feature entries and system highlights |
+| `/backtest` · `/run_backtest` | Backtest form and result (metric cards + equity/drawdown/dashboard charts) |
+| `/strategies` | Strategy list — create/edit/delete custom strategies |
+| `/sentiment` · `/analyze_sentiment` | Sentiment analysis and per-stock sentiment result |
+| `/daily_recommend` | Daily recommendations (Top-3 sectors + ranked stock table) |
 
-### API 接口
+### API
 
 <details>
-<summary><b>展开 API 列表</b>（两个前端共用同一组 <code>/api/*</code>；数据类接口经线程池执行，不阻塞其它请求）</summary>
+<summary><b>Expand API list</b> (both frontends share the same <code>/api/*</code> endpoints; data-heavy handlers run in a threadpool)</summary>
 
-| 接口 | 方法 | 说明 |
-|------|------|------|
-| `/api/health` | GET | 健康检查（含 PG/Redis 缓存层连通性） |
-| `/api/strategies` / `list` / `detail/{name}` / `templates` | GET | 策略查询 |
-| `/api/strategies/create_new` / `create_from_template` | POST | 创建策略 |
-| `/api/strategies/{name}` | PUT / DELETE | 更新 / 删除策略 |
-| `/api/backtest/run` | POST | 运行回测，返回 JSON 时序（含逐笔 `trades`，供 ECharts） |
-| `/api/strategies/compare` | POST | 多策略对比 |
-| `/api/factor/analyze` | POST | 因子 IC / 分层分析 |
-| `/api/kline` | GET | K 线 OHLCV（`days` 最近区间或 `start_date/end_date` 区间模式） |
-| `/api/sentiment` / `sentiment/data` | GET | 舆情数据 |
-| `/api/sentiment/calendar` | GET | 情绪日历 |
-| `/api/daily-recommend`（`/refresh`） | GET | 每日推荐 |
-| `/api/market/breadth` / `sectors` | GET | 市场宽度 / 行业板块行情 |
-| `/api/data/source-health` | GET | 数据源健康心跳（每源近 7 次成败） |
-| `/api/agent/chat` | POST | AI 助手（SSE 流式） |
-| `/api/agent/chat/sync` | POST | AI 助手（非流式） |
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/health` | GET | Health check (includes PG/Redis cache connectivity) |
+| `/api/strategies` / `list` / `detail/{name}` / `templates` | GET | Strategy queries |
+| `/api/strategies/create_new` / `create_from_template` | POST | Create strategies |
+| `/api/strategies/{name}` | PUT / DELETE | Update / delete a strategy |
+| `/api/backtest/run` | POST | Run a backtest, returns JSON time series (incl. per-fill `trades`) |
+| `/api/strategies/compare` | POST | Compare multiple strategies |
+| `/api/factor/analyze` | POST | Factor IC / quantile analysis |
+| `/api/kline` | GET | K-line OHLCV (`days` for recent window, or `start_date/end_date` range mode) |
+| `/api/sentiment` / `sentiment/data` | GET | Sentiment data |
+| `/api/sentiment/calendar` | GET | Sentiment calendar |
+| `/api/daily-recommend` (`/refresh`) | GET | Daily recommendations |
+| `/api/market/breadth` / `sectors` | GET | Market breadth / sector board |
+| `/api/data/source-health` | GET | Data-source health beats (last 7 attempts per source) |
+| `/api/agent/chat` | POST | AI assistant (SSE streaming) |
+| `/api/agent/chat/sync` | POST | AI assistant (non-streaming) |
 
 </details>
 
 ---
 
-## 🏗 系统架构
+## 🏗 Architecture
 
 <details>
-<summary><b>展开目录结构</b></summary>
+<summary><b>Expand directory tree</b></summary>
 
 ```
 EmoQunt/
-├── config/                 # 配置文件（config.yaml + 环境变量 QDT_ 前缀覆盖）
+├── config/                 # Configuration (config.yaml + QDT_-prefixed env overrides)
 ├── docs/
-│   ├── research/           # UI 调研与决策记录
-│   └── screenshots/        # README 截图与采集脚本
-├── frontend/               # Vue3 SPA（Vite + TS + Element Plus + ECharts + Pinia）
+│   ├── research/           # UI research & decision records
+│   └── screenshots/        # README screenshots + capture script
+├── frontend/               # Vue3 SPA (Vite + TS + Element Plus + ECharts + Pinia)
 │   └── src/
-│       ├── views/          # 首页/回测/策略列表/舆情/推荐/策略对比/因子分析
-│       ├── stores/         # Pinia 状态（chat/ui/watchlist/backtestHistory/favorites/tabs/homeLayout/klinePrefs + persist 插件）
-│       ├── api/            # axios 封装 + SSE 解析 + 类型定义
-│       ├── chart/ lib/     # 蜡烛图 option 组装器 / 配色 token / 技术指标纯函数
-│       ├── components/     # CommandPalette/AppTabs/SentimentCalendar/ChatPanel/ChatToolCard 等
-│       └── layouts/        # 侧边栏（含收藏）+ 面包屑 + 标签页 + 暗色/命令面板布局
-├── nes_data/               # 舆情数据与情绪快照（sentiment_results/{YYYYMMDD}.json）
+│       ├── views/          # Home/Backtest/Strategies/Sentiment/Recommend/Compare/Factor
+│       ├── stores/         # Pinia stores (chat/ui/watchlist/backtestHistory/favorites/tabs/homeLayout/klinePrefs + persist plugin)
+│       ├── api/            # axios wrapper + SSE parsing + type definitions
+│       ├── chart/ lib/     # Candlestick option assembler / color tokens / indicator pure functions
+│       ├── components/     # CommandPalette/AppTabs/SentimentCalendar/ChatPanel/ChatToolCard, etc.
+│       └── layouts/        # Sidebar (with favorites) + breadcrumbs + tabs + dark/command palette layout
+├── nes_data/               # Sentiment data & snapshots (sentiment_results/{YYYYMMDD}.json)
 ├── src/
-│   ├── agent/              # LangGraph ReAct 投资助手
-│   ├── Strategy/           # 策略基类 + 动态策略工厂 + 情绪过滤 + 用户策略
-│   ├── analysis/           # 因子分析（IC / 分层 / 单调性）
-│   ├── backtest/           # 回测引擎 + 绩效分析器 + 成本模型 + 逐笔成交记录
-│   ├── data/               # 数据管理：FetchRunner 多源回退链 + db.py(PG/Redis 缓存) + SnapshotStore
-│   ├── factor/             # 情绪/技术/市场因子 + 每日推荐
-│   ├── risk/               # 风险管理（仓位/止损/VaR/压力测试）
-│   ├── services/           # 业务编排薄层（路由适配器与领域模块之间）
-│   └── utils/              # 路径/日志/校验/环境变量/序列化/TTL 缓存
-├── test/                   # pytest 测试套件
-├── web/                    # Jinja2 经典版前端（templates + static）
-├── docker-compose.yml      # 可选：PostgreSQL 16 + Redis 7 缓存层
-└── web_app.py              # 主入口（FastAPI，双前端 + 统一 /api）
+│   ├── agent/              # LangGraph ReAct investment assistant
+│   ├── Strategy/           # Strategy base + dynamic factory + sentiment filter + user strategies
+│   ├── analysis/           # Factor analysis (IC / quantiles / monotonicity)
+│   ├── backtest/           # Backtest engine + performance analyzer + cost models + trade recorder
+│   ├── data/               # Data management: FetchRunner fallback chain + db.py (PG/Redis cache) + SnapshotStore
+│   ├── factor/             # Sentiment/technical/market factors + daily recommendations
+│   ├── risk/               # Risk management (sizing / stop-loss / VaR / stress tests)
+│   ├── services/           # Thin service-orchestration layer
+│   └── utils/              # Paths / logger / validators / env / serialization / TTL cache
+├── test/                   # pytest suite
+├── web/                    # Classic Jinja2 frontend (templates + static)
+├── docker-compose.yml      # Optional: PostgreSQL 16 + Redis 7 cache layer
+└── web_app.py              # Entry point (FastAPI, both frontends + unified /api)
 ```
 
 </details>
 
-### 技术栈
+### Tech stack
 
-| 层 | 技术 |
-|----|------|
-| 后端 | FastAPI + Uvicorn + Jinja2（数据类接口线程池化）；可选 `psycopg_pool` 连接池 + 缓存层 |
-| SPA 前端 | Vue 3 + TypeScript + Vite + Element Plus + ECharts + Pinia（自研 localStorage 持久化插件） |
-| 经典版前端 | Bootstrap 5.3 + Font Awesome 6 |
-| 数据 | akshare / Tushare Pro（可选）/ baostock / yfinance；可选 PostgreSQL 16 + Redis 7 |
-| 回测 | backtrader + 自定义双市场成本模型 |
-| 分析与可视化 | pandas, numpy, scipy, scikit-learn；ECharts（SPA）、matplotlib / seaborn / plotly（服务端） |
-| AI | OpenAI 兼容 LLM + LangChain + LangGraph（ReAct agent） |
-| 测试 | pytest（500+ 用例） |
-
----
-
-## 📝 回测引擎要点
-
-### 交易成本
-- **A股**（`AShareCommInfo`）：佣金双边（默认万三，单笔最低 5 元）、印花税**仅卖出** 0.05%、过户费双边 0.001%、滑点 0.05%（始终启用）
-- **美股**（`USStockCommInfo`）：对称佣金，无印花税/过户费
-
-### 基准与风险调整收益
-- 按市场自动获取基准（A股=沪深300，美股=标普500）
-- 计算 Alpha / Beta（协方差法）、信息比率，图表中绘制基准对比曲线
-
-### 情绪过滤
-- 扫描 `nes_data/sentiment_results/*.json` 历史快照（统一由 SnapshotStore 解析），构建"快照日期 × 行业"情绪面板
-- 回测中某日仅使用"截至该日最近的历史快照"，**避免未来函数**
-- 启用情绪过滤时，金叉买入需行业情绪 ≥ −threshold，死叉卖出需 ≤ threshold
+| Layer | Technology |
+|-------|-----------|
+| Backend | FastAPI + Uvicorn + Jinja2 (threadpooled data handlers); optional `psycopg_pool` + cache layer |
+| SPA frontend | Vue 3 + TypeScript + Vite + Element Plus + ECharts + Pinia (zero-dependency localStorage persist plugin) |
+| Classic frontend | Bootstrap 5.3 + Font Awesome 6 |
+| Data | akshare / Tushare Pro (optional) / baostock / yfinance; optional PostgreSQL 16 + Redis 7 |
+| Backtesting | backtrader + custom dual-market cost models |
+| Analysis & viz | pandas, numpy, scipy, scikit-learn; ECharts (SPA), matplotlib / seaborn / plotly (server) |
+| AI | OpenAI-compatible LLM + LangChain + LangGraph (ReAct agent) |
+| Testing | pytest (500+ cases) |
 
 ---
 
-## ⚠️ 注意事项
+## 📝 Backtesting engine highlights
 
-- 回测首次获取行情/指数数据需联网（结果会缓存；外部数据源偶发不稳时回退链自动切换）
-- 舆情分析需要有效的 LLM API Key
-- 首次运行时系统会自动生成 `logs/`、`output/`、`nes_data/` 等目录
-- SPA 未构建（`frontend/dist` 不存在）时 `/spa/*` 返回 503 提示
-- 回测结果仅供参考，不构成投资建议
+### Transaction costs
+- **A-shares** (`AShareCommInfo`): commission both sides (default 3 bps, 5 RMB minimum per trade), stamp duty **sell-side only** 0.05%, transfer fee both sides 0.001%, slippage 0.05% (always on)
+- **US stocks** (`USStockCommInfo`): symmetric commission, no stamp duty or transfer fee
 
-## 🤝 贡献指南
+### Benchmark & risk-adjusted returns
+- Fetches the benchmark automatically by market (A-share = CSI 300, US = S&P 500)
+- Computes Alpha / Beta (covariance method) and the Information Ratio; draws the benchmark curve on the charts
 
-请参考 [CONTRIBUTING.md](CONTRIBUTING.md) 文件。
+### Sentiment filter
+- Scans `nes_data/sentiment_results/*.json` historical snapshots (parsed by the single SnapshotStore) into a "snapshot date × industry" sentiment panel
+- Each backtest day uses only the latest snapshot **on or before that day** — look-ahead safe
+- When enabled, golden-cross buys require sector sentiment ≥ −threshold and death-cross sells ≤ threshold
 
-## 📄 许可证
+---
 
-本项目采用 [MIT](LICENSE) 许可证。
+## ⚠️ Notes
+
+- First backtest data fetch needs network access (results are cached; the fallback chain switches automatically when a source misbehaves)
+- Sentiment analysis needs a valid LLM API key
+- `logs/`, `output/`, `nes_data/` directories are auto-created on first run
+- `/spa/*` returns a 503 hint when the SPA is not built (`frontend/dist` missing)
+- Backtest results are for reference only and do not constitute investment advice
+
+## 🤝 Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## 📄 License
+
+Released under the [MIT](LICENSE) license.

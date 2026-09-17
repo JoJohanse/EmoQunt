@@ -9,7 +9,7 @@
 - 全新浏览器上下文首访 /spa/ 会弹出 driver.js 新手导览（7 步），脚本先截导览，
   再逐步走完后关闭，保证后续截图无遮罩。
 - --lang en 通过 emoqunt_lang cookie 切换界面语言（SPA 首访读 cookie 定语言，
-  Jinja2 页面由中间件读同一 cookie），英文截图统一加 -en 后缀，供 README_EN 引用。
+  Jinja2 页面由中间件读同一 cookie），英文截图统一加 -en 后缀，供英文版 README（README.md）引用。
 """
 import sys
 from pathlib import Path
