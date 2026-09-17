@@ -22,6 +22,7 @@ import type {
   SentimentData,
   StrategyDetail,
   StrategyVersion,
+  TuningTask,
 } from './types'
 
 const http = axios.create({
@@ -202,6 +203,34 @@ export const runsApi = {
   },
   detail(id: number): Promise<BacktestRunDetail> {
     return http.get(`/v2/backtest/runs/${id}`).then((r) => r.data)
+  },
+}
+
+/** 参数调优 API（网格笛卡尔积 ≤63 组 + 基准；apply 只写策略参数） */
+export const tuningApi = {
+  create(payload: {
+    strategy_kind: 'template' | 'code'
+    strategy_id?: number
+    strategy_name?: string
+    stock_code: string
+    market: Market
+    start_date: string
+    end_date: string
+    initial_capital?: number
+    commission_rate?: number
+    param_grid: Record<string, (number | boolean)[]>
+    target_metric?: string
+  }): Promise<{ id: number; status: string; total_combos: number }> {
+    return http.post('/v2/tuning/tasks', payload).then((r) => r.data)
+  },
+  list(params: { strategy_kind?: string; strategy_id?: number; limit?: number; offset?: number } = {}): Promise<{ tasks: TuningTask[] }> {
+    return http.get('/v2/tuning/tasks', { params }).then((r) => r.data)
+  },
+  detail(id: number): Promise<TuningTask> {
+    return http.get(`/v2/tuning/tasks/${id}`).then((r) => r.data)
+  },
+  apply(id: number, comboIndex: number): Promise<{ id: number; combo_index: number; applied_params: Record<string, number | boolean> }> {
+    return http.post(`/v2/tuning/tasks/${id}/apply`, { combo_index: comboIndex }).then((r) => r.data)
   },
 }
 

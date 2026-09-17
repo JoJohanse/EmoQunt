@@ -17,6 +17,7 @@ export const zh: Messages = {
     compare: '策略对比',
     factor: '因子分析',
     strategyLibrary: '策略库',
+    runHistory: '运行历史',
   },
   group: {
     research: '回测研究',
@@ -52,6 +53,7 @@ export const en: Messages = {
     compare: 'Compare',
     factor: 'Factor Analysis',
     strategyLibrary: 'Strategy Library',
+    runHistory: 'Run History',
   },
   group: {
     research: 'Backtesting',

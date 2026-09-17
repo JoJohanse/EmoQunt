@@ -42,24 +42,27 @@ def get_executor() -> ThreadPoolExecutor:
     return _executor
 
 
-def submit_task(task_id: int, work: Callable[[], None], timeout_seconds: float) -> None:
+def submit_task(task_id: int, work: Callable[[], None], timeout_seconds: float,
+                on_abandon: Optional[Callable[[int], None]] = None) -> None:
     """提交任务并在超时后"放弃等待"（把活跃任务标 failed，见模块 docstring）。
 
-    :param task_id: 业务任务 id（当前即 backtest_runs.id）
+    :param task_id: 业务任务 id（backtest_runs.id 或 tuning_tasks.id）
     :param work: 无参工作函数（自身负责状态流转与结果落库）
     :param timeout_seconds: 放弃等待的秒数；<=0 视为不设看门狗
+    :param on_abandon: 超时回调（接收 task_id）；缺省为回测运行的放弃逻辑，
+        其他任务类型（如调优）传入自己的标记函数
     """
     get_executor().submit(work)
     if timeout_seconds and timeout_seconds > 0:
-        timer = threading.Timer(timeout_seconds, _abandon, args=(task_id,))
+        timer = threading.Timer(timeout_seconds, on_abandon or _abandon_run, args=(task_id,))
         timer.daemon = True
         with _watchdogs_lock:
-            _watchdogs[task_id] = timer
+            _watchdogs[(id(on_abandon or _abandon_run), task_id)] = timer
         timer.start()
 
 
-def _abandon(task_id: int) -> None:
-    """看门狗触发：工作线程尚未结束则把运行标记 failed（条件更新防覆盖）。"""
+def _abandon_run(task_id: int) -> None:
+    """看门狗触发（回测运行）：工作线程尚未结束则把运行标记 failed（条件更新防覆盖）。"""
     try:
         from src.store import db as store
 
@@ -73,8 +76,12 @@ def _abandon(task_id: int) -> None:
     except Exception:
         logger.exception("超时看门狗执行失败 task_id=%s", task_id)
     finally:
-        with _watchdogs_lock:
-            _watchdogs.pop(task_id, None)
+        _pop_watchdog(_abandon_run, task_id)
+
+
+def _pop_watchdog(on_abandon: Callable[[int], None], task_id: int) -> None:
+    with _watchdogs_lock:
+        _watchdogs.pop((id(on_abandon), task_id), None)
 
 
 def shutdown_executor(wait: bool = False) -> None:

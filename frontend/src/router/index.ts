@@ -38,6 +38,18 @@ const router = createRouter({
       meta: { titleKey: 'layout.nav.strategyLibrary' },
     },
     {
+      path: '/runs',
+      name: 'runs',
+      component: () => import('@/views/RunHistoryView.vue'),
+      meta: { titleKey: 'layout.nav.runHistory' },
+    },
+    {
+      path: '/tuning/:taskId',
+      name: 'tuning-detail',
+      component: () => import('@/views/TuningDetailView.vue'),
+      meta: { titleKey: 'tuning.title' },
+    },
+    {
       path: '/sentiment',
       name: 'sentiment',
       component: () => import('@/views/SentimentView.vue'),

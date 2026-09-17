@@ -2,7 +2,7 @@ import backtrader as bt
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import os
 import sys
 import time
@@ -541,6 +541,7 @@ def _run_backtest_core(
     apply_sentiment_filter: bool = True,
     strategy_kind: str = "template",
     strategy_id: Optional[int] = None,
+    strategy_params: Optional[Dict[str, Any]] = None,
     progress_cb=None,
 ) -> Dict:
     """回测核心流水线（深模块）：装配→数据→策略→回测→指标→基准。
@@ -551,6 +552,9 @@ def _run_backtest_core(
     :param strategy_kind: 'template'（strategies.json 参数策略，默认）或
                           'code'（策略库代码策略，经 code_loader 物化）
     :param strategy_id: code 策略的策略库 id；template 路径忽略
+    :param strategy_params: 可选参数覆盖（参数调优专用）：code 策略绕开 DB
+                            参数列逐组生效；template 策略覆盖 strategies.json
+                            参数。None 时与旧行为逐字一致（策略库/JSON 真相不变）
     :param progress_cb: 可选阶段回调 ``cb(stage_name)``（阶段化运行历史用，
                         不传时零开销、行为与旧版逐字一致）
     :return: 结构化结果字典，含：
@@ -642,7 +646,7 @@ def _run_backtest_core(
         if row is None:
             raise ValueError(f"未找到代码策略: id={strategy_id} name={strategy_name}")
         strategy_class = build_backtrader_strategy(
-            row["source"], row["params"],
+            row["source"], strategy_params if strategy_params is not None else row["params"],
             run_info={
                 "start_date": start_date, "end_date": end_date,
                 "stock_code": stock_code, "market": market,
@@ -654,6 +658,15 @@ def _run_backtest_core(
         user_config = get_user_strategy(strategy_name)
         if not user_config:
             raise ValueError(f"未找到用户策略: {strategy_name}")
+        if strategy_params is not None:
+            # 调优覆盖：调用方传入的是完整生效参数 dict（基底+网格覆盖），
+            # 这里整体重写 parameters 列表（extract_param_value 只认 name/value）
+            user_config = {
+                **user_config,
+                "parameters": [
+                    {"name": k, "value": v} for k, v in strategy_params.items()
+                ],
+            }
 
         # 情绪过滤（仅 A 股）
         sentiment_series = None

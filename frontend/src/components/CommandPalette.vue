@@ -35,6 +35,7 @@ const navItems = computed<CmdItem[]>(() => [
   { id: 'nav-recommend', label: t('layout.nav.recommend'), group: t('palette.groupNav'), path: '/daily-recommend', keywords: 'recommend' },
   { id: 'nav-strategies', label: t('layout.nav.strategies'), group: t('palette.groupNav'), path: '/strategies', keywords: 'strategies' },
   { id: 'nav-strategy-library', label: t('layout.nav.strategyLibrary'), group: t('palette.groupNav'), path: '/strategy-library', keywords: 'strategy library code python' },
+  { id: 'nav-runs', label: t('layout.nav.runHistory'), group: t('palette.groupNav'), path: '/runs', keywords: 'runs history backtest log' },
 ])
 
 const allItems = computed<CmdItem[]>(() => {

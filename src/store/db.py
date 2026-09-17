@@ -1,17 +1,17 @@
-"""业务 SQLite 存储层：策略库（代码策略）+ 回测运行记录。
+"""业务 SQLite 存储层：策略库（代码策略）+ 回测运行记录 + 参数调优任务。
 
 与行情缓存层 src/data/db.py（PostgreSQL/Redis，可选降级）职责分离：
-本模块是策略/运行的**唯一真相**，故障上抛而非静默降级。
+本模块是策略/运行/调优的**唯一真相**，故障上抛而非静默降级。
 
-工程约定（对齐 docs/plans/pandaai-style-platform-plan.md D2/D3）：
+工程约定（对齐 docs/plans/pandaai-style-platform-plan.md D2/D3/D4）：
 - 标准库 sqlite3，WAL + busy_timeout；每线程独立连接（threading.local），
   HTTP 线程池与任务执行器线程并存互不串扰；
 - 建表幂等（CREATE TABLE IF NOT EXISTS）；库文件路径可用环境变量
   ``QDT_STORE_DB_PATH`` 覆盖（测试隔离用），默认 ``data/emoqunt.db``；
-- 启动清扫：init_db() 把遗留 queued/running 运行批量标记 failed
-  （进程内执行器无持久队列，重启即丢）；
+- 启动清扫：init_db() 把遗留 queued/running 的运行/调优任务/调优组合批量
+  标记 failed（进程内执行器无持久队列，重启即丢）；
 - 回测时序存储：equity 数组 zlib+base64（dates/trades/metrics 为 JSON 文本），
-  drawdown/daily_returns 可由 equity 派生不落库；
+  drawdown/daily_returns 可由 equity 派生不落库；调优组合净值降采样 ≤240 点；
 - 终态写入全部走条件 UPDATE（``WHERE status IN ('queued','running')``），
   超时看门狗"放弃等待"后迟到的完成结果不会覆盖 failed 状态。
 
@@ -90,6 +90,50 @@ CREATE TABLE IF NOT EXISTS strategy_versions (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_versions_strategy ON strategy_versions(strategy_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS tuning_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    strategy_kind TEXT NOT NULL DEFAULT 'code',
+    strategy_id INTEGER,
+    strategy_name TEXT NOT NULL,
+    market TEXT NOT NULL,
+    stock_code TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    initial_capital REAL NOT NULL,
+    commission_rate REAL NOT NULL,
+    param_grid_json TEXT NOT NULL DEFAULT '{}',
+    grid_keys_json TEXT NOT NULL DEFAULT '[]',
+    target_metric TEXT NOT NULL DEFAULT '总收益率',
+    target_metric_desc INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'queued',
+    total_combos INTEGER NOT NULL DEFAULT 0,
+    done_combos INTEGER NOT NULL DEFAULT 0,
+    succeeded_combos INTEGER NOT NULL DEFAULT 0,
+    best_combo_index INTEGER,
+    error TEXT,
+    duration_ms INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tuning_tasks_strategy ON tuning_tasks(strategy_kind, strategy_id);
+
+CREATE TABLE IF NOT EXISTS tuning_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL,
+    combo_index INTEGER NOT NULL,
+    is_baseline INTEGER NOT NULL DEFAULT 0,
+    params_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'queued',
+    error TEXT,
+    metrics_json TEXT,
+    dates_json TEXT,
+    equity_zlib TEXT,
+    duration_ms INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tuning_runs_task ON tuning_runs(task_id, combo_index);
 """
 
 _local = threading.local()
@@ -151,6 +195,18 @@ def init_db() -> None:
             )
             if cur.rowcount:
                 logger.warning("启动清扫：已把 %d 个中断运行标记为 failed", cur.rowcount)
+            cur = conn.execute(
+                "UPDATE tuning_tasks SET status='failed', error=?, updated_at=? "
+                "WHERE status IN ('queued','running')",
+                ("服务重启，任务中断", _now()),
+            )
+            if cur.rowcount:
+                logger.warning("启动清扫：已把 %d 个中断调优任务标记为 failed", cur.rowcount)
+            conn.execute(
+                "UPDATE tuning_runs SET status='failed', error=?, updated_at=? "
+                "WHERE status IN ('queued','running')",
+                ("服务重启，任务中断", _now()),
+            )
             conn.commit()
             _initialized = True
 
@@ -380,7 +436,7 @@ def list_run_rows(strategy_kind: Optional[str] = None, strategy_id: Optional[int
     _ensure_init()
     sql = ("SELECT id, strategy_name, strategy_kind, strategy_id, stock_code, market, start_date, end_date, "
            "initial_capital, commission_rate, status, error, metrics_json, stages_json, duration_ms, "
-           "created_at, updated_at FROM backtest_runs WHERE 1=1")
+           "dates_json, equity_zlib, created_at, updated_at FROM backtest_runs WHERE 1=1")
     args: List[Any] = []
     if strategy_kind:
         sql += " AND strategy_kind = ?"
@@ -425,12 +481,216 @@ def row_to_run_dict(row: sqlite3.Row, unpack_series: bool = False) -> Dict[str, 
         out["dates"] = json.loads(row["dates_json"]) if row["dates_json"] else []
         out["equity_curve"] = _unpack_series(row["equity_zlib"]) if row["equity_zlib"] else []
         out["trades"] = json.loads(row["trades_json"]) if row["trades_json"] else []
+    else:
+        # 列表页净值缩略：降采样 ≤60 点（无时序字段时为空数组）
+        out["equity_preview"] = (
+            downsample_series(_unpack_series(row["equity_zlib"]), 60)
+            if row["equity_zlib"] else []
+        )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 参数调优（tuning_tasks / tuning_runs 表）——服务层见 src/services/tuning.py
+# ---------------------------------------------------------------------------
+def create_tuning_task(fields: Dict[str, Any], combos: List[Dict[str, Any]]) -> int:
+    """登记调优任务 + 全部组合行（同一事务），返回任务 id。
+
+    :param fields: 任务列（grid_json/grid_keys_json 等已序列化好的键值）
+    :param combos: [{combo_index, is_baseline, params}]，params 为该组完整生效参数
+    """
+    _ensure_init()
+    conn = get_conn()
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO tuning_tasks (strategy_kind, strategy_id, strategy_name, market, stock_code, "
+            "start_date, end_date, initial_capital, commission_rate, param_grid_json, grid_keys_json, "
+            "target_metric, target_metric_desc, status, total_combos, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)",
+            (fields["strategy_kind"], fields.get("strategy_id"), fields["strategy_name"],
+             fields["market"], fields["stock_code"], fields["start_date"], fields["end_date"],
+             fields["initial_capital"], fields["commission_rate"],
+             fields["param_grid_json"], fields["grid_keys_json"],
+             fields["target_metric"], int(fields.get("target_metric_desc", 1)),
+             len(combos), _now(), _now()),
+        )
+        task_id = int(cur.lastrowid)
+        conn.executemany(
+            "INSERT INTO tuning_runs (task_id, combo_index, is_baseline, params_json, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 'queued', ?, ?)",
+            [(task_id, c["combo_index"], int(c.get("is_baseline", 0)),
+              json.dumps(c["params"], ensure_ascii=False), _now(), _now()) for c in combos],
+        )
+    return task_id
+
+
+def get_tuning_task_row(task_id: int) -> Optional[sqlite3.Row]:
+    _ensure_init()
+    return get_conn().execute("SELECT * FROM tuning_tasks WHERE id = ?", (task_id,)).fetchone()
+
+
+def list_tuning_task_rows(strategy_kind: Optional[str] = None, strategy_id: Optional[int] = None,
+                          limit: int = 50, offset: int = 0) -> List[sqlite3.Row]:
+    """调优任务列表（新→旧，不含组合）。"""
+    _ensure_init()
+    sql = "SELECT * FROM tuning_tasks WHERE 1=1"
+    args: List[Any] = []
+    if strategy_kind:
+        sql += " AND strategy_kind = ?"
+        args.append(strategy_kind)
+    if strategy_id is not None:
+        sql += " AND strategy_id = ?"
+        args.append(strategy_id)
+    sql += " ORDER BY id DESC LIMIT ? OFFSET ?"
+    args += [int(limit), int(offset)]
+    return get_conn().execute(sql, args).fetchall()
+
+
+def set_tuning_task_running(task_id: int) -> None:
+    _ensure_init()
+    conn = get_conn()
+    conn.execute("UPDATE tuning_tasks SET status='running', updated_at=? WHERE id=? AND status='queued'",
+                 (_now(), task_id))
+    conn.commit()
+
+
+def bump_tuning_progress(task_id: int, succeeded: int) -> None:
+    """组合落库后推进计数（执行器多线程并发调用，用 SQL 自增避免读改写竞争）。"""
+    _ensure_init()
+    conn = get_conn()
+    conn.execute(
+        "UPDATE tuning_tasks SET done_combos = done_combos + 1, succeeded_combos = succeeded_combos + ?, "
+        "updated_at=? WHERE id=?",
+        (1 if succeeded else 0, _now(), task_id),
+    )
+    conn.commit()
+
+
+def fail_tuning_task_if_active(task_id: int, error: str) -> None:
+    """把活跃调优任务标记 failed（条件更新，迟到结果不覆盖）。"""
+    _ensure_init()
+    conn = get_conn()
+    conn.execute("UPDATE tuning_tasks SET status='failed', error=?, updated_at=? WHERE id=? AND status IN ('queued','running')",
+                 (error[:2000], _now(), task_id))
+    conn.commit()
+
+
+def finish_tuning_task_if_active(task_id: int, status: str, best_combo_index: Optional[int],
+                                 error: Optional[str], duration_ms: int) -> None:
+    """任务终态落库（条件更新；status ∈ succeeded/failed）。"""
+    _ensure_init()
+    conn = get_conn()
+    conn.execute(
+        "UPDATE tuning_tasks SET status=?, best_combo_index=?, error=?, duration_ms=?, updated_at=? "
+        "WHERE id=? AND status IN ('queued','running')",
+        (status, best_combo_index, error, int(duration_ms), _now(), task_id),
+    )
+    conn.commit()
+
+
+def fail_tuning_runs_if_active(task_id: int, error: str) -> None:
+    """把某任务下所有活跃组合行标记 failed（超时放弃/失败收尾用）。"""
+    _ensure_init()
+    conn = get_conn()
+    conn.execute(
+        "UPDATE tuning_runs SET status='failed', error=?, updated_at=? "
+        "WHERE task_id=? AND status IN ('queued','running')",
+        (error[:2000], _now(), task_id),
+    )
+    conn.commit()
+
+
+def get_tuning_run_row(task_id: int, combo_index: int) -> Optional[sqlite3.Row]:
+    _ensure_init()
+    return get_conn().execute(
+        "SELECT * FROM tuning_runs WHERE task_id = ? AND combo_index = ?",
+        (task_id, combo_index),
+    ).fetchone()
+
+
+def list_tuning_run_rows(task_id: int) -> List[sqlite3.Row]:
+    _ensure_init()
+    return get_conn().execute(
+        "SELECT * FROM tuning_runs WHERE task_id = ? ORDER BY combo_index ASC", (task_id,),
+    ).fetchall()
+
+
+def update_tuning_run_result(task_id: int, combo_index: int, status: str, error: Optional[str] = None,
+                             metrics: Optional[Dict[str, Any]] = None,
+                             dates: Optional[List[str]] = None, equity: Optional[List[float]] = None,
+                             duration_ms: Optional[int] = None) -> None:
+    """组合终态落库（succeeded 带指标与降采样净值；failed 带错误文案）。"""
+    _ensure_init()
+    conn = get_conn()
+    conn.execute(
+        "UPDATE tuning_runs SET status=?, error=?, metrics_json=?, dates_json=?, equity_zlib=?, "
+        "duration_ms=?, updated_at=? WHERE task_id=? AND combo_index=?",
+        (status, (error or "")[:2000] or None,
+         json.dumps(metrics, ensure_ascii=False) if metrics is not None else None,
+         json.dumps(dates) if dates is not None else None,
+         _pack_series(equity) if equity is not None else None,
+         duration_ms, _now(), task_id, combo_index),
+    )
+    conn.commit()
+
+
+def row_to_tuning_task_dict(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": row["id"],
+        "strategy_kind": row["strategy_kind"],
+        "strategy_id": row["strategy_id"],
+        "strategy_name": row["strategy_name"],
+        "market": row["market"],
+        "stock_code": row["stock_code"],
+        "start_date": row["start_date"],
+        "end_date": row["end_date"],
+        "initial_capital": row["initial_capital"],
+        "commission_rate": row["commission_rate"],
+        "param_grid": json.loads(row["param_grid_json"] or "{}"),
+        "grid_keys": json.loads(row["grid_keys_json"] or "[]"),
+        "target_metric": row["target_metric"],
+        "target_metric_desc": bool(row["target_metric_desc"]),
+        "status": row["status"],
+        "total_combos": row["total_combos"],
+        "done_combos": row["done_combos"],
+        "succeeded_combos": row["succeeded_combos"],
+        "best_combo_index": row["best_combo_index"],
+        "error": row["error"],
+        "duration_ms": row["duration_ms"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def row_to_tuning_run_dict(row: sqlite3.Row, unpack_series: bool = False) -> Dict[str, Any]:
+    out: Dict[str, Any] = {
+        "combo_index": row["combo_index"],
+        "is_baseline": bool(row["is_baseline"]),
+        "params": json.loads(row["params_json"] or "{}"),
+        "status": row["status"],
+        "error": row["error"],
+        "duration_ms": row["duration_ms"],
+    }
+    if row["metrics_json"]:
+        out["metrics"] = json.loads(row["metrics_json"])
+    if unpack_series:
+        out["dates"] = json.loads(row["dates_json"]) if row["dates_json"] else []
+        out["equity_curve"] = _unpack_series(row["equity_zlib"]) if row["equity_zlib"] else []
     return out
 
 
 # ---------------------------------------------------------------------------
 # 压缩/解压助手
 # ---------------------------------------------------------------------------
+def downsample_series(values: List[float], max_points: int) -> List[float]:
+    """等距降采样（保首尾点；点数不足时原样返回）。调优净值对比与列表缩略用。"""
+    n = len(values)
+    if n <= max_points or n <= 2:
+        return list(values)
+    step = (n - 1) / (max_points - 1)
+    return [values[int(i * step)] for i in range(max_points)]
+
+
 def _pack_series(values: List[float]) -> str:
     """浮点数组 → zlib+base64 文本（JSON 中转保精度）。"""
     raw = json.dumps(values, separators=(",", ":")).encode("utf-8")

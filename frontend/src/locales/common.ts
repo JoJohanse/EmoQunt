@@ -22,6 +22,14 @@ export const zh: Messages = {
   back: '返回',
   more: '更多',
   all: '全部',
+  // 异步任务状态（运行历史/调优任务/策略详情共用）
+  status: {
+    queued: '排队中',
+    running: '运行中',
+    succeeded: '已完成',
+    failed: '失败',
+    cancelled: '已取消',
+  },
 }
 
 export const en: Messages = {
@@ -41,4 +49,11 @@ export const en: Messages = {
   back: 'Back',
   more: 'More',
   all: 'All',
+  status: {
+    queued: 'Queued',
+    running: 'Running',
+    succeeded: 'Succeeded',
+    failed: 'Failed',
+    cancelled: 'Cancelled',
+  },
 }

@@ -421,6 +421,8 @@ export interface BacktestRunSummary {
   duration_ms: number | null
   created_at: string
   updated_at: string
+  /** 列表页净值缩略（≤60 点降采样；详情接口返回全量 equity_curve） */
+  equity_preview?: number[]
 }
 
 /** 运行记录详情（含时序与成交） */
@@ -428,4 +430,45 @@ export interface BacktestRunDetail extends BacktestRunSummary {
   dates: string[]
   equity_curve: number[]
   trades: BacktestTrade[]
+}
+
+/** 调优组合（单组参数的回测结果） */
+export interface TuningCombo {
+  combo_index: number
+  is_baseline: boolean
+  params: Record<string, number | boolean>
+  status: 'queued' | 'running' | 'succeeded' | 'failed'
+  error: string | null
+  metrics?: BacktestMetrics
+  dates?: string[]
+  equity_curve?: number[]
+  duration_ms: number | null
+}
+
+/** 调优任务（列表项与详情共用；列表不含 combos） */
+export interface TuningTask {
+  id: number
+  strategy_kind: 'template' | 'code'
+  strategy_id: number | null
+  strategy_name: string
+  market: Market
+  stock_code: string
+  start_date: string
+  end_date: string
+  initial_capital: number
+  commission_rate: number
+  param_grid: Record<string, (number | boolean)[]>
+  grid_keys: string[]
+  target_metric: string
+  target_metric_desc: boolean
+  status: 'queued' | 'running' | 'succeeded' | 'failed'
+  total_combos: number
+  done_combos: number
+  succeeded_combos: number
+  best_combo_index: number | null
+  error: string | null
+  duration_ms: number | null
+  created_at: string
+  updated_at: string
+  combos?: TuningCombo[]
 }

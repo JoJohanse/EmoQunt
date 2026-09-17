@@ -38,6 +38,7 @@ export const zh: Messages = {
       code: '策略代码',
       versions: '历史版本',
       history: '回测历史',
+      tuning: '调优历史',
     },
     market: '市场',
     updatedAt: '最后更新',
@@ -106,14 +107,6 @@ export const zh: Messages = {
       stagesEnrich: '风险报告',
     },
   },
-  // 运行状态共用
-  status: {
-    queued: '排队中',
-    running: '运行中',
-    succeeded: '已完成',
-    failed: '失败',
-    cancelled: '已取消',
-  },
 }
 
 export const en: Messages = {
@@ -145,6 +138,7 @@ export const en: Messages = {
       code: 'Strategy Code',
       versions: 'Versions',
       history: 'Run History',
+      tuning: 'Tuning',
     },
     market: 'Market',
     updatedAt: 'Updated',
@@ -208,12 +202,5 @@ export const en: Messages = {
       stagesBenchmark: 'Benchmark',
       stagesEnrich: 'Risk',
     },
-  },
-  status: {
-    queued: 'Queued',
-    running: 'Running',
-    succeeded: 'Succeeded',
-    failed: 'Failed',
-    cancelled: 'Cancelled',
   },
 }

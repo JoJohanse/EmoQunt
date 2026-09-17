@@ -940,6 +940,67 @@ def v2_restore_strategy_version(strategy_id: int, version_id: int):
         return JSONResponse({"error": tr_error("版本回滚失败，请稍后重试")}, status_code=500)
 
 
+# ---- 参数调优 ----
+@app.post("/api/v2/tuning/tasks")
+async def v2_create_tuning_task(request: Request):
+    """创建调优任务（网格笛卡尔积 ≤63 组 + 基准；后台并发执行）。"""
+    try:
+        payload = await request.json()
+        from src.services.tuning import create_tuning_task
+        return await run_in_threadpool(create_tuning_task, payload)
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"创建调优任务失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("创建调优任务失败，请稍后重试")}, status_code=500)
+
+
+@app.get("/api/v2/tuning/tasks")
+def v2_list_tuning_tasks(strategy_kind: str = "", strategy_id: int = 0,
+                         limit: int = 50, offset: int = 0):
+    """调优任务列表（摘要，不含组合）。"""
+    try:
+        from src.services.tuning import list_tuning_tasks
+        return {"tasks": list_tuning_tasks(
+            strategy_kind=strategy_kind or None, strategy_id=strategy_id or None,
+            limit=limit, offset=offset,
+        )}
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"查询调优任务失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("查询调优任务失败，请稍后重试")}, status_code=500)
+
+
+@app.get("/api/v2/tuning/tasks/{task_id:int}")
+def v2_get_tuning_task(task_id: int):
+    """调优任务详情（含全部组合的指标与降采样净值）。"""
+    try:
+        from src.services.tuning import get_tuning_detail
+        detail = get_tuning_detail(task_id)
+        if detail is None:
+            return JSONResponse({"error": tr_error("调优任务不存在")}, status_code=404)
+        return detail
+    except Exception as e:
+        logger.error(f"查询调优任务详情失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("查询调优任务失败，请稍后重试")}, status_code=500)
+
+
+@app.post("/api/v2/tuning/tasks/{task_id:int}/apply")
+async def v2_apply_tuning_params(task_id: int, request: Request):
+    """应用指定组合的参数回策略（code→DB 参数列；template→strategies.json）。"""
+    try:
+        payload = await request.json()
+        combo_index = int(payload.get("combo_index", -1))
+        from src.services.tuning import apply_tuning_params
+        return await run_in_threadpool(apply_tuning_params, task_id, combo_index)
+    except ValueError as e:
+        return _v2_error_response(e)
+    except Exception as e:
+        logger.error(f"应用调优参数失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("应用参数失败，请稍后重试")}, status_code=500)
+
+
 # ===========================================================================
 # AI 投资助手（SSE 流式 + 同步）
 # ===========================================================================

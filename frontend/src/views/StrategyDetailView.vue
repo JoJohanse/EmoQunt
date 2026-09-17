@@ -7,16 +7,18 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { libraryApi, runsApi } from '@/api'
+import { libraryApi, runsApi, tuningApi } from '@/api'
 import type {
   BacktestRunDetail,
   BacktestRunSummary,
   CodeStrategyDetail,
   StrategyVersion,
+  TuningTask,
 } from '@/api/types'
 import { chartPalette } from '@/lib/marketColors'
 import { t } from '@/locales'
 import CodeEditor from '@/components/CodeEditor.vue'
+import RunDetailDialog from '@/components/RunDetailDialog.vue'
 import { VChart } from '@/composables/useECharts'
 
 const route = useRoute()
@@ -195,7 +197,7 @@ async function restoreVersion(v: StrategyVersion) {
 // ---- 回测历史 Tab ----
 const runs = ref<BacktestRunSummary[]>([])
 const runsLoading = ref(false)
-const runDetailDialog = ref(false)
+const runDetailVisible = ref(false)
 const runDetail = ref<BacktestRunDetail | null>(null)
 
 async function loadRuns() {
@@ -212,22 +214,122 @@ async function loadRuns() {
 
 async function openRun(runId: number) {
   runDetail.value = await runsApi.detail(runId)
-  runDetailDialog.value = true
+  runDetailVisible.value = true
 }
 
-const runDetailOption = computed(() => {
-  const run = runDetail.value
-  if (!run || !run.equity_curve.length) return {}
-  const color = chartPalette(run.market).up
-  return {
-    tooltip: { trigger: 'axis' },
-    grid: { left: 60, right: 24, top: 24, bottom: 52 },
-    xAxis: { type: 'category', data: run.dates },
-    yAxis: { type: 'value', scale: true },
-    dataZoom: [{ type: 'inside' }],
-    series: [{ type: 'line', data: run.equity_curve, showSymbol: false, lineStyle: { color, width: 1.6 } }],
+// ---- 调优 Tab ----
+const tuningTasks = ref<TuningTask[]>([])
+
+async function loadTuningTasks() {
+  try {
+    const data = await tuningApi.list({ strategy_kind: 'code', strategy_id: strategyId.value, limit: 20 })
+    tuningTasks.value = data.tasks
+  } catch {
+    tuningTasks.value = []
   }
+}
+
+// ---- 新建调优对话框 ----
+const tuningDialog = ref(false)
+const tuningSubmitting = ref(false)
+const gridEnabled = ref<Record<string, boolean>>({})
+const gridValuesText = ref<Record<string, string>>({})
+const tuningTargetMetric = ref('总收益率')
+const TUNING_METRICS = ['总收益率', '夏普比率', '最大回撤']
+
+const tuningForm = ref({
+  stock_code: '',
+  start_date: '2023-01-03',
+  end_date: '2025-01-02',
+  initial_capital: 100000,
+  commission_rate: 0.0003,
 })
+
+function openTuningDialog() {
+  tuningForm.value = {
+    stock_code: form.value.stock_code,
+    start_date: form.value.start_date,
+    end_date: form.value.end_date,
+    initial_capital: form.value.initial_capital,
+    commission_rate: form.value.commission_rate,
+  }
+  tuningTargetMetric.value = '总收益率'
+  gridEnabled.value = {}
+  gridValuesText.value = {}
+  tuningDialog.value = true
+}
+
+const TUNING_MAX_COMBOS = 63
+
+function parseGridValues(text: string): { ok: boolean; values: (number | boolean)[] } {
+  const values: (number | boolean)[] = []
+  for (const raw of text.split(',')) {
+    const piece = raw.trim()
+    if (!piece) continue
+    if (/^(true|false)$/i.test(piece)) {
+      values.push(piece.toLowerCase() === 'true')
+    } else {
+      const n = Number(piece)
+      if (!Number.isFinite(n)) return { ok: false, values: [] }
+      values.push(n)
+    }
+  }
+  return { ok: values.length > 0, values }
+}
+
+const tuningCombos = computed(() => {
+  const enabled = Object.keys(gridEnabled.value).filter((k) => gridEnabled.value[k])
+  if (enabled.length === 0) return { count: 0, over: false, invalid: '' }
+  let n = 1
+  for (const name of enabled) {
+    const parsed = parseGridValues(gridValuesText.value[name] ?? '')
+    if (!parsed.ok) return { count: 0, over: false, invalid: name }
+    n *= parsed.values.length
+  }
+  return { count: n, over: n > TUNING_MAX_COMBOS, invalid: '' }
+})
+
+async function submitTuning() {
+  if (!detail.value) return
+  const grid: Record<string, (number | boolean)[]> = {}
+  for (const [name, on] of Object.entries(gridEnabled.value)) {
+    if (!on) continue
+    const parsed = parseGridValues(gridValuesText.value[name] ?? '')
+    if (!parsed.ok) {
+      ElMessage.warning(t('tuning.create.badValues', { name }))
+      return
+    }
+    grid[name] = parsed.values
+  }
+  if (Object.keys(grid).length === 0) {
+    ElMessage.warning(t('tuning.create.noGrid'))
+    return
+  }
+  if (tuningCombos.value.over) return
+  tuningSubmitting.value = true
+  try {
+    const res = await tuningApi.create({
+      strategy_kind: 'code',
+      strategy_id: strategyId.value,
+      strategy_name: detail.value.name,
+      stock_code: tuningForm.value.stock_code,
+      market: detail.value.market,
+      start_date: tuningForm.value.start_date,
+      end_date: tuningForm.value.end_date,
+      initial_capital: Number(tuningForm.value.initial_capital),
+      commission_rate: Number(tuningForm.value.commission_rate),
+      param_grid: grid,
+      target_metric: tuningTargetMetric.value,
+    })
+    ElMessage.success(t('tuning.create.submitted'))
+    tuningDialog.value = false
+    await router.push(`/tuning/${res.id}`)
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    tuningSubmitting.value = false
+  }
+}
 
 // ---- 展示助手 ----
 function fmtPct(v: number | null | undefined): string {
@@ -245,7 +347,7 @@ function statusTag(s: string): string {
   return map[s] ?? 'info'
 }
 function statusLabel(s: string): string {
-  return t(`library.status.${s}`)
+  return t(`common.status.${s}`)
 }
 function stageLabel(stage: string): string {
   const map: Record<string, string> = {
@@ -288,6 +390,7 @@ watch(codeText, (v) => {
 watch(activeTab, (tab) => {
   if (tab === 'versions') void loadVersions()
   if (tab === 'history') void loadRuns()
+  if (tab === 'tuning') void loadTuningTasks()
 })
 
 onMounted(async () => {
@@ -476,6 +579,47 @@ onBeforeUnmount(() => {
           </el-table-column>
         </el-table>
       </el-tab-pane>
+
+      <!-- ===================== 调优历史 ===================== -->
+      <el-tab-pane :label="t('library.detail.tabs.tuning')" name="tuning">
+        <div class="history-toolbar">
+          <el-button type="primary" size="small" @click="openTuningDialog">{{ t('tuning.list.create') }}</el-button>
+          <el-button size="small" @click="loadTuningTasks">{{ t('common.refresh') }}</el-button>
+        </div>
+        <el-empty v-if="tuningTasks.length === 0" :description="t('tuning.list.empty')" />
+        <el-table v-else :data="tuningTasks" size="small">
+          <el-table-column prop="id" label="#" width="70" />
+          <el-table-column :label="t('tuning.table.status')" width="100">
+            <template #default="{ row }">
+              <el-tag size="small" :type="statusTag(row.status)">{{ t(`common.status.${row.status}`) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('tuning.list.progress')" min-width="180">
+            <template #default="{ row }">
+              <el-progress
+                :percentage="row.total_combos ? Math.round((row.done_combos / row.total_combos) * 100) : 0"
+                :stroke-width="8"
+                class="tuning-progress"
+              />
+              <span class="tuning-progress-text">{{ row.done_combos }}/{{ row.total_combos }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('tuning.list.target')" width="130">
+            <template #default="{ row }">{{ t(`backtest.metric.${row.target_metric}`) }}</template>
+          </el-table-column>
+          <el-table-column :label="t('tuning.table.range')" min-width="190">
+            <template #default="{ row }">{{ row.start_date }} ~ {{ row.end_date }} · {{ row.stock_code }}</template>
+          </el-table-column>
+          <el-table-column prop="created_at" :label="t('tuning.list.created')" width="170" />
+          <el-table-column :label="t('tuning.list.action')" width="90">
+            <template #default="{ row }">
+              <el-button text size="small" type="primary" @click="router.push(`/tuning/${row.id}`)">
+                {{ t('tuning.list.open') }}
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 版本全文对话框 -->
@@ -483,34 +627,91 @@ onBeforeUnmount(() => {
       <CodeEditor v-model="versionSource" readonly height="420px" />
     </el-dialog>
 
-    <!-- 运行详情对话框 -->
-    <el-dialog v-model="runDetailDialog" :title="t('library.detail.history.runDetail')" width="860px">
-      <template v-if="runDetail">
-        <div class="metric-grid">
-          <div class="metric-item">
-            <span class="metric-label">{{ t('backtest.metric.总收益率') }}</span>
-            <span class="metric-value">{{ fmtPct(runDetail.metrics?.['总收益率']) }}</span>
-          </div>
-          <div class="metric-item">
-            <span class="metric-label">{{ t('backtest.metric.夏普比率') }}</span>
-            <span class="metric-value">{{ fmtNum(runDetail.metrics?.['夏普比率']) }}</span>
-          </div>
-          <div class="metric-item">
-            <span class="metric-label">{{ t('backtest.metric.最大回撤') }}</span>
-            <span class="metric-value">{{ fmtPct(runDetail.metrics?.['最大回撤']) }}</span>
-          </div>
-          <div class="metric-item">
-            <span class="metric-label">{{ t('backtest.metric.胜率') }}</span>
-            <span class="metric-value">{{ fmtPct(runDetail.metrics?.['胜率']) }}</span>
-          </div>
-        </div>
-        <v-chart v-if="runDetail.equity_curve.length" class="run-chart" :option="runDetailOption" autoresize />
-        <div v-if="runDetail.stages.length" class="stage-row">
-          <span class="stage-title">{{ t('library.detail.history.stages') }}：</span>
-          <el-tag v-for="st in runDetail.stages" :key="st.stage" size="small" type="info" class="stage-tag">
-            {{ stageLabel(st.stage) }} {{ st.ms }}ms
-          </el-tag>
-        </div>
+    <!-- 运行详情对话框（与运行历史页共用） -->
+    <RunDetailDialog v-model:visible="runDetailVisible" :run="runDetail" />
+
+    <!-- 新建调优对话框 -->
+    <el-dialog v-model="tuningDialog" :title="t('tuning.create.title')" width="720px">
+      <el-alert type="info" :title="t('tuning.create.gridHint')" :closable="false" class="tuning-hint" />
+      <h4 class="tuning-section">{{ t('tuning.create.gridTitle') }}</h4>
+      <el-table :data="Object.keys(detail?.params ?? {})" size="small" max-height="260">
+        <el-table-column width="56">
+          <template #default="{ row }">
+            <el-checkbox v-model="gridEnabled[row]" />
+          </template>
+        </el-table-column>
+        <el-table-column :label="t('tuning.table.params')" min-width="160">
+          <template #default="{ row }">
+            <span class="param-text">{{ row }}</span>
+            <span class="param-current"> = {{ (detail?.params as Record<string, unknown>)[row] }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column min-width="260">
+          <template #default="{ row }">
+            <el-input
+              v-model="gridValuesText[row]"
+              size="small"
+              :disabled="!gridEnabled[row]"
+              :placeholder="t('tuning.create.valuesPlaceholder')"
+            />
+          </template>
+        </el-table-column>
+      </el-table>
+      <div class="tuning-count">
+        <span v-if="tuningCombos.invalid" class="tuning-count-invalid">{{ t('tuning.create.badValues', { name: tuningCombos.invalid }) }}</span>
+        <span v-else-if="tuningCombos.over" class="tuning-count-invalid">{{ t('tuning.create.comboCountOver') }}</span>
+        <span v-else>{{ t('tuning.create.comboCount', { n: tuningCombos.count, total: tuningCombos.count + 1 }) }}</span>
+      </div>
+      <h4 class="tuning-section">{{ t('library.detail.tabs.params') }}</h4>
+      <el-form label-width="110px">
+        <el-row :gutter="16">
+          <el-col :span="8">
+            <el-form-item :label="t('library.detail.params.stockCode')" required>
+              <el-input v-model="tuningForm.stock_code" :placeholder="t('library.detail.params.stockCodePlaceholder')" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item :label="t('library.detail.params.startDate')">
+              <el-date-picker v-model="tuningForm.start_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item :label="t('library.detail.params.endDate')">
+              <el-date-picker v-model="tuningForm.end_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item :label="t('library.detail.params.initialCapital')">
+              <el-input-number v-model="tuningForm.initial_capital" :min="10000" :step="10000" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item :label="t('library.detail.params.commissionRate')">
+              <el-input-number v-model="tuningForm.commission_rate" :min="0" :max="0.01" :step="0.0001" :precision="5" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item :label="t('tuning.create.targetMetric')">
+              <el-select v-model="tuningTargetMetric" style="width: 100%">
+                <el-option v-for="m in TUNING_METRICS" :key="m" :value="m" :label="t(`backtest.metric.${m}`)" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+        </el-row>
+      </el-form>
+      <div class="tuning-count">
+        <span class="tuning-target-hint">{{ t('tuning.create.targetHint') }}</span>
+      </div>
+      <template #footer>
+        <el-button @click="tuningDialog = false">{{ t('common.cancel') }}</el-button>
+        <el-button
+          type="primary"
+          :loading="tuningSubmitting"
+          :disabled="tuningCombos.over || !!tuningCombos.invalid || !tuningForm.stock_code"
+          @click="submitTuning"
+        >
+          {{ t('tuning.create.submit') }}
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -614,5 +815,40 @@ onBeforeUnmount(() => {
 }
 .history-toolbar {
   margin-bottom: 10px;
+}
+.tuning-hint {
+  margin-bottom: 12px;
+}
+.tuning-section {
+  margin: 6px 0 8px;
+}
+.tuning-count {
+  margin: 8px 0 4px;
+  font-size: 13px;
+}
+.tuning-count-invalid {
+  color: var(--el-color-danger);
+}
+.tuning-target-hint {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+.param-text {
+  font-family: monospace;
+  font-size: 12px;
+}
+.param-current {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+.tuning-progress {
+  width: 110px;
+  display: inline-flex;
+  vertical-align: middle;
+}
+.tuning-progress-text {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 </style>
