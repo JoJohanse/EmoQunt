@@ -3,6 +3,7 @@
 LLM 配置独立于情绪分析：读取 AGENT_* 环境变量（回退到 LLM_* 与 API_KEY）。
 """
 
+import asyncio
 import logging
 import os
 from typing import Any, Dict, List, Optional
@@ -13,6 +14,7 @@ from langgraph.prebuilt import create_react_agent
 
 from .prompts import build_system_message
 from .tools import ALL_TOOLS
+from .context import build_strategy_context, insert_context, with_strategy_context
 
 logger = logging.getLogger(__name__)
 
@@ -102,14 +104,15 @@ def _to_lc_messages(messages: List[Dict]) -> List[BaseMessage]:
     return out
 
 
-def run_agent(messages: List[Dict]) -> str:
+def run_agent(messages: List[Dict], strategy_id: Optional[int] = None) -> str:
     """非流式运行 agent，返回完整回复文本。
 
     :param messages: [{role, content}, ...]
+    :param strategy_id: 可选策略库 id（P4 策略上下文注入，见 context.py）
     :return: assistant 回复字符串
     """
     agent = build_agent()
-    lc_messages = _to_lc_messages(messages)
+    lc_messages = with_strategy_context(_to_lc_messages(messages), strategy_id)
     result = agent.invoke({"messages": lc_messages})
     # 取最后一条 AI 消息
     ai_msgs = [m for m in result.get("messages", []) if isinstance(m, AIMessage)]
@@ -118,7 +121,7 @@ def run_agent(messages: List[Dict]) -> str:
     return ai_msgs[-1].content
 
 
-async def stream_agent_events(messages: List[Dict]):
+async def stream_agent_events(messages: List[Dict], strategy_id: Optional[int] = None):
     """统一的事件流生成器（深模块）。
 
     迭代 LangGraph astream_events v2，yield 标准化事件元组：
@@ -129,9 +132,14 @@ async def stream_agent_events(messages: List[Dict]):
     - ("error", message)            错误
 
     web_app.py 的 SSE 路由直接消费此生成器。
+    :param strategy_id: 可选策略库 id（P4 策略上下文注入，见 context.py）
     """
     agent = build_agent()
     lc_messages = _to_lc_messages(messages)
+    if strategy_id:
+        # 上下文构建含 SQLite 查询与 AST 解析，放线程池，不占事件循环
+        text = await asyncio.to_thread(build_strategy_context, strategy_id)
+        lc_messages = insert_context(lc_messages, text)
     tool_args_inflight: Dict[str, str] = {}
 
     try:
@@ -156,8 +164,10 @@ async def stream_agent_events(messages: List[Dict]):
                 out = ev.get("data", {}).get("output", "")
                 result = out.content if hasattr(out, "content") else str(out)
                 # result 截断只影响前端展示副本（LLM 已拿到完整结果）；
-                # 舆情/推荐等 JSON 摘要卡片需要比 800 字更大的窗口
-                yield ("tool", nm, args[:500], result[:4000])
+                # 舆情/推荐等 JSON 摘要卡片需要比 800 字更大的窗口，
+                # 策略代码卡片（get_strategy 全文源码）需要更大窗口——
+                # 截断过短会让 JSON 解析失败而回退原始折叠面板
+                yield ("tool", nm, args[:500], result[:12000])
 
         yield ("done",)
     except Exception as e:

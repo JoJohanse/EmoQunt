@@ -83,4 +83,43 @@ MESSAGES = {
         "zh": "策略详情查询失败: {err}",
         "en": "Strategy detail lookup failed: {err}",
     },
+    # create_tuning_task / get_tuning_status（P4 调优工具链）
+    "agentTool.tuningSubmittedNote": {
+        "zh": "任务已在后台并发执行，稍后用 get_tuning_status(task_id={id}) 查询进度与最优组合",
+        "en": "The task is running in the background; use get_tuning_status(task_id={id}) later to check progress and the best combo",
+    },
+    "agentTool.tuningCreateFailed": {
+        "zh": "创建调优任务失败: {err}",
+        "en": "Failed to create tuning task: {err}",
+    },
+    "agentTool.tuningStatusFailed": {
+        "zh": "调优任务查询失败: {err}",
+        "en": "Failed to look up tuning task: {err}",
+    },
+    # list_backtest_runs / get_run（P4 运行历史工具）
+    "agentTool.runsFailed": {
+        "zh": "运行历史查询失败: {err}",
+        "en": "Failed to look up run history: {err}",
+    },
+    "agentTool.runFailed": {
+        "zh": "运行记录查询失败: {err}",
+        "en": "Failed to look up run record: {err}",
+    },
+    # list_factors / create_factor / analyze_factor（P4 因子工具）
+    "agentTool.factorsFailed": {
+        "zh": "因子列表查询失败: {err}",
+        "en": "Failed to list factors: {err}",
+    },
+    "agentTool.createFactorFailed": {
+        "zh": "创建因子失败: {err}",
+        "en": "Failed to create factor: {err}",
+    },
+    "agentTool.factorAnalysisNote": {
+        "zh": "IC 时序与分层累计收益图请在因子库详情页查看",
+        "en": "See the factor library detail page for the IC time series and quantile cumulative return charts",
+    },
+    "agentTool.factorAnalysisFailed": {
+        "zh": "因子分析失败: {err}",
+        "en": "Factor analysis failed: {err}",
+    },
 }

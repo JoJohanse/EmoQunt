@@ -13,17 +13,21 @@ import { t } from '@/locales'
  * @param messages 历史消息（含本轮 user 输入）
  * @param onEvent 事件回调（token/tool/done/error）
  * @param signal AbortSignal，用于取消
+ * @param strategyId 绑定的策略库代码策略 id（可选；非空时后端将其注入对话上下文）
  */
 export async function chatStream(
   messages: ChatMessage[],
   onEvent: (evt: SseEvent) => void,
   signal?: AbortSignal,
+  strategyId?: number | null,
 ): Promise<void> {
   const resp = await fetch('/api/agent/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      // 绑定策略上下文：仅在用户显式选择时携带（null 不发，保持旧请求体形状）
+      ...(strategyId != null ? { strategy_id: strategyId } : {}),
     }),
     signal,
   })
@@ -62,12 +66,13 @@ export async function chatStream(
 }
 
 /** 非流式对话（测试/兜底用） */
-export async function chatSync(messages: ChatMessage[]): Promise<string> {
+export async function chatSync(messages: ChatMessage[], strategyId?: number | null): Promise<string> {
   const resp = await fetch('/api/agent/chat/sync', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      ...(strategyId != null ? { strategy_id: strategyId } : {}),
     }),
   })
   const data = await resp.json()

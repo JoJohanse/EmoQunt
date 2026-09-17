@@ -1169,8 +1169,11 @@ async def agent_chat(request: Request):
     try:
         payload = await request.json()
         messages = payload.get("messages", [])
+        from src.agent.context import coerce_strategy_id
+        strategy_id = coerce_strategy_id(payload.get("strategy_id"))
     except Exception:
         messages = []
+        strategy_id = None
 
     async def event_stream():
         try:
@@ -1180,7 +1183,7 @@ async def agent_chat(request: Request):
                 return
             from src.agent import stream_agent_events
             # 消费统一事件生成器（薄适配器：仅把元组格式化为 SSE）
-            async for evt in stream_agent_events(messages):
+            async for evt in stream_agent_events(messages, strategy_id=strategy_id):
                 if evt[0] == "token":
                     yield "data: " + _json.dumps({"type": "token", "content": evt[1]}, ensure_ascii=False) + "\n\n"
                 elif evt[0] == "tool_start":
@@ -1211,7 +1214,9 @@ async def agent_chat_sync(request: Request):
         if not messages:
             return JSONResponse({"error": tr_error("消息不能为空")}, status_code=400)
         from src.agent import run_agent
-        return {"reply": await run_in_threadpool(run_agent, messages)}
+        from src.agent.context import coerce_strategy_id
+        strategy_id = coerce_strategy_id(payload.get("strategy_id"))
+        return {"reply": await run_in_threadpool(run_agent, messages, strategy_id)}
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, status_code=503)
     except Exception as e:

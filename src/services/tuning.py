@@ -308,8 +308,12 @@ def _downsample_xy(dates: List[str], values: List[float], max_points: int) -> Tu
 # ---------------------------------------------------------------------------
 # 查询
 # ---------------------------------------------------------------------------
-def get_tuning_detail(task_id: int) -> Optional[Dict[str, Any]]:
-    """任务详情 + 全部组合（含指标与降采样净值，归一化对比图数据源）。"""
+def get_tuning_detail(task_id: int, include_series: bool = True) -> Optional[Dict[str, Any]]:
+    """任务详情 + 全部组合（含指标；include_series=False 时不含降采样净值）。
+
+    include_series=False 供 agent 工具等只要进度/指标的消费方使用，省去
+    ≤64 条净值曲线的 zlib 解压；调优详情页的归一化对比图用默认 True。
+    """
     from src.store import db as store
 
     row = store.get_tuning_task_row(task_id)
@@ -317,7 +321,7 @@ def get_tuning_detail(task_id: int) -> Optional[Dict[str, Any]]:
         return None
     detail = store.row_to_tuning_task_dict(row)
     detail["combos"] = [
-        store.row_to_tuning_run_dict(r, unpack_series=True)
+        store.row_to_tuning_run_dict(r, unpack_series=include_series)
         for r in store.list_tuning_run_rows(task_id)
     ]
     return detail

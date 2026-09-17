@@ -1,7 +1,18 @@
 import type { ToolCallEvent } from '@/api/types'
 
 /** 支持卡片化渲染的工具类型（对标 Chat SDK Generative UI 的 tool → 组件映射） */
-export type ToolCardKind = 'quote' | 'sentiment' | 'recommend' | 'backtest' | 'signal'
+export type ToolCardKind =
+  | 'quote'
+  | 'sentiment'
+  | 'recommend'
+  | 'backtest'
+  | 'signal'
+  // 策略库 v2 / 调优 / 运行历史 / 因子库（P4：agent 工具结果的结构化卡片）
+  | 'strategyCode'
+  | 'tuningTask'
+  | 'tuningStatus'
+  | 'runRecord'
+  | 'factorAnalysis'
 
 const KIND_BY_TOOL: Record<string, ToolCardKind> = {
   get_stock_quote: 'quote',
@@ -10,6 +21,13 @@ const KIND_BY_TOOL: Record<string, ToolCardKind> = {
   get_daily_recommendations: 'recommend',
   run_backtest: 'backtest',
   get_stock_signal: 'signal',
+  get_strategy: 'strategyCode',
+  create_strategy: 'strategyCode',
+  update_strategy: 'strategyCode',
+  create_tuning_task: 'tuningTask',
+  get_tuning_status: 'tuningStatus',
+  get_run: 'runRecord',
+  analyze_factor: 'factorAnalysis',
 }
 
 /** 工具名 → 卡片标题的 i18n 键（渲染时经 t() 翻译；未登记的工具回退原始工具名） */
@@ -21,6 +39,17 @@ export const TOOL_LABELS: Record<string, string> = {
   run_backtest: 'chat.toolBacktest',
   get_stock_signal: 'chat.toolSignal',
   list_strategies: 'chat.toolStrategies',
+  get_strategy: 'chat.toolStrategyCode',
+  create_strategy: 'chat.toolStrategyCode',
+  update_strategy: 'chat.toolStrategyCode',
+  create_tuning_task: 'chat.toolTuningCreate',
+  get_tuning_status: 'chat.toolTuningStatus',
+  get_run: 'chat.toolRun',
+  // 列表类工具不做卡片（回退原始折叠面板），仅登记标题
+  list_backtest_runs: 'chat.toolRuns',
+  list_factors: 'chat.toolFactors',
+  create_factor: 'chat.toolFactorCreate',
+  analyze_factor: 'chat.toolFactorAnalyze',
 }
 
 /**

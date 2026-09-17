@@ -27,6 +27,8 @@ export const useChatStore = defineStore(
   const messages = ref<ChatMessage[]>([greeting()])
   const loading = ref(false)
   const drawerOpen = ref(false)
+  // 绑定的策略库代码策略 id（发给后端注入对话上下文；持久化 id 本身，名称不落盘）
+  const contextStrategyId = ref<number | null>(null)
   let abortCtrl: AbortController | null = null
 
   function toggleDrawer() {
@@ -88,6 +90,8 @@ export const useChatStore = defineStore(
           // done: 结束 streaming
         },
         abortCtrl.signal,
+        // 绑定的代码策略 id（null 时请求体不带 strategy_id）
+        contextStrategyId.value,
       )
     } catch (e: any) {
       if (e.name === 'AbortError') {
@@ -122,18 +126,22 @@ export const useChatStore = defineStore(
     messages.value = []
   }
 
-  return { messages, loading, drawerOpen, toggleDrawer, openDrawer, send, cancel, clear }
+  return { messages, loading, drawerOpen, contextStrategyId, toggleDrawer, openDrawer, send, cancel, clear }
 }, {
-  // 本地持久化：对话记录刷新后保留（只存消息；恢复时清理流式标记并截断上限）
+  // 本地持久化：对话记录 + 绑定策略 id 刷新后保留（只存 id 不存名称；恢复时清理流式标记并截断上限）
   persist: {
-    pick: ['messages'],
+    pick: ['messages', 'contextStrategyId'],
     revive: (state: Record<string, any>) => {
       const msgs = Array.isArray(state.messages) ? state.messages : []
       const trimmed = msgs.slice(-100)
       for (const m of trimmed) {
         m.streaming = false
       }
-      return { messages: trimmed }
+      return {
+        messages: trimmed,
+        // 绑定策略 id：仅接受数字/空，其他形状一律回退 null
+        contextStrategyId: typeof state.contextStrategyId === 'number' ? state.contextStrategyId : null,
+      }
     },
   },
 })

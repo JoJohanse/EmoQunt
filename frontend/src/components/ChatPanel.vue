@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { ref, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useChatStore } from '@/stores/chat'
+import { libraryApi } from '@/api'
+import type { CodeStrategySummary } from '@/api/types'
 import MarkdownIt from 'markdown-it'
 import ChatToolCard from '@/components/ChatToolCard.vue'
 import { toolCardKind } from '@/components/chat/toolCards'
@@ -22,6 +24,50 @@ function render(content: string): string {
     return content
   }
 }
+
+// ===== 绑定策略（发给后端注入对话上下文；持久化只存 id，名称留在内存） =====
+const strategyOptions = ref<CodeStrategySummary[]>([])
+const strategiesLoaded = ref(false)
+const strategiesLoading = ref(false)
+
+/** 惰性加载一次：面板首次打开或首次聚焦输入时触发；失败允许下次重试 */
+async function loadStrategyOptions() {
+  if (strategiesLoaded.value || strategiesLoading.value) return
+  strategiesLoading.value = true
+  try {
+    const resp = await libraryApi.list()
+    strategyOptions.value = resp.strategies
+    strategiesLoaded.value = true
+  } catch {
+    // 静默降级：选择器留空，下次聚焦重试
+  } finally {
+    strategiesLoading.value = false
+  }
+}
+
+// 抽屉首次打开即预取（ChatPanel 挂载在 el-drawer 内，首次打开才实例化——
+// 此时 drawerOpen 已是 true，故 immediate 补上首开场景）
+watch(
+  () => store.drawerOpen,
+  (open) => {
+    if (open) void loadStrategyOptions()
+  },
+  { immediate: true },
+)
+
+/** 选中写 store（持久化 id）；clearable 清空（undefined/''）归一为 null */
+const binding = computed<number | null>({
+  get: () => store.contextStrategyId,
+  set: (v) => {
+    store.contextStrategyId = typeof v === 'number' ? v : null
+  },
+})
+/** 绑定策略的展示名：优先取已加载列表中的名称，列表未就绪时回退 #id（不持久化） */
+const boundName = computed(() => {
+  const id = store.contextStrategyId
+  if (id == null) return ''
+  return strategyOptions.value.find((s) => s.id === id)?.name || `#${id}`
+})
 
 async function onSend() {
   const text = inputText.value
@@ -94,6 +140,25 @@ watch(
     </div>
 
     <div class="input-area">
+      <!-- 绑定策略栏：选择后随对话请求携带 strategy_id，徽章显示策略名（不持久化） -->
+      <div class="bind-bar">
+        <span class="bind-label">{{ t('chat.bindStrategy') }}</span>
+        <el-select
+          v-model="binding"
+          class="bind-select"
+          size="small"
+          filterable
+          clearable
+          :placeholder="t('chat.bindStrategyPlaceholder')"
+          :loading="strategiesLoading"
+          @focus="loadStrategyOptions"
+        >
+          <el-option v-for="s in strategyOptions" :key="s.id" :value="s.id" :label="s.name" />
+        </el-select>
+        <el-tag v-if="store.contextStrategyId != null" size="small" effect="plain" class="bind-badge">
+          {{ boundName }}
+        </el-tag>
+      </div>
       <el-input
         v-model="inputText"
         type="textarea"
@@ -101,6 +166,7 @@ watch(
         resize="none"
         :placeholder="t('chat.placeholder')"
         :disabled="loading"
+        @focus="loadStrategyOptions"
         @keydown="onKeydown"
       />
       <div class="input-actions">
@@ -273,6 +339,29 @@ watch(
   border-top: 1px solid var(--border);
   padding: 10px 12px;
   background: var(--surface);
+}
+/* 绑定策略栏（输入区上方纤细一条） */
+.bind-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.bind-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.bind-select {
+  flex: 1;
+  max-width: 220px;
+}
+.bind-badge {
+  flex-shrink: 0;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .input-actions {
   display: flex;

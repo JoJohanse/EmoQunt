@@ -56,6 +56,33 @@ export const zh: Messages = {
   toolBacktest: '策略回测',
   toolSignal: '个股信号',
   toolStrategies: '策略列表',
+  toolStrategyCode: '策略代码',
+  toolTuningCreate: '创建调优任务',
+  toolTuningStatus: '调优进度',
+  toolRun: '运行记录',
+  toolRuns: '运行历史',
+  toolFactors: '因子列表',
+  toolFactorCreate: '创建因子',
+  toolFactorAnalyze: '因子分析',
+  // 绑定策略栏（ChatPanel 输入区上方；只存 id 不存名称）
+  bindStrategy: '绑定策略',
+  bindStrategyPlaceholder: '选择代码策略',
+  // 策略代码卡片（get_strategy / create_strategy / update_strategy）
+  strategyOpen: '打开策略库',
+  strategyParams: '生效参数',
+  strategyVersionSaved: '更新已保存，旧态已存为版本快照',
+  // 调优任务卡片（create_tuning_task / get_tuning_status）
+  tuneTotalCombos: '组合总数',
+  tuneProgress: '{done}/{total} 组完成',
+  tuneBest: '最优组合 #{n}',
+  tuneBaseline: '基准',
+  tuneColParams: '参数',
+  tuneViewDetail: '查看调优详情',
+  // 运行记录卡片（get_run；指标展示名复用 backtest.metric.*）
+  runViewHistory: '查看运行历史',
+  runTradeCount: '成交 {n} 笔',
+  // 因子分析卡片（analyze_factor；IC 标签复用 factor.cards.*，分层表头复用 factor.table.*）
+  factorOpenDetail: '打开因子详情',
   // 回测摘要卡片指标名（数值本身来自后端，保持原样）
   btTotalReturn: '总收益率',
   btAnnualReturn: '年化收益',
@@ -114,6 +141,33 @@ export const en: Messages = {
   toolBacktest: 'Backtest',
   toolSignal: 'Stock Signal',
   toolStrategies: 'Strategies',
+  toolStrategyCode: 'Strategy Code',
+  toolTuningCreate: 'Tuning Task Created',
+  toolTuningStatus: 'Tuning Progress',
+  toolRun: 'Run Record',
+  toolRuns: 'Run History',
+  toolFactors: 'Factors',
+  toolFactorCreate: 'Create Factor',
+  toolFactorAnalyze: 'Factor Analysis',
+  // 绑定策略栏（ChatPanel 输入区上方；只存 id 不存名称）
+  bindStrategy: 'Bind strategy',
+  bindStrategyPlaceholder: 'Select a code strategy',
+  // 策略代码卡片（get_strategy / create_strategy / update_strategy）
+  strategyOpen: 'Open strategy library',
+  strategyParams: 'Effective params',
+  strategyVersionSaved: 'Update saved; previous state stored as a version snapshot',
+  // 调优任务卡片（create_tuning_task / get_tuning_status）
+  tuneTotalCombos: 'Total combos',
+  tuneProgress: '{done}/{total} combos done',
+  tuneBest: 'Best combo #{n}',
+  tuneBaseline: 'Baseline',
+  tuneColParams: 'Params',
+  tuneViewDetail: 'View tuning details',
+  // 运行记录卡片（get_run；指标展示名复用 backtest.metric.*）
+  runViewHistory: 'View run history',
+  runTradeCount: '{n} trades',
+  // 因子分析卡片（analyze_factor；IC 标签复用 factor.cards.*，分层表头复用 factor.table.*）
+  factorOpenDetail: 'Open factor details',
   // 回测摘要卡片指标名（数值本身来自后端，保持原样）
   btTotalReturn: 'Total return',
   btAnnualReturn: 'Annual return',

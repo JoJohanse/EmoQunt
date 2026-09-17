@@ -350,7 +350,6 @@ def update_strategy(strategy_id: int, source: str = "", description: str = "",
         params: 新参数 JSON 字符串，如 '{"ma_window": 20}'（传空表示不修改）。
     """
     try:
-        import json as _json
         from src.services.strategy_library import update_code_strategy
         kwargs = {"strategy_id": int(strategy_id)}
         if source:
@@ -359,7 +358,7 @@ def update_strategy(strategy_id: int, source: str = "", description: str = "",
             kwargs["description"] = description
         if params:
             try:
-                kwargs["params"] = _json.loads(params)
+                kwargs["params"] = json.loads(params)
             except ValueError:
                 return _err(vmsg("library.paramsInvalid", "params 必须是键值参数对象"))
         if "source" not in kwargs and "description" not in kwargs and "params" not in kwargs:
@@ -391,6 +390,243 @@ def get_strategy(strategy_id: int) -> str:
         return _err(vmsg("agentTool.getStrategyFailed", "策略详情查询失败: {err}", err=e))
 
 
+@tool
+def create_tuning_task(strategy_kind: str, stock_code: str, start_date: str, end_date: str,
+                       param_grid: str, strategy_id: int = 0, strategy_name: str = "",
+                       target_metric: str = "总收益率", initial_capital: float = 100000.0,
+                       market: str = "zh_a") -> str:
+    """创建参数调优任务（后台并发回测所有参数组合，需用 get_tuning_status 轮询进度）。
+
+    任务会先跑一组"基准"（当前生效参数），再跑参数网格的笛卡尔积（候选 ≤63 组，共 ≤64 组），
+    按目标指标挑出最优组合。**不会自动应用参数**——应用需用户在调优详情页确认。
+
+    Args:
+        strategy_kind: 'code'（策略库代码策略，默认）或 'template'。
+        stock_code: 股票代码。
+        start_date: 开始日期 YYYY-MM-DD。
+        end_date: 结束日期 YYYY-MM-DD。
+        param_grid: 参数网格 JSON 字符串，如 '{"short_window": [3, 5, 8], "long_window": [15, 25]}'。
+                    键必须是策略 STRATEGY_PARAMS 里已有的参数，每个键 1-10 个数字/布尔取值。
+        strategy_id: strategy_kind 为 'code' 时的策略库 id。
+        strategy_name: strategy_kind 为 'template' 时的模板策略名。
+        target_metric: 优化目标，'总收益率'（默认）/ '夏普比率' / '最大回撤'（越小越好自动识别）。
+        initial_capital: 初始资金，默认 100000。
+        market: 市场，'zh_a'（默认）或 'us'。
+    """
+    try:
+        from src.services.tuning import create_tuning_task as _create
+
+        try:
+            grid = json.loads(param_grid)
+        except ValueError:
+            return _err(vmsg("tuning.badParamGrid", "参数网格必须是非空对象（{参数名: [取值...]}）"))
+        payload = {
+            "strategy_kind": strategy_kind, "strategy_id": strategy_id,
+            "strategy_name": strategy_name, "stock_code": stock_code,
+            "start_date": start_date, "end_date": end_date,
+            "param_grid": grid, "target_metric": target_metric,
+            "initial_capital": initial_capital, "market": market,
+        }
+        result = _create(payload)
+        result["note"] = vmsg("agentTool.tuningSubmittedNote",
+                              "任务已在后台并发执行，稍后用 get_tuning_status(task_id={id}) 查询进度与最优组合",
+                              id=result.get("id"))
+        return _json(result)
+    except ValueError as e:
+        return _err(str(e))
+    except Exception as e:
+        logger.exception("create_tuning_task tool failed")
+        return _err(vmsg("agentTool.tuningCreateFailed", "创建调优任务失败: {err}", err=e))
+
+
+@tool
+def get_tuning_status(task_id: int) -> str:
+    """查询调优任务进度与结果：各组合状态、目标指标对比、最优组合及其参数（不含净值序列）。
+
+    Args:
+        task_id: 调优任务 id（create_tuning_task 返回的 id）。
+    """
+    try:
+        from src.services.tuning import get_tuning_detail
+        # 工具只要指标/参数/进度，不要净值序列（省去 ≤64 条 zlib 解压）
+        detail = get_tuning_detail(int(task_id), include_series=False)
+        if detail is None:
+            return _err(vmsg("tuning.taskNotFound", "调优任务不存在"))
+        combos_out = []
+        target = detail.get("target_metric") or "总收益率"
+        for c in detail.get("combos", []):
+            metrics = c.get("metrics") or {}
+            row = {
+                "combo_index": c.get("combo_index"), "is_baseline": c.get("is_baseline"),
+                "status": c.get("status"), "params": c.get("params"),
+                target: metrics.get(target),
+                "夏普比率": metrics.get("夏普比率"), "最大回撤": metrics.get("最大回撤"),
+            }
+            if c.get("error"):
+                row["error"] = c["error"]
+            combos_out.append(row)
+        best = detail.get("best_combo_index")
+        best_out = None
+        if best is not None:
+            bc = next((c for c in detail.get("combos", []) if c.get("combo_index") == best), {})
+            bm = bc.get("metrics") or {}
+            best_out = {"combo_index": best, "params": bc.get("params"), target: bm.get(target)}
+        return _json({
+            "id": detail.get("id"), "status": detail.get("status"),
+            "strategy_kind": detail.get("strategy_kind"), "strategy_name": detail.get("strategy_name"),
+            "stock_code": detail.get("stock_code"),
+            "start_date": detail.get("start_date"), "end_date": detail.get("end_date"),
+            "target_metric": target, "total_combos": detail.get("total_combos"),
+            "done_combos": detail.get("done_combos"),
+            "succeeded_combos": detail.get("succeeded_combos"),
+            "best_combo": best_out, "combos": combos_out,
+            "error": detail.get("error"),
+        })
+    except Exception as e:
+        logger.exception("get_tuning_status tool failed")
+        return _err(vmsg("agentTool.tuningStatusFailed", "调优任务查询失败: {err}", err=e))
+
+
+@tool
+def list_backtest_runs(strategy_kind: str = "", strategy_id: int = 0, status: str = "",
+                       limit: int = 10) -> str:
+    """列出服务端运行历史（最新在前），返回摘要指标（不含净值序列）。
+
+    Args:
+        strategy_kind: 按种类筛选，'code' / 'template'，空为全部。
+        strategy_id: 按策略库 id 筛选（strategy_kind='code' 时有效），0 为不筛。
+        status: 按状态筛选，'succeeded' / 'failed' / 'running'，空为全部。
+        limit: 最多返回条数，默认 10，最大 50。
+    """
+    try:
+        from src.services.backtest_runs import list_runs
+        rows = list_runs(
+            strategy_kind=strategy_kind or None,
+            strategy_id=int(strategy_id) if strategy_id else None,
+            status=status or None, limit=max(1, min(int(limit), 50)),
+        )
+        runs = [{
+            "id": r.get("id"), "status": r.get("status"),
+            "strategy_kind": r.get("strategy_kind"), "strategy_name": r.get("strategy_name"),
+            "stock_code": r.get("stock_code"), "market": r.get("market"),
+            "start_date": r.get("start_date"), "end_date": r.get("end_date"),
+            "总收益率": (r.get("metrics") or {}).get("总收益率"),
+            "夏普比率": (r.get("metrics") or {}).get("夏普比率"),
+            "最大回撤": (r.get("metrics") or {}).get("最大回撤"),
+        } for r in rows]
+        return _json({"count": len(runs), "runs": runs})
+    except Exception as e:
+        logger.exception("list_backtest_runs tool failed")
+        return _err(vmsg("agentTool.runsFailed", "运行历史查询失败: {err}", err=e))
+
+
+@tool
+def get_run(run_id: int) -> str:
+    """查看一条运行记录详情：指标全集、阶段耗时、成交笔数（不含净值/成交明细序列）。
+
+    Args:
+        run_id: 运行记录 id（list_backtest_runs 返回的 id）。
+    """
+    try:
+        from src.services.backtest_runs import get_run_detail
+        detail = get_run_detail(int(run_id))
+        if detail is None:
+            return _err(vmsg("library.runNotFound", "运行记录不存在"))
+        return _json({
+            "id": detail.get("id"), "status": detail.get("status"),
+            "strategy_kind": detail.get("strategy_kind"), "strategy_name": detail.get("strategy_name"),
+            "stock_code": detail.get("stock_code"), "market": detail.get("market"),
+            "start_date": detail.get("start_date"), "end_date": detail.get("end_date"),
+            "metrics": detail.get("metrics"), "stages": detail.get("stages"),
+            "trade_count": len(detail.get("trades") or []),
+            "error": detail.get("error"),
+        })
+    except Exception as e:
+        logger.exception("get_run tool failed")
+        return _err(vmsg("agentTool.runFailed", "运行记录查询失败: {err}", err=e))
+
+
+@tool
+def list_factors(market: str = "", q: str = "", limit: int = 20) -> str:
+    """列出因子库中的 Python 因子（名称/描述/市场/标签，不含源码）。
+
+    Args:
+        market: 按市场筛选，当前仅 'zh_a'，空为全部。
+        q: 按名称/描述模糊搜索。
+        limit: 最多返回条数，默认 20，最大 50。
+    """
+    try:
+        from src.services.factor_library import list_factors as _list
+        rows = _list(market=market or None, q=q or "", limit=max(1, min(int(limit), 50)))
+        return _json({"count": len(rows), "factors": rows})
+    except Exception as e:
+        logger.exception("list_factors tool failed")
+        return _err(vmsg("agentTool.factorsFailed", "因子列表查询失败: {err}", err=e))
+
+
+@tool
+def create_factor(name: str, description: str, source: str, market: str = "zh_a",
+                  tags: str = "") -> str:
+    """创建 Python 因子并保存到因子库（创建前经沙箱校验，不合法返回 errors 列表）。
+
+    Args:
+        name: 因子名称（2-50字符）。
+        description: 因子描述（一句话说明因子逻辑）。
+        source: 完整 Python 源码，必须定义模块级 compute(df) 函数：
+                df 为单只股票的日线 DataFrame（中文列：时间/开盘/最高/最低/收盘/成交量，
+                时间为索引、升序），返回 pd.Series（索引与 df 对齐的因子值）。
+                示例：def compute(df):\n    return df["收盘"].pct_change(20)
+        market: 市场，当前仅支持 'zh_a'（A股，分析在沪深300成分股上运行）。
+        tags: 逗号分隔标签（可选）。
+    """
+    try:
+        from src.services.factor_library import create_factor as _create
+        return _json(_create(name=name, description=description, market=market,
+                             source=source, tags=tags))
+    except ValueError as e:
+        return _err(str(e))
+    except Exception as e:
+        logger.exception("create_factor tool failed")
+        return _err(vmsg("agentTool.createFactorFailed", "创建因子失败: {err}", err=e))
+
+
+@tool
+def analyze_factor(factor_id: int, start_date: str, end_date: str,
+                   n_quantiles: int = 5, forward_period: int = 5) -> str:
+    """运行因子横截面分析（沪深300 全样本，分钟级耗时），返回 IC 统计与分层收益摘要。
+
+    返回 ic_mean（IC 均值，|IC|>0.03 有预测力）、ic_ir、ic_win_rate、分层平均收益、
+    单调性等；净值曲线与 IC 时序图在因子库详情页查看。
+
+    Args:
+        factor_id: 因子库 id。
+        start_date: 开始日期 YYYY-MM-DD。
+        end_date: 结束日期 YYYY-MM-DD。
+        n_quantiles: 分层数，默认 5。
+        forward_period: 前瞻收益周期（交易日），默认 5。
+    """
+    try:
+        from src.services.factor_library import analyze_user_factor
+        result = analyze_user_factor(int(factor_id), start_date, end_date,
+                                     n_quantiles=n_quantiles, forward_period=forward_period)
+        if result.get("error"):
+            return _err(result["error"])
+        return _json({
+            "factor": result.get("factor_type"),
+            "universe_size": result.get("universe_size"),
+            "ic_stats": result.get("ic_stats"),
+            "monotonicity": result.get("monotonicity"),
+            "quantile_stats": result.get("quantile_stats"),
+            "note": vmsg("agentTool.factorAnalysisNote",
+                         "IC 时序与分层累计收益图请在因子库详情页查看"),
+        })
+    except ValueError as e:
+        return _err(str(e))
+    except Exception as e:
+        logger.exception("analyze_factor tool failed")
+        return _err(vmsg("agentTool.factorAnalysisFailed", "因子分析失败: {err}", err=e))
+
+
 # 工具列表（供 agent 使用）
 ALL_TOOLS = [
     get_stock_quote,
@@ -403,4 +639,11 @@ ALL_TOOLS = [
     create_strategy,
     update_strategy,
     get_strategy,
+    create_tuning_task,
+    get_tuning_status,
+    list_backtest_runs,
+    get_run,
+    list_factors,
+    create_factor,
+    analyze_factor,
 ]
