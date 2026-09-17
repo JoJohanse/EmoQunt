@@ -11,12 +11,17 @@
 进程内 TTL 缓存 5 分钟（src.utils.ttl_cache 助手），避免首页多次刷新
 反复打数据源。板块 DataFrame 本身也做短 TTL 缓存，避免冷缓存时 breadth 与
 sectors 并行请求各打一次 THS 全量爬取。
+
+本地持久化（quote_cache，SWR）：breadth/sectors 结果落 data/market_cache.db，
+服务重启后首页首屏不再等 THS 全量爬——新鲜（<=5 分钟）直接回，过期先回
+旧值 + 后台刷新，未命中才同步爬。
 """
 import concurrent.futures
 import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from src.data import quote_cache
 from src.utils.ttl_cache import TTLCache
 
 logger = logging.getLogger(__name__)
@@ -87,37 +92,78 @@ def _get_sector_df_cached():
     return _CACHE.get_or_set("_ths_df", _load_sector_df, ttl=_CACHE_TTL)
 
 
+def _fetch_sector_board() -> Dict[str, Any]:
+    df = _get_sector_df_cached()
+    sectors: List[Dict[str, Any]] = []
+    for _, r in df.iterrows():
+        sectors.append({
+            "name": str(r.get("板块", "")),
+            "chg_pct": round(_to_num(r.get("涨跌幅")), 2),
+            "turnover": round(_to_num(r.get("总成交额")), 2),
+            "net_inflow": round(_to_num(r.get("净流入")), 2),
+            "up_count": int(_to_num(r.get("上涨家数"))),
+            "down_count": int(_to_num(r.get("下跌家数"))),
+            "leader": str(r.get("领涨股", "") or ""),
+            "leader_chg": round(_to_num(r.get("领涨股-涨跌幅")), 2),
+        })
+    sectors.sort(key=lambda s: s["chg_pct"], reverse=True)
+    return {
+        "sectors": sectors,
+        "updated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+    }
+
+
 def get_sector_board() -> Dict[str, Any]:
     """行业板块行情列表（按涨跌幅降序），供首页热力图/排行榜。
 
-    :return: {sectors: [{name, chg_pct, turnover, net_inflow, up_count,
-              down_count, leader, leader_chg}], updated_at}
+    本地持久化 SWR：新鲜直接回缓存；过期回旧值 + 后台刷新；未命中同步爬。
     """
-    def _fetch() -> Dict[str, Any]:
-        df = _get_sector_df_cached()
-        sectors: List[Dict[str, Any]] = []
-        for _, r in df.iterrows():
-            sectors.append({
-                "name": str(r.get("板块", "")),
-                "chg_pct": round(_to_num(r.get("涨跌幅")), 2),
-                "turnover": round(_to_num(r.get("总成交额")), 2),
-                "net_inflow": round(_to_num(r.get("净流入")), 2),
-                "up_count": int(_to_num(r.get("上涨家数"))),
-                "down_count": int(_to_num(r.get("下跌家数"))),
-                "leader": str(r.get("领涨股", "") or ""),
-                "leader_chg": round(_to_num(r.get("领涨股-涨跌幅")), 2),
-            })
-        sectors.sort(key=lambda s: s["chg_pct"], reverse=True)
-        return {
-            "sectors": sectors,
-            "updated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        }
-
     try:
-        return _CACHE.get_or_set("sector_board", _fetch, ttl=_CACHE_TTL)
+        cached, fresh = quote_cache.lookup("sector_board", _CACHE_TTL)
+        if cached is not None:
+            if not fresh:
+                quote_cache.refresh_async("sector_board", _fetch_sector_board)
+            return cached
+        result = _fetch_sector_board()
+        quote_cache.put("sector_board", result)
+        return result
     except Exception as e:
         logger.error(f"获取行业板块行情失败: {e}", exc_info=True)
         raise
+
+
+def _fetch_market_breadth() -> Dict[str, Any]:
+    df = _get_sector_df_cached()
+    up = int(_to_num(df["上涨家数"]).sum())
+    down = int(_to_num(df["下跌家数"]).sum())
+    chg = df["涨跌幅"].apply(_to_num)
+    rising_sectors = int((chg > 0).sum())
+
+    # 股池函数可能随 akshare 版本更名，缺失时不影响主流程
+    try:
+        import akshare as ak
+        zt_fn = getattr(ak, "stock_zt_pool_em", None)
+        dt_fn = getattr(ak, "stock_zt_pool_dtgc_em", None)
+    except Exception:
+        zt_fn = dt_fn = None
+    now = datetime.now()
+    limit_up = _pool_size(zt_fn, now)
+    limit_down = _pool_size(dt_fn, now)
+
+    top = df.loc[chg.idxmax()]
+    return {
+        "up": up,
+        "down": down,
+        "limit_up": limit_up,
+        "limit_down": limit_down,
+        "rising_sectors": rising_sectors,
+        "total_sectors": int(len(df)),
+        "top_sector": {
+            "name": str(top.get("板块", "")),
+            "chg_pct": round(_to_num(top.get("涨跌幅")), 2),
+        },
+        "updated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+    }
 
 
 def get_market_breadth() -> Dict[str, Any]:
@@ -125,42 +171,17 @@ def get_market_breadth() -> Dict[str, Any]:
 
     涨跌家数为同花顺 90 个行业的上涨/下跌家数之和（近似全市场）；
     涨停/跌停来自东财股池，网络不可达时为 null，不阻塞主流程。
+    本地持久化 SWR 同 get_sector_board。
     """
-    def _fetch() -> Dict[str, Any]:
-        df = _get_sector_df_cached()
-        up = int(_to_num(df["上涨家数"]).sum())
-        down = int(_to_num(df["下跌家数"]).sum())
-        chg = df["涨跌幅"].apply(_to_num)
-        rising_sectors = int((chg > 0).sum())
-
-        # 股池函数可能随 akshare 版本更名，缺失时不影响主流程
-        try:
-            import akshare as ak
-            zt_fn = getattr(ak, "stock_zt_pool_em", None)
-            dt_fn = getattr(ak, "stock_zt_pool_dtgc_em", None)
-        except Exception:
-            zt_fn = dt_fn = None
-        now = datetime.now()
-        limit_up = _pool_size(zt_fn, now)
-        limit_down = _pool_size(dt_fn, now)
-
-        top = df.loc[chg.idxmax()]
-        return {
-            "up": up,
-            "down": down,
-            "limit_up": limit_up,
-            "limit_down": limit_down,
-            "rising_sectors": rising_sectors,
-            "total_sectors": int(len(df)),
-            "top_sector": {
-                "name": str(top.get("板块", "")),
-                "chg_pct": round(_to_num(top.get("涨跌幅")), 2),
-            },
-            "updated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        }
-
     try:
-        return _CACHE.get_or_set("market_breadth", _fetch, ttl=_CACHE_TTL)
+        cached, fresh = quote_cache.lookup("market_breadth", _CACHE_TTL)
+        if cached is not None:
+            if not fresh:
+                quote_cache.refresh_async("market_breadth", _fetch_market_breadth)
+            return cached
+        result = _fetch_market_breadth()
+        quote_cache.put("market_breadth", result)
+        return result
     except Exception as e:
         logger.error(f"获取市场宽度失败: {e}", exc_info=True)
         raise

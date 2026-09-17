@@ -84,8 +84,13 @@ def get_kline(stock_code: str, market: str = "zh_a", days: int = 180,
     :param start_date: 可选区间起点 YYYY-MM-DD 或 YYYYMMDD；提供后按区间取数（回测买卖点对齐用）
     :param end_date: 可选区间终点，默认今天
     :return: {code, market, name, dates, ohlcv, volumes, period, adjust, kind}
+
+    行情本地缓存（tail 模式专用，区间模式不缓存——回测买卖点要求精确区间）：
+    新鲜（<=120s）直接回缓存，毫秒级；过期先回旧值 + 后台刷新落库（SWR），
+    未命中同步拉取。首页 N+1 行情请求因此只在每 TTL 窗口真实出网一次，
+    且缓存持久化在 data/market_cache.db，服务重启后首页仍毫秒级。
     """
-    from src.data import Stock
+    from src.data import quote_cache
 
     if market not in ("zh_a", "us"):
         market = "zh_a"
@@ -119,11 +124,39 @@ def get_kline(stock_code: str, market: str = "zh_a", days: int = 180,
         end_date = datetime.now().strftime('%Y%m%d')
         start_date = (datetime.now() - timedelta(days=window_days)).strftime('%Y%m%d')
 
+    def _fetch() -> Dict:
+        return _fetch_and_shape(
+            stock_code, market, days, period, adjust, kind, is_index,
+            start_date, end_date, range_mode,
+        )
+
+    if not range_mode:
+        cache_key = (f"kline|{market}|{'index' if is_index else 'stock'}"
+                     f"|{stock_code}|{adjust}|{period}|{days}")
+        cached, fresh = quote_cache.lookup(cache_key, _QUOTE_MAX_AGE)
+        if cached is not None:
+            if not fresh:
+                quote_cache.refresh_async(cache_key, _fetch)
+            return cached
+        result = _fetch()
+        quote_cache.put(cache_key, result)
+        return result
+    return _fetch()
+
+
+_QUOTE_MAX_AGE = 120  # 秒：行情本地缓存新鲜窗口（SWR 过期即后台刷新）
+
+
+def _fetch_and_shape(stock_code: str, market: str, days: int, period: str, adjust: str,
+                     kind: str, is_index: bool, start_date: str, end_date: str,
+                     range_mode: bool) -> Dict:
+    """取数 + 聚合 + 序列化（get_kline 的同步执行体，缓存未命中/后台刷新共用）。"""
     if is_index:
         from src.data.data_manager import get_index_data
         df = get_index_data(stock_code, start_date, end_date, market)
         name = INDEX_NAMES.get(stock_code, "")
     else:
+        from src.data import Stock
         stock = Stock(stock_code, market=market)
         df = stock.get_stock_data(
             start_date=start_date, end_date=end_date,

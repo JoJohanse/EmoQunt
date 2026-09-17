@@ -33,6 +33,8 @@ export const zh: Messages = {
   },
   index: {
     sse: '上证指数',
+    sp500: '标普500',
+    nasdaq: '纳斯达克',
     csi300: '沪深300',
     szse: '深证成指',
     clickHint: '点击在主图查看该指数',
@@ -201,6 +203,8 @@ export const en: Messages = {
   },
   index: {
     sse: 'SSE Composite',
+    sp500: 'S&P 500',
+    nasdaq: 'NASDAQ',
     csi300: 'CSI 300',
     szse: 'SZSE Component',
     clickHint: 'Click to view this index on the chart',

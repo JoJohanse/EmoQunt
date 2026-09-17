@@ -127,6 +127,8 @@ const INDEX_PRESETS: { code: string; market: Market; nameKey: string; kind: 'ind
   { code: '000001', market: 'zh_a' as Market, nameKey: 'home.index.sse', kind: 'index' as const },
   { code: '000300', market: 'zh_a' as Market, nameKey: 'home.index.csi300', kind: 'index' as const },
   { code: '399001', market: 'zh_a' as Market, nameKey: 'home.index.szse', kind: 'index' as const },
+  { code: 'SP500', market: 'us' as Market, nameKey: 'home.index.sp500', kind: 'index' as const },
+  { code: 'NASDAQ', market: 'us' as Market, nameKey: 'home.index.nasdaq', kind: 'index' as const },
 ]
 type IndexPreset = (typeof INDEX_PRESETS)[number]
 
@@ -1052,7 +1054,10 @@ const sectorFallbackList = computed(() => {
         <el-row :gutter="12" class="index-row">
           <el-col v-for="idx in indexPresets" :key="idx.code" :xs="24" :sm="8">
             <div class="index-card" :title="t('home.index.clickHint')" @click="selectIndex(idx)">
-              <span class="index-name">{{ idx.name }}</span>
+              <span class="index-name-slot">
+                <span class="index-name">{{ idx.name }}</span>
+                <el-tag v-if="idx.market === 'us'" size="small" type="warning" class="index-market-tag">US</el-tag>
+              </span>
               <MiniSparkline
                 :values="quoteOf(idx.code, idx.market, idx.kind)?.closes ?? []"
                 :width="56"
@@ -1646,45 +1651,68 @@ const sectorFallbackList = computed(() => {
 .index-card {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 10px 16px;
+  padding: 10px 12px;
   margin-bottom: 12px;
   min-height: 48px;
   cursor: pointer;
+  overflow: hidden;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .index-card:hover {
   border-color: var(--brand-start);
   box-shadow: var(--shadow);
 }
+/* 名称+市场徽标固定槽宽：五张卡的走势图/价格从同一 x 起步，
+   US 徽标只占槽内预留位（A股卡留空占位），不再挤挪后续元素；
+   槽内超宽（英文长名）省略号截断，卡片高度保持一致不换行 */
+.index-name-slot {
+  flex: 0 0 88px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  white-space: nowrap;
+}
 .index-name {
   font-weight: 600;
   color: var(--text-muted);
   font-size: 0.9rem;
-  /* 英文指数名（SZSE Component）比中文宽，超宽时省略号截断而非挤换行 */
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.index-market-tag {
+  flex: 0 0 auto;
+  transform: translateY(-1px);
+  padding: 0 4px;
+  height: auto;
+}
 .index-close {
-  font-size: 1.2rem;
+  font-size: 1.05rem;
   font-weight: 700;
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
 .delta-badge {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  padding: 2px 8px;
+  padding: 2px 7px;
   border-radius: 999px;
   line-height: 1.4;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .delta-badge-sm {
   font-size: 0.76rem;
