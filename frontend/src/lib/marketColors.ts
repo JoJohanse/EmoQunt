@@ -1,4 +1,5 @@
 import type { Market } from '@/api/types'
+import { useUiStore } from '@/stores/ui'
 
 /**
  * 市场涨跌配色 token module ——「A股红涨绿跌 / 美股绿涨红跌 / 0=中性」这条业务规格
@@ -30,8 +31,20 @@ const CHART_PALETTES: Record<Market, ChartPalette> = {
   us: { up: '#26a69a', down: '#ef5350', upText: '#059669', downText: '#dc2626' },
 }
 
-/** 市场涨跌图表配色：A股红涨绿跌 / 美股绿涨红跌 */
+/** 用户涨跌配色偏好（stores/ui 持久化）；pinia 未激活等异常时回落跟随市场 */
+function upDownPref(): 'market' | 'red_up' | 'green_up' {
+  try {
+    return useUiStore().upDownColor
+  } catch {
+    return 'market'
+  }
+}
+
+/** 市场涨跌图表配色：默认 A股红涨绿跌 / 美股绿涨红跌；用户全局偏好可统一覆盖 */
 export function chartPalette(market: Market): ChartPalette {
+  const pref = upDownPref()
+  if (pref === 'red_up') return { up: '#ef232a', down: '#14b143', upText: '#dc2626', downText: '#059669' }
+  if (pref === 'green_up') return { up: '#26a69a', down: '#ef5350', upText: '#059669', downText: '#dc2626' }
   return CHART_PALETTES[market] ?? CHART_PALETTES.zh_a
 }
 
@@ -51,10 +64,13 @@ export function deltaDirection(chgPct: number): DeltaDirection {
   return chgPct > 0 ? 'up' : chgPct < 0 ? 'down' : 'flat'
 }
 
-/** 方向 → 语义色调：A股 up=danger（红涨），美股 up=success（绿涨）；平盘恒为 neutral */
+/** 方向 → 语义色调：默认 A股 up=danger（红涨），美股 up=success（绿涨）；
+ *  用户全局偏好（红涨绿跌/绿涨红跌）覆盖市场约定；平盘恒为 neutral */
 export function deltaTone(market: Market, dir: DeltaDirection): DeltaTone {
   if (dir === 'flat') return 'neutral'
-  return (dir === 'up') === (market !== 'us') ? 'danger' : 'success'
+  const pref = upDownPref()
+  const upIsRed = pref === 'red_up' ? true : pref === 'green_up' ? false : market !== 'us'
+  return (dir === 'up') === upIsRed ? 'danger' : 'success'
 }
 
 /**

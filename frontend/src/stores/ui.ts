@@ -15,6 +15,12 @@ export const useUiStore = defineStore(
   () => {
     const theme = ref<'light' | 'dark'>('light')
     const sidebarCollapsed = ref(false)
+    /**
+     * 涨跌配色全局偏好：market=跟随市场（A股红涨绿跌/美股绿涨红跌，旧行为）、
+     * red_up=红涨绿跌、green_up=绿涨红跌。唯一消费口径在 lib/marketColors.ts，
+     * 图表与 DOM 徽章全局生效。
+     */
+    const upDownColor = ref<'market' | 'red_up' | 'green_up'>('market')
     /** 首页首访导览是否已完成（完成或手动关闭都算），避免反复打扰 */
     const tourDone = ref(false)
 
@@ -52,7 +58,7 @@ export const useUiStore = defineStore(
     // 语言同步到 i18n 引擎（setLocale 负责 <html lang>）；immediate 保证首屏即生效
     watch(lang, (l) => setLocale(l), { immediate: true })
 
-    return { theme, sidebarCollapsed, tourDone, lang, toggleTheme, toggleSidebar, toggleLang }
+    return { theme, sidebarCollapsed, tourDone, lang, upDownColor, toggleTheme, toggleSidebar, toggleLang }
   },
-  { persist: { pick: ['theme', 'sidebarCollapsed', 'tourDone', 'lang'] } },
+  { persist: { pick: ['theme', 'sidebarCollapsed', 'tourDone', 'lang', 'upDownColor'] } },
 )

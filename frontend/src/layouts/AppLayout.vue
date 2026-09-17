@@ -216,6 +216,18 @@ const langLabel = computed(() => (uiStore.lang === 'en-US' ? '中文' : 'EN'))
             <el-icon :size="18"><Search /></el-icon>
           </el-button>
           <!-- 语言切换（标签显示目标语言，与右侧主题切换同款样式） -->
+          <el-tooltip :content="t('layout.upDown.label')" placement="bottom">
+            <el-select
+              v-model="uiStore.upDownColor"
+              size="small"
+              class="updown-select"
+              :aria-label="t('layout.upDown.label')"
+            >
+              <el-option value="market" :label="t('layout.upDown.market')" />
+              <el-option value="red_up" :label="t('layout.upDown.redUp')" />
+              <el-option value="green_up" :label="t('layout.upDown.greenUp')" />
+            </el-select>
+          </el-tooltip>
           <el-button text circle class="lang-btn" :title="t('layout.switchLang')" @click="uiStore.toggleLang()">
             <span class="lang-label">{{ langLabel }}</span>
           </el-button>
@@ -366,6 +378,13 @@ const langLabel = computed(() => (uiStore.lang === 'en-US' ? '中文' : 'EN'))
 }
 /* is-circle 固定 32px 宽 + 8px 内边距，「中文」二字（约 24px）会溢出圆形热区；
    归零内边距让文字在圆内居中，与相邻图标按钮严格同尺寸 */
+.updown-select {
+  width: 104px;
+  margin-right: 4px;
+}
+.updown-select :deep(.el-select__wrapper) {
+  min-height: 28px;
+}
 .lang-btn {
   padding: 0;
   justify-content: center;
