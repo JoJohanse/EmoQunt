@@ -30,6 +30,11 @@ export const zh: Messages = {
     failed: '失败',
     cancelled: '已取消',
   },
+  // 市场标签（策略库/运行历史/调优/运行详情等列表页共用；us 两语言同形）
+  market: {
+    zhA: 'A股',
+    us: 'US',
+  },
 }
 
 export const en: Messages = {
@@ -55,5 +60,9 @@ export const en: Messages = {
     succeeded: 'Succeeded',
     failed: 'Failed',
     cancelled: 'Cancelled',
+  },
+  market: {
+    zhA: 'A-share',
+    us: 'US',
   },
 }

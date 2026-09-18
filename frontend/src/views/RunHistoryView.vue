@@ -151,7 +151,7 @@ onMounted(() => {
         <el-option value="code" :label="t('runs.filters.kindCode')" />
       </el-select>
       <el-select v-model="marketFilter" clearable :placeholder="t('runs.filters.market')" style="width: 120px" @change="reload">
-        <el-option value="zh_a" label="A股" />
+        <el-option value="zh_a" :label="t('common.market.zhA')" />
         <el-option value="us" label="US" />
       </el-select>
       <el-select v-model="statusFilter" clearable :placeholder="t('runs.filters.status')" style="width: 130px" @change="reload">
@@ -176,7 +176,7 @@ onMounted(() => {
       <el-table-column :label="t('runs.col.stock')" width="120">
         <template #default="{ row }">
           <span>{{ row.stock_code }}</span>
-          <el-tag size="small" :type="row.market === 'us' ? 'warning' : 'danger'" class="market-tag">{{ row.market === 'us' ? 'US' : 'A股' }}</el-tag>
+          <el-tag size="small" :type="row.market === 'us' ? 'warning' : 'danger'" class="market-tag">{{ row.market === 'us' ? t('common.market.us') : t('common.market.zhA') }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column :label="t('runs.col.range')" width="190">

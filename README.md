@@ -6,9 +6,10 @@
 
 [中文](README_ZH.md) | English
 
-A one-stop web experience for strategy building, backtesting, factor analysis and performance/risk
-management — with industry sentiment factors and realistic trading costs. Ships with a modern
-**Vue3 SPA** (`/spa/*`) and a classic Jinja2 frontend (`/`).
+A one-stop web experience for strategy building (templates and user Python code), backtesting,
+parameter tuning, factor analysis and performance/risk management — with industry sentiment
+factors and realistic trading costs. Ships with a modern **Vue3 SPA** (`/spa/*`) and a classic
+Jinja2 frontend (`/`).
 
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688?logo=fastapi&logoColor=white)
@@ -49,7 +50,7 @@ management — with industry sentiment factors and realistic trading costs. Ship
       <b>First-visit tour</b> — driver.js, 7 steps; shown once, replayable
     </td>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/spa-chat-tool-card.png" alt="AI tool card" width="100%"/><br/>
+      <img src="docs/screenshots/spa-chat-tool-card-en.png" alt="AI tool card" width="100%"/><br/>
       <b>AI tool-result card</b> — Generative UI: quote card with one-click "open on homepage"
     </td>
   </tr>
@@ -71,6 +72,36 @@ management — with industry sentiment factors and realistic trading costs. Ship
     <td width="50%" valign="top">
       <img src="docs/screenshots/spa-strategies-en.png" alt="Strategy list" width="100%"/><br/>
       <b>Strategy list</b>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/spa-strategy-library-en.png" alt="Code strategy library" width="100%"/><br/>
+      <b>Code strategy library</b> — user Python strategies, AST-whitelist validation, version snapshots &amp; rollback
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/spa-strategy-detail-en.png" alt="Strategy detail" width="100%"/><br/>
+      <b>Strategy detail</b> — parameters / source (CodeMirror) / versions / backtests / tuning tabs
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/spa-runs-en.png" alt="Run history" width="100%"/><br/>
+      <b>Run history</b> — async backtest runs with status filters, equity thumbnails and a detail dialog
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/spa-tuning-en.png" alt="Tuning detail" width="100%"/><br/>
+      <b>Parameter tuning</b> — normalized equity comparison, per-combination metrics table, apply the best set
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/spa-factor-library-en.png" alt="Factor library" width="100%"/><br/>
+      <b>Factor library</b> — user Python factors, same sandbox and version history
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/spa-factor-detail-en.png" alt="Factor detail" width="100%"/><br/>
+      <b>Factor detail</b> — code / one-click HS300 analysis / versions
     </td>
   </tr>
   <tr>
@@ -96,16 +127,22 @@ management — with industry sentiment factors and realistic trading costs. Ship
 - **A-share fallback chain**: Tushare Pro (optional, needs `TUSHARE_TOKEN`) → akshare Sina → Eastmoney → baostock, driven by a unified FetchRunner with automatic degradation
 - **US two-tier fallback**: yfinance (primary) → akshare Sina
 - **Data-source health beats**: every fetch layer records success/failure (in-process, last 7 per source) exposed at `GET /api/data/source-health` and rendered as a homepage heartbeat bar
+- **Local quote cache (SQLite + SWR)**: quote reads (`/api/kline` tail mode, market breadth, sector board) persist to `data/market_cache.db`; a fresh hit answers in milliseconds, a stale hit returns the old value immediately and refreshes in the background (de-duplicated per key) — the homepage first screen stays instant even right after a restart, where a cold fetch used to take 5–7 s
 - **Optional PostgreSQL + Redis cache** (one-command `docker-compose.yml`): read order Redis → PG → CSV → network; silently degrades to pure network mode
 - Market data cached under `stock_data/`; sentiment snapshots at `nes_data/sentiment_results/{YYYYMMDD}.json` feed the homepage calendar and the backtest sentiment filter
 
 ### 🖥 Vue3 SPA (`/spa/*`)
 - **Navigation**: collapsible grouped sidebar + breadcrumbs + dark mode + global command palette `Cmd+K` + top tab bar + sidebar favorites + first-visit tour (driver.js, replayable)
-- **Home dashboard**: quick entries, index strip (inline sparklines; click to open the chart), watchlist panel (add/remove, inline sparklines, animated price & change flash; click to switch chart), recent backtests (one-click re-run with parameter refill), top sectors, news with source filter tabs, recommendations (click to drill into the chart), allocation donut (market / daily change / industry), data-source heartbeat bar, sentiment calendar; **draggable grid layout** persisted; SWR-style polling for quotes
+- **Global up/down colour scheme**: header dropdown — follow market (A-share red-up/green-down, US green-up/red-down) / red-up / green-up; applied at once to every K-line, sparkline and change badge, persisted to localStorage
+- **Home dashboard**: quick entries, index strip (inline sparklines; click to open the chart; **includes S&P 500 / NASDAQ with a US badge**), watchlist panel (add/remove, inline sparklines, animated price & change flash; click to switch chart), recent backtests (one-click re-run with parameter refill), top sectors, news with source filter tabs, recommendations (click to drill into the chart), allocation donut (market / daily change / industry), data-source heartbeat bar, sentiment calendar; **draggable grid layout** persisted; SWR-style polling for quotes, backed by the local quote cache below
 - **Dynamic ECharts**: equity/drawdown/daily-return curves; candlestick K-line + volume + indicator overlays + pinned tooltip panel
+- **Code strategy library** (`/strategy-library`): user Python strategies validated by an AST whitelist, with version snapshots/rollback and detail tabs for parameters, source (lazy-loaded CodeMirror 6), versions, backtests and tuning
+- **Run history & parameter tuning**: `/runs` lists async backtest runs with status filters, equity thumbnails and a detail dialog; `/tuning/:taskId` compares normalized equity curves of every grid combination (≤63 + baseline), shows a per-combination metrics table and applies the best set back to the strategy — the only write-back path to strategy parameters
+- **Factor library** (`/factor-library`): author Python factors (top-level `compute(df) -> pd.Series` over one symbol's Chinese-column daily bars), same AST sandbox + version history, then run one-click cross-sectional analysis over the HS300 universe (IC / RankIC / ICIR / quantile returns / monotonicity) from the detail page's three tabs; A-shares only
 - **SPA-exclusive pages**: strategy comparison (overlaid equity + metrics table), factor analysis (IC / quantile returns / monotonicity)
-- **Browser-local persistence**: UI prefs, watchlist, backtest history & form, AI chat, favorites/tabs/layout/K-line preferences — all survive a refresh
-- **AI investment assistant**: global drawer chat, LangGraph ReAct agent, SSE streaming + Markdown; **tool-result cards** (quote/sentiment/recommendation/backtest/signal, one click opens the chart)
+- **Browser-local persistence**: UI prefs (incl. the colour scheme), watchlist, backtest history & form, AI chat, favorites/tabs/layout/K-line preferences — all survive a refresh
+- **AI investment assistant**: global drawer chat, LangGraph ReAct agent, SSE streaming + Markdown; **bind a code strategy** above the input and the agent picks up its parameters, source and latest backtest/tuning results ("the current strategy" just works); **structured tool-result cards** for quote/sentiment/recommendation/backtest/signal/strategy source/tuning task & progress/run history/factor analysis, with one click to open the chart
+- **Tuning workflow in chat**: read the parameters → build a grid (≤63 combinations + baseline) → create the tuning task → poll it to a terminal state in the same turn → report the best combination against the baseline (parameters are never applied automatically)
 
 ### 🧾 Classic Jinja2 frontend (`/`)
 - `base.html` + `app.css` design tokens, Bootstrap 5.3 + Font Awesome 6; 8 pages; the backtest form remembers your last input
@@ -152,8 +189,10 @@ docker compose up -d         # PostgreSQL 16 + Redis 7 (via domestic mirror dock
 
 ### 6. Tests
 ```bash
-pytest test/test_backtest.py -v    # pick test files explicitly (test/ also contains manual scripts)
+pytest test/test_backtest.py test/test_tuning.py test/test_factor_library.py \
+       test/test_quote_cache.py test/test_agent_p4.py test/test_agent_tools.py -v   # 122 cases
 ```
+Pick test files explicitly — `test/` also contains manual scripts.
 
 ---
 
@@ -166,10 +205,14 @@ pytest test/test_backtest.py -v    # pick test files explicitly (test/ also cont
 | `/spa/` | Home dashboard: quick entries, index strip, watchlist, K-line board, recent backtests, sectors/news/recommendations, allocation donut, source heartbeats |
 | `/spa/backtest` | Backtest (form memory + dynamic charts + trade markers + risk analysis; supports `?historyId=` refill) |
 | `/spa/strategies` | Strategy list (view/delete) |
+| `/spa/strategy-library` · `/spa/strategy-library/:id` | Code strategy library and detail (parameters / source / versions / backtests / tuning) |
+| `/spa/runs` | Run history — async backtest runs with status filters, equity thumbnails and a detail dialog |
+| `/spa/tuning/:taskId` | Tuning detail — normalized equity comparison, per-combination metrics table, apply the best parameters |
 | `/spa/sentiment` | Sentiment analysis (news + sector scores) |
 | `/spa/daily-recommend` | Daily recommendations |
 | `/spa/strategy-compare` | Strategy comparison (2–5 equity curves + metrics table) |
 | `/spa/factor-analysis` | Factor analysis (IC / quantile backtests / monotonicity) |
+| `/spa/factor-library` · `/spa/factor-library/:id` | Factor library and detail (code / one-click HS300 analysis / versions) |
 
 ### Classic (Jinja2) routes
 
@@ -201,6 +244,10 @@ pytest test/test_backtest.py -v    # pick test files explicitly (test/ also cont
 | `/api/daily-recommend` (`/refresh`) | GET | Daily recommendations |
 | `/api/market/breadth` / `sectors` | GET | Market breadth / sector board |
 | `/api/data/source-health` | GET | Data-source health beats (last 7 attempts per source) |
+| `/api/v2/strategies*` | GET / POST / PUT / DELETE | Code strategy library (incl. `/validate` and version list/restore) |
+| `/api/v2/backtest/runs*` | GET / POST | Async backtest runs: submit / list / detail |
+| `/api/v2/tuning/tasks*` | GET / POST | Tuning tasks: create / poll / `…/apply` the best parameters |
+| `/api/v2/factors*` | GET / POST / PUT / DELETE | Python factor library (incl. `/validate`, versions and `/analyze`) |
 | `/api/agent/chat` | POST | AI assistant (SSE streaming) |
 | `/api/agent/chat/sync` | POST | AI assistant (non-streaming) |
 
@@ -216,27 +263,30 @@ pytest test/test_backtest.py -v    # pick test files explicitly (test/ also cont
 ```
 EmoQunt/
 ├── config/                 # Configuration (config.yaml + QDT_-prefixed env overrides)
+├── data/                   # Runtime SQLite stores: emoquant.db (business) + market_cache.db (regenerable quote cache)
 ├── docs/
 │   ├── research/           # UI research & decision records
 │   └── screenshots/        # README screenshots + capture script
-├── frontend/               # Vue3 SPA (Vite + TS + Element Plus + ECharts + Pinia)
+├── emoquant/               # SDK exposed to user strategy/factor code (trading + data APIs, host-bound runtime)
+├── frontend/               # Vue3 SPA (Vite + TS + Element Plus + ECharts + Pinia + CodeMirror 6)
 │   └── src/
-│       ├── views/          # Home/Backtest/Strategies/Sentiment/Recommend/Compare/Factor
+│       ├── views/          # Home/Backtest/Strategy library & detail/Runs/Tuning/Sentiment/Recommend/Compare/Factor library & detail
 │       ├── stores/         # Pinia stores (chat/ui/watchlist/backtestHistory/favorites/tabs/homeLayout/klinePrefs + persist plugin)
 │       ├── api/            # axios wrapper + SSE parsing + type definitions
 │       ├── chart/ lib/     # Candlestick option assembler / color tokens / indicator pure functions
-│       ├── components/     # CommandPalette/AppTabs/SentimentCalendar/ChatPanel/ChatToolCard, etc.
+│       ├── components/     # CommandPalette/AppTabs/SentimentCalendar/ChatPanel/ChatToolCard/CodeEditor, etc.
 │       └── layouts/        # Sidebar (with favorites) + breadcrumbs + tabs + dark/command palette layout
 ├── nes_data/               # Sentiment data & snapshots (sentiment_results/{YYYYMMDD}.json)
 ├── src/
-│   ├── agent/              # LangGraph ReAct investment assistant
-│   ├── Strategy/           # Strategy base + dynamic factory + sentiment filter + user strategies
+│   ├── agent/              # LangGraph ReAct investment assistant (+ strategy-context injection)
+│   ├── Strategy/           # Strategy base + dynamic factory + sentiment filter + user strategies + code sandbox/loader
 │   ├── analysis/           # Factor analysis (IC / quantiles / monotonicity)
 │   ├── backtest/           # Backtest engine + performance analyzer + cost models + trade recorder
-│   ├── data/               # Data management: FetchRunner fallback chain + db.py (PG/Redis cache) + SnapshotStore
+│   ├── data/               # Data management: FetchRunner fallback chain + quote cache (SQLite SWR) + db.py (PG/Redis cache) + SnapshotStore
 │   ├── factor/             # Sentiment/technical/market factors + daily recommendations
 │   ├── risk/               # Risk management (sizing / stop-loss / VaR / stress tests)
-│   ├── services/           # Thin service-orchestration layer
+│   ├── services/           # Thin service-orchestration layer (strategies / backtest / runs / tuning / factor library)
+│   ├── store/              # Business SQLite (code strategies / runs / tuning / factors; WAL + per-thread connections)
 │   └── utils/              # Paths / logger / validators / env / serialization / TTL cache
 ├── test/                   # pytest suite
 ├── web/                    # Classic Jinja2 frontend (templates + static)
@@ -251,13 +301,13 @@ EmoQunt/
 | Layer | Technology |
 |-------|-----------|
 | Backend | FastAPI + Uvicorn + Jinja2 (threadpooled data handlers); optional `psycopg_pool` + cache layer |
-| SPA frontend | Vue 3 + TypeScript + Vite + Element Plus + ECharts + Pinia (zero-dependency localStorage persist plugin) |
+| SPA frontend | Vue 3 + TypeScript + Vite + Element Plus + ECharts + Pinia (zero-dependency localStorage persist plugin) + CodeMirror 6 (lazy-loaded editor) |
 | Classic frontend | Bootstrap 5.3 + Font Awesome 6 |
-| Data | akshare / Tushare Pro (optional) / baostock / yfinance; optional PostgreSQL 16 + Redis 7 |
+| Data | akshare / Tushare Pro (optional) / baostock / yfinance; optional PostgreSQL 16 + Redis 7; local SQLite quote cache (SWR) |
 | Backtesting | backtrader + custom dual-market cost models |
 | Analysis & viz | pandas, numpy, scipy, scikit-learn; ECharts (SPA), matplotlib / seaborn / plotly (server) |
 | AI | OpenAI-compatible LLM + LangChain + LangGraph (ReAct agent) |
-| Testing | pytest (500+ cases) |
+| Testing | pytest (122 cases across the backtest / tuning / factor-library / quote-cache / agent suites) |
 
 ---
 
@@ -283,6 +333,7 @@ EmoQunt/
 - First backtest data fetch needs network access (results are cached; the fallback chain switches automatically when a source misbehaves)
 - Sentiment analysis needs a valid LLM API key
 - `logs/`, `output/`, `nes_data/` directories are auto-created on first run
+- `data/` holds the runtime SQLite stores (business DB `emoqunt.db` + regenerable quote cache `market_cache.db`; delete the latter to force a cold fetch)
 - `/spa/*` returns a 503 hint when the SPA is not built (`frontend/dist` missing)
 - Backtest results are for reference only and do not constitute investment advice
 

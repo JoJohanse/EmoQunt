@@ -157,7 +157,7 @@ onMounted(load)
     <div class="toolbar">
       <el-radio-group v-model="marketFilter">
         <el-radio-button value="">{{ t('library.marketAll') }}</el-radio-button>
-        <el-radio-button value="zh_a">A股</el-radio-button>
+        <el-radio-button value="zh_a">{{ t('common.market.zhA') }}</el-radio-button>
         <el-radio-button value="us">US</el-radio-button>
       </el-radio-group>
       <el-input
@@ -182,7 +182,7 @@ onMounted(load)
           <div class="card-top">
             <span class="card-name">{{ s.name }}</span>
             <el-tag size="small" :type="s.market === 'us' ? 'warning' : 'danger'">
-              {{ s.market === 'us' ? 'US' : 'A股' }}
+              {{ s.market === 'us' ? t('common.market.us') : t('common.market.zhA') }}
             </el-tag>
           </div>
           <p class="card-desc">{{ s.description || t('library.detail.noDescription') }}</p>
@@ -212,7 +212,7 @@ onMounted(load)
         </el-form-item>
         <el-form-item :label="t('library.create.market')">
           <el-radio-group v-model="form.market">
-            <el-radio-button value="zh_a">A股</el-radio-button>
+            <el-radio-button value="zh_a">{{ t('common.market.zhA') }}</el-radio-button>
             <el-radio-button value="us">US</el-radio-button>
           </el-radio-group>
         </el-form-item>

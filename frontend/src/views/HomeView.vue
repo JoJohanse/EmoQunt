@@ -18,7 +18,7 @@ import type {
   SourceBeat,
   SourceHealthData,
 } from '@/api/types'
-import { useWatchlistStore, targetKey } from '@/stores/watchlist'
+import { useWatchlistStore, targetKey, watchDisplayName } from '@/stores/watchlist'
 import type { WatchlistItem } from '@/stores/watchlist'
 import {
   chartPalette,
@@ -195,11 +195,13 @@ function firstItemKey(): string {
 const activeKey = ref(normKey(watchlistStore.lastKey) || firstItemKey())
 const activeTarget = computed<{ code: string; market: Market; name: string; kind?: 'index' } | null>(() => {
   const found = watchlistStore.findByKey(activeKey.value)
-  if (found) return found
+  // 展示名经 watchDisplayName 现算（默认指数走词表 nameKey，双语可译）
+  if (found) return { ...found, name: watchDisplayName(found) }
   // 指数速览卡片可点击切换到未在自选中的预设指数
   const preset = INDEX_PRESETS.find((i) => targetKey(i.code, i.market, i.kind) === activeKey.value)
   if (preset) return { code: preset.code, market: preset.market, name: t(preset.nameKey), kind: preset.kind }
-  return watchlistStore.items[0] ?? null
+  const first = watchlistStore.items[0]
+  return first ? { ...first, name: watchDisplayName(first) } : null
 })
 /** 是否指数标的：指数无复权概念，禁用复权选择 */
 const isIndexTarget = computed(() => activeTarget.value?.kind === 'index')
@@ -1244,7 +1246,7 @@ const sectorFallbackList = computed(() => {
                   @click="activeKey = targetKey(item.code, item.market, item.kind)"
                 >
                   <div class="watch-name">
-                    <span class="watch-title">{{ item.name }}</span>
+                    <span class="watch-title">{{ watchDisplayName(item) }}</span>
                     <code class="watch-code">{{ item.code }}</code>
                   </div>
                   <MiniSparkline

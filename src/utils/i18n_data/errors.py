@@ -39,6 +39,10 @@ ERROR_MESSAGES = {
     "策略名称已存在": "A strategy with this name already exists",
     "自定义参数不能为空": "Custom parameters cannot be empty",
     "保存策略失败": "Failed to save the strategy",
+
+    # ---- 回测/因子/SDK 校验（服务层裸中文，经 tr_error 出口兜底） ----
+    "method 必须是 'pearson' 或 'spearman'": "method must be 'pearson' or 'spearman'",
+    "buy 需要指定 size 或 percent": "buy requires size or percent",
 }
 
 # 参数化匹配：中文模板（{param} 占位）→ 英文模板（同名占位）
@@ -49,4 +53,11 @@ ERROR_TEMPLATES = {
     "股票 {stock_code} 不是沪深300成分股，暂时只支持沪深300成分股的舆情分析":
         "Stock {stock_code} is not a CSI 300 constituent; sentiment analysis currently supports "
         "CSI 300 constituents only",
+    # backtest_manager 回测核心取数/策略解析（同步接口与 HTML 回测页可达）
+    "无法获取股票 {stock_code} 的数据": "Unable to fetch data for stock {stock_code}",
+    "未找到代码策略: id={strategy_id} name={strategy_name}":
+        "Code strategy not found: id={strategy_id} name={strategy_name}",
+    "未找到用户策略: {strategy_name}": "User strategy not found: {strategy_name}",
+    # tuning 执行器（任务行缺失时上抛，路由层 tr_error 兜底）
+    "调优任务不存在: {task_id}": "Tuning task not found: {task_id}",
 }

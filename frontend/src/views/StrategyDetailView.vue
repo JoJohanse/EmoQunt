@@ -414,7 +414,7 @@ onBeforeUnmount(() => {
         <h2 v-if="detail" class="page-title">
           {{ detail.name }}
           <el-tag size="small" :type="detail.market === 'us' ? 'warning' : 'danger'" class="market-tag">
-            {{ detail.market === 'us' ? 'US' : 'A股' }}
+            {{ detail.market === 'us' ? t('common.market.us') : t('common.market.zhA') }}
           </el-tag>
         </h2>
         <p v-if="detail" class="page-subtitle">

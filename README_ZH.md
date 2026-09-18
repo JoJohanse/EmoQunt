@@ -6,7 +6,7 @@
 
 [English](README.md) | 中文
 
-融合行业情绪因子与真实交易成本，提供从策略构建、回测、因子分析到绩效与风险管理的一站式 Web 体验；
+融合行业情绪因子与真实交易成本，提供从策略构建（模板策略与用户 Python 代码策略）、回测、参数调优、因子分析到绩效与风险管理的一站式 Web 体验；
 配备 **Vue3 现代化 SPA**（`/spa/*`）与 Jinja2 经典版（`/`）双前端。
 
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
@@ -73,6 +73,36 @@
     </td>
   </tr>
   <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/spa-strategy-library.png" alt="代码策略库" width="100%"/><br/>
+      <b>代码策略库</b> — 用户 Python 策略，AST 白名单校验，版本快照与回滚
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/spa-strategy-detail.png" alt="策略详情" width="100%"/><br/>
+      <b>策略详情</b> — 参数 / 源码（CodeMirror）/ 版本 / 回测 / 调优 五个 Tab
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/spa-runs.png" alt="运行历史" width="100%"/><br/>
+      <b>运行历史</b> — 异步回测记录，状态筛选 + 净值缩略图 + 详情弹窗
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/spa-tuning.png" alt="参数调优" width="100%"/><br/>
+      <b>参数调优</b> — 归一化净值对比 + 组合指标表，一键应用最优参数
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/spa-factor-library.png" alt="因子库" width="100%"/><br/>
+      <b>因子库</b> — 用户 Python 因子，同一套沙箱校验与版本历史
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/spa-factor-detail.png" alt="因子详情" width="100%"/><br/>
+      <b>因子详情</b> — 代码 / 一键 HS300 分析 / 版本 三 Tab
+    </td>
+  </tr>
+  <tr>
     <td colspan="2" align="center">
       <img src="docs/screenshots/web-sentiment.png" alt="舆情分析" width="100%"/><br/>
       <b>经典版舆情分析</b>（Jinja2，<code>/sentiment</code>）
@@ -95,16 +125,22 @@
 - **A股回退链**：Tushare Pro（可选，需 `TUSHARE_TOKEN`）→ akshare 新浪源 → 东财源 → baostock，由统一 FetchRunner 驱动，任一环节失败自动降级
 - **美股两级回退**：yfinance（主）→ akshare 新浪源
 - **数据源健康心跳**：每个取数层的成败被记录（进程内、每源近 7 次），`GET /api/data/source-health` 暴露并在首页渲染为心跳条——"为何某股无数据"一目了然
+- **行情本地持久化缓存（SQLite + SWR）**：行情读取（`/api/kline` tail 模式、市场宽度、行业板块）落 `data/market_cache.db`；新鲜命中毫秒返回，过期则先回旧值再后台刷新（同 key 在途去重）——服务重启后首页首屏依旧毫秒级，此前冷加载需 5~7 秒
 - **可选 PostgreSQL + Redis 缓存**（`docker-compose.yml` 一键启动）：读序 Redis → PG → CSV → 网络，不可用时静默降级为纯网络模式
 - 行情结果缓存至本地 `stock_data/`；情绪快照位于 `nes_data/sentiment_results/{YYYYMMDD}.json`，供情绪日历与回测情绪过滤使用
 
 ### 🖥 Vue3 SPA（`/spa/*`）
 - **导航**：可折叠分组侧边栏 + 面包屑 + 暗色模式 + 全局命令面板 `Cmd+K` + 顶部标签页 + 侧边栏收藏 + 首访导览（driver.js 七步，可重放）
-- **首页看板**：功能快捷入口、指数速览（行内 sparkline，点击切主图）、自选股面板（增删、行内 sparkline、价格滚动与涨跌闪烁、点击切主图）、最近回测（一键重跑参数回填）、热门板块、当日舆情（来源分组过滤）、个股推荐（点击下钻主图）、自选分布环图（市场/涨跌/行业三维）、数据源心跳条、情绪日历；**可拖拽网格布局**持久化，行情 SWR 式轮询刷新
+- **涨跌配色全局设置**：顶栏下拉可选择「跟随市场」（A股红涨绿跌 / 美股绿涨红跌）、红涨绿跌、绿涨红跌，K 线、迷你走势线、涨跌徽标一次性全局生效，localStorage 持久化
+- **首页看板**：功能快捷入口、指数速览（行内 sparkline，点击切主图；**新增标普500 / 纳斯达克（US 徽标）**）、自选股面板（增删、行内 sparkline、价格滚动与涨跌闪烁、点击切主图）、最近回测（一键重跑参数回填）、热门板块、当日舆情（来源分组过滤）、个股推荐（点击下钻主图）、自选分布环图（市场/涨跌/行业三维）、数据源心跳条、情绪日历；**可拖拽网格布局**持久化，行情 SWR 式轮询刷新（由下方本地缓存兜底）
 - **动态 ECharts**：回测收益/回撤/日收益曲线；K 线蜡烛图 + 成交量 + 指标叠加 + 吸顶数值面板
+- **代码策略库**（`/strategy-library`）：用户 Python 策略经 AST 白名单校验后入库，更新即自动快照版本（可回滚）；详情页分「参数/源码（CodeMirror 6 懒加载）/版本/回测/调优」Tab
+- **运行历史与参数调优**：`/runs` 展示异步回测记录（状态筛选、净值缩略图、详情弹窗）；`/tuning/:taskId` 对比每组网格参数的归一化净值（网格 ≤63 组合 + 基准），列出组合指标表并可一键应用最优参数——这是回写策略参数的唯一入口
+- **因子库**（`/factor-library`）：用户 Python 因子（顶层 `compute(df) -> pd.Series`，df 为单标的中文列日线），复用同一套 AST 沙箱与版本历史；详情页三 Tab（代码 / 分析 / 版本），一键跑 HS300 全样本横截面分析（IC / RankIC / ICIR / 分层收益 / 单调性）。本期限定 A 股
 - **SPA 独有页面**：策略对比（多策略净值叠加 + 指标表）、因子分析（IC / 分层 / 单调性）
-- **浏览器本地持久化**：UI 偏好、自选股、回测历史与表单、AI 对话、收藏/标签页/布局/K 线偏好——刷新全部保持
-- **AI 投资助手**：全局抽屉对话，LangGraph ReAct agent，SSE 流式 + Markdown；**工具结果卡片化**（行情/舆情/推荐/回测/信号六类卡片，一键跳转主图）
+- **浏览器本地持久化**：UI 偏好（含涨跌配色）、自选股、回测历史与表单、AI 对话、收藏/标签页/布局/K 线偏好——刷新全部保持
+- **AI 投资助手**：全局抽屉对话，LangGraph ReAct agent，SSE 流式 + Markdown；输入区上方可**绑定代码策略**，agent 自动获得其参数、源码与最近回测/调优结果（说"当前策略"即可）；**工具结果结构化卡片**覆盖行情/舆情/推荐/回测/信号/策略源码（只读预览）/调优任务/调优进度/运行记录/因子分析，一键跳转主图
+- **对话内调优工作流**：读参数 → 生成网格（≤63 组合 + 基准）→ 建调优任务 → 同回合轮询到终态 → 报告最优组合与基准对比（**绝不自动应用参数**）
 
 ### 🧾 Jinja2 经典版（`/`）
 - `base.html` + `app.css` 设计令牌，Bootstrap 5.3 + Font Awesome 6；8 个页面；回测表单记忆上次输入
@@ -151,8 +187,10 @@ docker compose up -d         # PostgreSQL 16 + Redis 7（国内源 docker.m.daoc
 
 ### 6. 运行测试
 ```bash
-pytest test/test_backtest.py -v    # 测试文件需显式指定（test/ 下另有手动脚本）
+pytest test/test_backtest.py test/test_tuning.py test/test_factor_library.py \
+       test/test_quote_cache.py test/test_agent_p4.py test/test_agent_tools.py -v   # 122 例
 ```
+测试文件需显式指定（`test/` 下另有手动脚本）。
 
 ---
 
@@ -165,10 +203,14 @@ pytest test/test_backtest.py -v    # 测试文件需显式指定（test/ 下另�
 | `/spa/` | 首页看板：快捷入口、指数速览、自选股、K 线主图、最近回测、板块/舆情/推荐、自选分布、数据源心跳 |
 | `/spa/backtest` | 策略回测（表单记忆 + 动态图表 + 买卖点标注 + 风险分析；支持 `?historyId=` 回填） |
 | `/spa/strategies` | 策略列表（查看/删除） |
+| `/spa/strategy-library` · `/spa/strategy-library/:id` | 代码策略库与详情（参数/源码/版本/回测/调优 Tab） |
+| `/spa/runs` | 运行历史（异步回测记录 + 状态筛选 + 净值缩略图 + 详情弹窗） |
+| `/spa/tuning/:taskId` | 调优详情（归一化净值对比 + 组合指标表 + 一键应用最优参数） |
 | `/spa/sentiment` | 舆情分析（新闻 + 板块得分） |
 | `/spa/daily-recommend` | 每日推荐 |
 | `/spa/strategy-compare` | 多策略对比（2~5 个策略净值叠加 + 指标表） |
 | `/spa/factor-analysis` | 因子分析（IC / 分层回测 / 单调性） |
+| `/spa/factor-library` · `/spa/factor-library/:id` | 因子库与详情（代码 / 一键 HS300 分析 / 版本） |
 
 ### 经典版（Jinja2）路由
 
@@ -200,6 +242,10 @@ pytest test/test_backtest.py -v    # 测试文件需显式指定（test/ 下另�
 | `/api/daily-recommend`（`/refresh`） | GET | 每日推荐 |
 | `/api/market/breadth` / `sectors` | GET | 市场宽度 / 行业板块行情 |
 | `/api/data/source-health` | GET | 数据源健康心跳（每源近 7 次成败） |
+| `/api/v2/strategies*` | GET / POST / PUT / DELETE | 代码策略库（含 `/validate` 与版本列表/回滚） |
+| `/api/v2/backtest/runs*` | GET / POST | 异步回测运行记录：提交 / 列表 / 详情 |
+| `/api/v2/tuning/tasks*` | GET / POST | 参数调优任务：创建 / 轮询 / `…/apply` 应用最优参数 |
+| `/api/v2/factors*` | GET / POST / PUT / DELETE | Python 因子库（含 `/validate`、版本与 `/analyze`） |
 | `/api/agent/chat` | POST | AI 助手（SSE 流式） |
 | `/api/agent/chat/sync` | POST | AI 助手（非流式） |
 
@@ -215,27 +261,30 @@ pytest test/test_backtest.py -v    # 测试文件需显式指定（test/ 下另�
 ```
 EmoQunt/
 ├── config/                 # 配置文件（config.yaml + 环境变量 QDT_ 前缀覆盖）
+├── data/                   # 运行时 SQLite：emoqunt.db（业务库）+ market_cache.db（可再生的行情缓存）
 ├── docs/
 │   ├── research/           # UI 调研与决策记录
 │   └── screenshots/        # README 截图与采集脚本
-├── frontend/               # Vue3 SPA（Vite + TS + Element Plus + ECharts + Pinia）
+├── emoquant/               # 面向用户策略/因子源码的 SDK（交易 + 行情/情绪接口，经宿主线程局部运行时绑定）
+├── frontend/               # Vue3 SPA（Vite + TS + Element Plus + ECharts + Pinia + CodeMirror 6）
 │   └── src/
-│       ├── views/          # 首页/回测/策略列表/舆情/推荐/策略对比/因子分析
+│       ├── views/          # 首页/回测/策略库与详情/运行历史/调优/舆情/推荐/策略对比/因子库与详情
 │       ├── stores/         # Pinia 状态（chat/ui/watchlist/backtestHistory/favorites/tabs/homeLayout/klinePrefs + persist 插件）
 │       ├── api/            # axios 封装 + SSE 解析 + 类型定义
 │       ├── chart/ lib/     # 蜡烛图 option 组装器 / 配色 token / 技术指标纯函数
-│       ├── components/     # CommandPalette/AppTabs/SentimentCalendar/ChatPanel/ChatToolCard 等
+│       ├── components/     # CommandPalette/AppTabs/SentimentCalendar/ChatPanel/ChatToolCard/CodeEditor 等
 │       └── layouts/        # 侧边栏（含收藏）+ 面包屑 + 标签页 + 暗色/命令面板布局
 ├── nes_data/               # 舆情数据与情绪快照（sentiment_results/{YYYYMMDD}.json）
 ├── src/
-│   ├── agent/              # LangGraph ReAct 投资助手
-│   ├── Strategy/           # 策略基类 + 动态策略工厂 + 情绪过滤 + 用户策略
+│   ├── agent/              # LangGraph ReAct 投资助手（含策略上下文注入）
+│   ├── Strategy/           # 策略基类 + 动态策略工厂 + 情绪过滤 + 用户策略 + 代码沙箱/加载器
 │   ├── analysis/           # 因子分析（IC / 分层 / 单调性）
 │   ├── backtest/           # 回测引擎 + 绩效分析器 + 成本模型 + 逐笔成交记录
-│   ├── data/               # 数据管理：FetchRunner 多源回退链 + db.py(PG/Redis 缓存) + SnapshotStore
+│   ├── data/               # 数据管理：FetchRunner 多源回退链 + 行情本地缓存(SQLite SWR) + db.py(PG/Redis 缓存) + SnapshotStore
 │   ├── factor/             # 情绪/技术/市场因子 + 每日推荐
 │   ├── risk/               # 风险管理（仓位/止损/VaR/压力测试）
-│   ├── services/           # 业务编排薄层（路由适配器与领域模块之间）
+│   ├── services/           # 业务编排薄层（策略/回测/运行记录/调优/因子库）
+│   ├── store/              # 业务 SQLite（代码策略/运行记录/调优/因子；WAL + 每线程连接）
 │   └── utils/              # 路径/日志/校验/环境变量/序列化/TTL 缓存
 ├── test/                   # pytest 测试套件
 ├── web/                    # Jinja2 经典版前端（templates + static）
@@ -250,13 +299,13 @@ EmoQunt/
 | 层 | 技术 |
 |----|------|
 | 后端 | FastAPI + Uvicorn + Jinja2（数据类接口线程池化）；可选 `psycopg_pool` 连接池 + 缓存层 |
-| SPA 前端 | Vue 3 + TypeScript + Vite + Element Plus + ECharts + Pinia（自研 localStorage 持久化插件） |
+| SPA 前端 | Vue 3 + TypeScript + Vite + Element Plus + ECharts + Pinia（自研 localStorage 持久化插件）+ CodeMirror 6（懒加载编辑器） |
 | 经典版前端 | Bootstrap 5.3 + Font Awesome 6 |
-| 数据 | akshare / Tushare Pro（可选）/ baostock / yfinance；可选 PostgreSQL 16 + Redis 7 |
+| 数据 | akshare / Tushare Pro（可选）/ baostock / yfinance；可选 PostgreSQL 16 + Redis 7；本地 SQLite 行情缓存（SWR） |
 | 回测 | backtrader + 自定义双市场成本模型 |
 | 分析与可视化 | pandas, numpy, scipy, scikit-learn；ECharts（SPA）、matplotlib / seaborn / plotly（服务端） |
 | AI | OpenAI 兼容 LLM + LangChain + LangGraph（ReAct agent） |
-| 测试 | pytest（500+ 用例） |
+| 测试 | pytest（回测/调优/因子库/行情缓存/Agent 套件共 122 例） |
 
 ---
 
@@ -282,6 +331,7 @@ EmoQunt/
 - 回测首次获取行情/指数数据需联网（结果会缓存；外部数据源偶发不稳时回退链自动切换）
 - 舆情分析需要有效的 LLM API Key
 - 首次运行时系统会自动生成 `logs/`、`output/`、`nes_data/` 等目录
+- `data/` 存放运行时 SQLite（业务库 `emoqunt.db` + 可再生行情缓存 `market_cache.db`；删除后者可强制冷拉取）
 - SPA 未构建（`frontend/dist` 不存在）时 `/spa/*` 返回 503 提示
 - 回测结果仅供参考，不构成投资建议
 

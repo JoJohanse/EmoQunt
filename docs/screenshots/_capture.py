@@ -167,10 +167,37 @@ def main() -> int:
         page.wait_for_timeout(2500)
         shot(page, "spa-strategies", full_page=True)
 
-        # 5) Jinja2 舆情分析（经典版前端）
-        page.goto(f"{BASE}/sentiment", wait_until="domcontentloaded")
-        page.wait_for_timeout(6000)
-        shot(page, "web-sentiment", full_page=True)
+        # 4b) 策略库 v2：代码策略卡片网格 + 详情页（参数/代码/版本/回测/调优 Tabs；id=1 为既有示例策略）
+        page.goto(f"{BASE}/spa/strategy-library", wait_until="domcontentloaded")
+        page.wait_for_timeout(2500)
+        shot(page, "spa-strategy-library", full_page=True)
+        page.goto(f"{BASE}/spa/strategy-library/1", wait_until="domcontentloaded")
+        page.wait_for_timeout(3500)
+        shot(page, "spa-strategy-detail", full_page=True)
+
+        # 4c) 运行历史 + 调优任务详情（归一化净值对比 + 组合表；task 3 为浏览器实测产物）
+        page.goto(f"{BASE}/spa/runs", wait_until="domcontentloaded")
+        page.wait_for_timeout(2500)
+        shot(page, "spa-runs", full_page=True)
+        page.goto(f"{BASE}/spa/tuning/3", wait_until="domcontentloaded")
+        page.wait_for_timeout(3500)
+        shot(page, "spa-tuning", full_page=True)
+
+        # 4d) 因子库：列表 + 详情（代码 Tab；id=1 动量因子）
+        page.goto(f"{BASE}/spa/factor-library", wait_until="domcontentloaded")
+        page.wait_for_timeout(2500)
+        shot(page, "spa-factor-library", full_page=True)
+        page.goto(f"{BASE}/spa/factor-library/1", wait_until="domcontentloaded")
+        page.wait_for_timeout(3000)
+        shot(page, "spa-factor-detail", full_page=True)
+
+        # 5) Jinja2 舆情分析（经典版前端；服务端爬数据可能慢，goto 放宽超时且失败不致命）
+        try:
+            page.goto(f"{BASE}/sentiment", wait_until="domcontentloaded", timeout=120_000)
+            page.wait_for_timeout(6000)
+            shot(page, "web-sentiment", full_page=True)
+        except Exception as e:
+            print(f"web-sentiment skipped: {e}")
 
         # 6) AI 助手工具结果卡片（Generative UI；需 .env 配置 LLM API Key，失败不影响其余截图）
         try:

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { Market } from '@/api/types'
+import { t } from '@/locales'
 
 /** 自选股条目 */
 export interface WatchlistItem {
@@ -12,17 +13,24 @@ export interface WatchlistItem {
   addedAt: string
   /** 指数标记：kind=index 时行情走服务端指数数据链（000001 等二义代码需要） */
   kind?: 'index'
+  /** 展示名的词表键（默认预设指数用；有值时展示走 t(nameKey)，name 仅作数据回退） */
+  nameKey?: string
 }
 
-/** 首次使用时的默认自选（与首页原有预设标的一致） */
+/** 首次使用时的默认自选（与首页原有预设标的一致；指数名走词表 nameKey，双语可译） */
 const DEFAULT_ITEMS: WatchlistItem[] = [
-  { code: '000001', market: 'zh_a', name: '上证指数', addedAt: '', kind: 'index' },
-  { code: '000300', market: 'zh_a', name: '沪深300', addedAt: '', kind: 'index' },
-  { code: '399001', market: 'zh_a', name: '深证成指', addedAt: '', kind: 'index' },
+  { code: '000001', market: 'zh_a', name: '上证指数', addedAt: '', kind: 'index', nameKey: 'home.index.sse' },
+  { code: '000300', market: 'zh_a', name: '沪深300', addedAt: '', kind: 'index', nameKey: 'home.index.csi300' },
+  { code: '399001', market: 'zh_a', name: '深证成指', addedAt: '', kind: 'index', nameKey: 'home.index.szse' },
   { code: 'AAPL', market: 'us', name: 'Apple', addedAt: '' },
   { code: 'MSFT', market: 'us', name: 'Microsoft', addedAt: '' },
   { code: 'TSLA', market: 'us', name: 'Tesla', addedAt: '' },
 ]
+
+/** 自选条目的展示名：有词表键（默认指数）按当前语言现算，否则用数据名 */
+export function watchDisplayName(item: Pick<WatchlistItem, 'name' | 'nameKey'>): string {
+  return item.nameKey ? t(item.nameKey) : item.name
+}
 
 /**
  * 标的唯一键：`code|market|kind`。
@@ -120,9 +128,18 @@ export const useWatchlistStore = defineStore(
       // 使「上证指数/沪深300/深证成指」继续走服务端指数链而非个股链
       revive: (s) => {
         const INDEX_KEYS = new Set(['000001|zh_a', '000300|zh_a', '399001|zh_a'])
+        // code|market → 词表键（与 DEFAULT_ITEMS 同源；老持久化数据回填后双语可译）
+        const NAME_KEYS: Record<string, string> = {
+          '000001|zh_a': 'home.index.sse',
+          '000300|zh_a': 'home.index.csi300',
+          '399001|zh_a': 'home.index.szse',
+        }
         if (Array.isArray(s.items)) {
           for (const it of s.items) {
-            if (it && !it.kind && INDEX_KEYS.has(`${it.code}|${it.market}`)) it.kind = 'index'
+            if (!it) continue
+            const pair = `${it.code}|${it.market}`
+            if (!it.kind && INDEX_KEYS.has(pair)) it.kind = 'index'
+            if (!it.nameKey && it.kind === 'index' && NAME_KEYS[pair]) it.nameKey = NAME_KEYS[pair]
           }
         }
         return s

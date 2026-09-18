@@ -83,7 +83,7 @@ function fmtDuration(ms: number | null | undefined): string {
         <el-tag size="small" :type="statusTag(run.status)">{{ t(`common.status.${run.status}`) }}</el-tag>
         <el-tag size="small" type="info">{{ run.strategy_kind === 'code' ? t('runs.kindCode') : t('runs.kindTemplate') }}</el-tag>
         <span>{{ run.strategy_name }}</span>
-        <span class="info-muted">{{ run.stock_code }} · {{ run.market === 'us' ? 'US' : 'A股' }}</span>
+        <span class="info-muted">{{ run.stock_code }} · {{ run.market === 'us' ? t('common.market.us') : t('common.market.zhA') }}</span>
         <span class="info-muted">{{ run.start_date }} ~ {{ run.end_date }}</span>
         <span class="info-muted">{{ t('runs.runDetail.duration') }} {{ fmtDuration(run.duration_ms) }}</span>
       </div>

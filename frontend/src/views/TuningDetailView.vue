@@ -173,7 +173,7 @@ onBeforeUnmount(() => {
 
     <template v-if="task">
       <div class="info-bar">
-        <el-tag size="small" type="info">{{ task.market === 'us' ? 'US' : 'A股' }}</el-tag>
+        <el-tag size="small" type="info">{{ task.market === 'us' ? t('common.market.us') : t('common.market.zhA') }}</el-tag>
         <span>{{ t('tuning.head.stock') }}: {{ task.stock_code }}</span>
         <span>{{ t('tuning.head.range') }}: {{ task.start_date }} ~ {{ task.end_date }}</span>
         <span>{{ t('tuning.head.targetMetric') }}: {{ t(`backtest.metric.${task.target_metric}`) }}</span>
