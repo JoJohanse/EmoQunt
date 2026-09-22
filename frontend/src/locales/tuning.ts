@@ -65,6 +65,30 @@ export const zh: Messages = {
     action: '操作',
     open: '查看',
   },
+  // 独立任务列表页（/tunings）；状态复用 common.status.*、市场标签复用 common.market.*，
+  // 类型标签含义与 runs.kind* 一致但文案各页自持（无跨模块耦合）
+  page: {
+    title: '调优任务',
+    subtitle: '全部参数调优任务：组合进度、最优组合与状态。',
+    empty: '还没有调优任务，可在策略详情页发起一次调优。',
+    searchPlaceholder: '搜索策略名 / 标的代码',
+    filters: { status: '状态' },
+    col: {
+      strategy: '策略',
+      stock: '标的',
+      range: '区间',
+      target: '目标指标',
+      progress: '组合进度',
+      best: '最优组合',
+      status: '状态',
+      duration: '耗时',
+      created: '创建时间',
+      action: '操作',
+      detail: '详情',
+    },
+    kindTemplate: '模板',
+    kindCode: '代码',
+  },
 }
 
 export const en: Messages = {
@@ -120,5 +144,27 @@ export const en: Messages = {
     target: 'Target',
     action: 'Actions',
     open: 'Open',
+  },
+  page: {
+    title: 'Tuning Tasks',
+    subtitle: 'All parameter tuning tasks: combo progress, best combo and status.',
+    empty: 'No tuning tasks yet. Start one from a strategy detail page.',
+    searchPlaceholder: 'Search strategy / symbol code',
+    filters: { status: 'Status' },
+    col: {
+      strategy: 'Strategy',
+      stock: 'Symbol',
+      range: 'Range',
+      target: 'Target Metric',
+      progress: 'Combos',
+      best: 'Best Combo',
+      status: 'Status',
+      duration: 'Duration',
+      created: 'Created',
+      action: 'Actions',
+      detail: 'Detail',
+    },
+    kindTemplate: 'Template',
+    kindCode: 'Code',
   },
 }

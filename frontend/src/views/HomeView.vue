@@ -279,30 +279,27 @@ interface QuoteTarget {
   kind?: '' | 'index'
 }
 
+/** 填充单只行情到 quotes 表并按方向闪烁（loadQuote 与 overview 聚合共用） */
+function applyQuote(code: string, market: Market, kind: '' | 'index', name: string, closes: number[]) {
+  const close = closes[closes.length - 1] ?? 0
+  const prev = closes.length > 1 ? closes[closes.length - 2]! : close
+  const chgPct = prev ? (close / prev - 1) * 100 : 0
+  const key = targetKey(code, market, kind)
+  const old = quotes.value[key]
+  quotes.value[key] = { code, market, name, close, chgPct, closes }
+  // 价格变化时按方向闪烁一次（SWR 轮询的可见反馈）
+  if (old && old.close !== close) {
+    flashMap.value[key] = close > old.close ? 'up' : 'down'
+    setTimeout(() => delete flashMap.value[key], 900)
+  }
+}
+
 async function loadQuote(code: string, market: Market, name?: string, kind?: '' | 'index') {
   try {
     // 拉 30 根日线：最新价/涨跌 + 行内 sparkline 一次取齐
     const d = await klineApi.get(code, market, 30, 'day', '', kind ?? '')
     if (!d.ohlcv.length) return
-    const closes = d.ohlcv.map((o) => o[1])
-    const close = closes[closes.length - 1] ?? 0
-    const prev = closes.length > 1 ? closes[closes.length - 2]! : close
-    const chgPct = prev ? (close / prev - 1) * 100 : 0
-    const key = targetKey(code, market, kind)
-    const old = quotes.value[key]
-    quotes.value[key] = {
-      code,
-      market,
-      name: d.name || name || code,
-      close,
-      chgPct,
-      closes,
-    }
-    // 价格变化时按方向闪烁一次（SWR 轮询的可见反馈）
-    if (old && old.close !== close) {
-      flashMap.value[key] = close > old.close ? 'up' : 'down'
-      setTimeout(() => delete flashMap.value[key], 900)
-    }
+    applyQuote(code, market, kind ?? '', d.name || name || code, d.ohlcv.map((o) => o[1]))
   } catch {
     // 单只行情失败静默降级（不阻塞首页）
   }
@@ -323,8 +320,34 @@ function loadQuotes() {
   quoteTargets.forEach((qt) => loadQuote(qt.code, qt.market, qt.name, qt.kind))
 }
 
+/**
+ * W1 首屏聚合：指数 + 自选 + 市场宽度 + 板块一次请求拿齐（各分量走后端 SWR 缓存，
+ * 启动预热已提前填热）。失败时由调用方回退到旧的分路加载。
+ */
+async function loadOverview() {
+  const watch = watchlistStore.items
+    .filter((it) => it.kind !== 'index')
+    .slice(0, 10)
+    .map((it) => ({ code: it.code, market: it.market }))
+  const d = await marketApi.overview(watch)
+  // 只填充前端已知的标的（指数预设 ∪ 自选）；指数名保持词表现算
+  const known = new Map<string, { name?: string; kind: '' | 'index' }>()
+  for (const i of INDEX_PRESETS) known.set(targetKey(i.code, i.market, i.kind), { name: t(i.nameKey), kind: i.kind })
+  for (const it of watchlistStore.items) known.set(targetKey(it.code, it.market, it.kind), { name: it.name, kind: it.kind ?? '' })
+  for (const q of [...d.indices, ...d.watch]) {
+    if (q.close == null) continue
+    const meta = known.get(targetKey(q.code, q.market, (q.kind || '') as '' | 'index'))
+    if (!meta) continue
+    applyQuote(q.code, q.market, meta.kind, meta.name ?? q.name, q.closes)
+  }
+  if (d.breadth) breadth.value = d.breadth
+  if (d.sectors) sectorBoard.value = d.sectors
+  loadingBreadth.value = false
+  loadingSectors.value = false
+}
+
 // SWR 式轮询：页面不可见暂停、失败指数退避（日线数据 60s 足够）
-usePolling(loadQuotes, { intervalMs: 60_000 })
+usePolling(() => { loadOverview().catch(() => loadQuotes()) }, { intervalMs: 60_000 })
 // 数据源心跳变化缓慢，5 分钟刷一次
 usePolling(loadSourceHealth, { intervalMs: 300_000 })
 
@@ -492,8 +515,14 @@ function rerunBacktest(id: string) {
 
 // ===== 首屏加载 =====
 async function loadAll() {
-  // 自选 + 指数速览的行情（并行，失败静默）
-  loadQuotes()
+  // W1 首屏聚合：单请求拿指数+自选+宽度+板块；失败回退旧的分路加载
+  loadingBreadth.value = true
+  loadingSectors.value = true
+  loadOverview().catch(() => {
+    loadQuotes()
+    marketApi.breadth().then((d) => (breadth.value = d)).catch(() => {}).finally(() => (loadingBreadth.value = false))
+    marketApi.sectors().then((d) => (sectorBoard.value = d)).catch(() => {}).finally(() => (loadingSectors.value = false))
+  })
   // K线
   await loadKline()
   // 舆情
@@ -509,16 +538,6 @@ async function loadAll() {
   recommendApi.get().then((d) => (recommend.value = d)).catch((e: any) => {
     console.warn('推荐数据加载失败', e.message)
   })
-  // 市场宽度
-  loadingBreadth.value = true
-  marketApi.breadth().then((d) => (breadth.value = d)).catch((e: any) => {
-    console.warn('市场宽度加载失败', e.message)
-  }).finally(() => (loadingBreadth.value = false))
-  // 板块行情（热力图数据源）
-  loadingSectors.value = true
-  marketApi.sectors().then((d) => (sectorBoard.value = d)).catch((e: any) => {
-    console.warn('板块行情加载失败', e.message)
-  }).finally(() => (loadingSectors.value = false))
   // 数据源健康心跳
   loadSourceHealth()
 }

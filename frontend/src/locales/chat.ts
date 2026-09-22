@@ -17,12 +17,62 @@ export const zh: Messages = {
   // 未知工具的原始折叠面板
   args: '参数：',
   result: '结果：',
-  // 欢迎语（仅在没有本地持久化消息时出现，由 store 初始化时用当前语言生成）
+  // 欢迎语（空会话时由 ChatPanel 用当前语言现算，不入持久化）
   greeting: '你好！我是 EmoQunt AI 投资助手。我可以帮你查询行情、运行回测、分析舆情与推荐个股。试试问：',
   sampleQuote: '帮我看看 000001 最近行情',
   sampleBacktest: '运行 test 策略回测 000001',
   sampleSentiment: '今天哪些板块情绪最高？',
   sampleRecommend: '推荐几只股票',
+  // 会话栏（多会话工作台：新建/切换/置顶/重命名/删除）
+  sessions: {
+    untitled: '新会话',
+    newSession: '新会话',
+    more: '更多操作',
+    pin: '置顶',
+    unpin: '取消置顶',
+    rename: '重命名',
+    delete: '删除',
+    pinned: '已置顶',
+    renameTitle: '重命名会话',
+    renamePlaceholder: '输入新的会话标题',
+    deleteConfirm: '确定删除会话「{title}」？删除后无法恢复。',
+    deleted: '会话已删除',
+  },
+  // 空态启动卡片（按组分类的快捷提问，点击即发送）
+  starter: {
+    groups: {
+      strategy: '股票策略',
+      factor: 'A股因子',
+      data: '数据查询',
+    },
+    cards: {
+      ma: {
+        label: '创建双均线代码策略',
+        desc: '生成 SDK 源码并回测验证',
+        q: '创建一个双均线代码策略并回测',
+      },
+      tuning: {
+        label: '给绑定策略做参数调优',
+        desc: '股票 000001，2024Q1，≤5 组网格',
+        q: '给当前绑定策略做参数调优：股票 000001，区间 2024-01-01 到 2024-03-31，网格控制在 5 个组合以内',
+      },
+      factor: {
+        label: '创建 20 日动量因子',
+        desc: '生成因子并跑 IC/分层分析',
+        q: '创建一个 20 日动量因子并分析',
+      },
+      quote: {
+        label: '查个股行情',
+        desc: '报价、区间涨跌与情绪卡片',
+        q: '帮我看看 000001 最近行情',
+      },
+      sentiment: {
+        label: '板块情绪排行',
+        desc: '今日各行业情绪高低对比',
+        q: '今天哪些板块情绪最高？',
+      },
+    },
+  },
   // 对话状态 / 请求错误
   cancelled: '_(已取消)_',
   failed: '对话失败',
@@ -101,13 +151,63 @@ export const en: Messages = {
   // 未知工具的原始折叠面板
   args: 'Args:',
   result: 'Result:',
-  // 欢迎语（仅在没有本地持久化消息时出现，由 store 初始化时用当前语言生成）
+  // 欢迎语（空会话时由 ChatPanel 用当前语言现算，不入持久化）
   greeting:
     "Hi! I'm the EmoQunt AI investment assistant. I can look up quotes, run backtests, analyze sentiment and pick stocks. Try asking:",
   sampleQuote: 'Show me how 000001 has been trading lately',
   sampleBacktest: 'Run the test strategy backtest on 000001',
   sampleSentiment: 'Which sectors have the highest sentiment today?',
   sampleRecommend: 'Recommend a few stocks',
+  // 会话栏（多会话工作台：新建/切换/置顶/重命名/删除）
+  sessions: {
+    untitled: 'New chat',
+    newSession: 'New chat',
+    more: 'More actions',
+    pin: 'Pin',
+    unpin: 'Unpin',
+    rename: 'Rename',
+    delete: 'Delete',
+    pinned: 'Pinned',
+    renameTitle: 'Rename chat',
+    renamePlaceholder: 'Enter a new chat title',
+    deleteConfirm: 'Delete chat "{title}"? This cannot be undone.',
+    deleted: 'Chat deleted',
+  },
+  // 空态启动卡片（按组分类的快捷提问，点击即发送）
+  starter: {
+    groups: {
+      strategy: 'Stock strategies',
+      factor: 'A-share factors',
+      data: 'Data lookups',
+    },
+    cards: {
+      ma: {
+        label: 'Build a moving-average strategy',
+        desc: 'Generate SDK source and backtest it',
+        q: 'Create a dual moving average code strategy and backtest it',
+      },
+      tuning: {
+        label: 'Tune the bound strategy',
+        desc: 'Stock 000001, 2024Q1, grid of ≤5 combos',
+        q: 'Tune the currently bound strategy: stock 000001, from 2024-01-01 to 2024-03-31, keep the grid under 5 combos',
+      },
+      factor: {
+        label: 'Create a 20-day momentum factor',
+        desc: 'Generate the factor, run IC and quantile analysis',
+        q: 'Create a 20-day momentum factor and analyze it',
+      },
+      quote: {
+        label: 'Look up a stock quote',
+        desc: 'Price, range change and sentiment cards',
+        q: 'Show me how 000001 has been trading lately',
+      },
+      sentiment: {
+        label: 'Sector sentiment ranking',
+        desc: 'Compare today’s sentiment across sectors',
+        q: 'Which sectors have the highest sentiment today?',
+      },
+    },
+  },
   // 对话状态 / 请求错误
   cancelled: '_(Cancelled)_',
   failed: 'Chat failed',

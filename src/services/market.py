@@ -185,3 +185,68 @@ def get_market_breadth() -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"获取市场宽度失败: {e}", exc_info=True)
         raise
+
+# ---------------------------------------------------------------------------
+# 首页首屏聚合（W1：单请求替代 N+1；各分量各自走 SWR 缓存，本函数不做整体缓存——
+# 启动预热直接调用本函数即可把全部底层缓存填热）
+# ---------------------------------------------------------------------------
+# 首页指数速览预设（与前端 HomeView 的 INDEX_PRESETS 同步维护；kind=index 防 000001 二义）
+OVERVIEW_INDEXES = [
+    ("000001", "zh_a", "index"),
+    ("000300", "zh_a", "index"),
+    ("399001", "zh_a", "index"),
+    ("SP500", "us", "index"),
+    ("NASDAQ", "us", "index"),
+]
+
+
+def _overview_quote(code: str, market: str, kind: str = "") -> Dict[str, Any]:
+    """单个标的的首屏行情摘要（复用 kline 服务的 SWR 缓存；失败返回 error 占位）。"""
+    from src.services.kline import get_kline
+
+    try:
+        d = get_kline(code, market, days=30, kind=kind)
+        closes = [float(row[1]) for row in d.get("ohlcv", []) if row and row[1] is not None]
+        close = closes[-1] if closes else 0.0
+        prev = closes[-2] if len(closes) > 1 else close
+        chg_pct = (close / prev - 1) * 100 if prev else 0.0
+        return {
+            "code": code, "market": market, "kind": kind,
+            "name": d.get("name") or code,
+            "close": round(close, 4), "chg_pct": round(chg_pct, 4),
+            "closes": closes,
+        }
+    except Exception as e:
+        logger.warning("overview 行情失败: %s %s: %s", code, market, e)
+        return {"code": code, "market": market, "kind": kind, "name": code,
+                "close": None, "chg_pct": None, "closes": [], "error": str(e)}
+
+
+def get_market_overview(watch: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
+    """首页首屏聚合：指数速览 + 自选行情 + 市场宽度 + 板块，一次请求全拿。
+
+    :param watch: 自选标的 [{code, market}]（kind=index 条目不必传——指数走固定预设），最多 10 个
+    :return: {indices, watch, breadth, sectors, generated_at}；分量失败各自置 None/占位，不整体失败
+    """
+    indices = [_overview_quote(c, m, k) for c, m, k in OVERVIEW_INDEXES]
+    watch_quotes: List[Dict[str, Any]] = []
+    for item in (watch or [])[:10]:
+        code = str((item or {}).get("code", "")).strip()
+        if not code:
+            continue
+        watch_quotes.append(_overview_quote(code, str((item or {}).get("market") or "zh_a")))
+    breadth: Optional[Dict[str, Any]] = None
+    sectors: Optional[Dict[str, Any]] = None
+    try:
+        breadth = get_market_breadth()
+    except Exception as e:
+        logger.warning("overview 市场宽度失败: %s", e)
+    try:
+        sectors = get_sector_board()
+    except Exception as e:
+        logger.warning("overview 板块失败: %s", e)
+    return {
+        "indices": indices, "watch": watch_quotes,
+        "breadth": breadth, "sectors": sectors,
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+    }

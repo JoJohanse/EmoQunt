@@ -151,8 +151,33 @@ export const recommendApi = {
   },
 }
 
+/** 首屏聚合行情条目（overview 返回；closes 为最近 30 根收盘价，供 sparkline） */
+export interface OverviewQuote {
+  code: string
+  market: Market
+  kind: string
+  name: string
+  close: number | null
+  chg_pct: number | null
+  closes: number[]
+  error?: string
+}
+
+export interface MarketOverview {
+  indices: OverviewQuote[]
+  watch: OverviewQuote[]
+  breadth: MarketBreadth | null
+  sectors: SectorBoardData | null
+  generated_at: string
+}
+
 /** 市场宽度 / 板块行情 API（首页看板） */
 export const marketApi = {
+  /** 首屏聚合：指数 + 自选（watch 传 code@market 逗号串，≤10）+ 宽度 + 板块，一次请求全拿 */
+  overview(watch: { code: string; market: Market }[] = []): Promise<MarketOverview> {
+    const q = watch.map((w) => `${w.code}@${w.market}`).join(',')
+    return http.get('/market/overview', { params: q ? { watch: q } : {} }).then((r) => r.data)
+  },
   breadth(): Promise<MarketBreadth> {
     return http.get('/market/breadth').then((r) => r.data)
   },

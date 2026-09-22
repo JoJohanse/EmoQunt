@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useChatStore } from '@/stores/chat'
+import { DEFAULT_SESSION_TITLE, useChatStore } from '@/stores/chat'
 import { libraryApi } from '@/api'
 import type { CodeStrategySummary } from '@/api/types'
 import MarkdownIt from 'markdown-it'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import ChatToolCard from '@/components/ChatToolCard.vue'
 import { toolCardKind } from '@/components/chat/toolCards'
+import { starterGroups } from '@/components/chat/starter'
 import { t } from '@/locales'
 
 const store = useChatStore()
@@ -94,11 +96,128 @@ watch(
     }
   },
 )
+
+// ===== 会话栏（多会话：新建/切换/置顶/重命名/删除） =====
+
+/** 会话展示名：默认标记现算为「新会话」（持久化里存的是语言无关的默认标题） */
+function sessionTitle(s: { title: string }): string {
+  return s.title === DEFAULT_SESSION_TITLE ? t('chat.sessions.untitled') : s.title
+}
+
+/** 活跃会话还没有用户消息 → 空态：渲染欢迎语与启动卡片（欢迎语不入库，切语言即时变） */
+const isEmptyState = computed(() => !messages.value.some((m) => m.role === 'user'))
+
+/** 启动卡片点击：按当前语言把提问词表键现算成 prompt 后直接发送 */
+function onStart(key: string) {
+  if (loading.value) return
+  // key 是词表键基座（chat.starter.cards.xxx），提问文案在其 .q 叶子
+  void store.send(t(`${key}.q`))
+}
+
+/** 会话「更多操作」分发：置顶/取消置顶、重命名（ElMessageBox.prompt）、删除（confirm） */
+async function onMore(cmd: string) {
+  const active = store.activeSession
+  if (!active) return
+  if (cmd === 'pin') {
+    store.togglePin(active.id)
+    return
+  }
+  if (cmd === 'rename') {
+    try {
+      const r = await ElMessageBox.prompt(sessionTitle(active), t('chat.sessions.renameTitle'), {
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel'),
+        inputPlaceholder: t('chat.sessions.renamePlaceholder'),
+        inputValue: sessionTitle(active),
+      })
+      store.renameSession(active.id, r.value || '')
+    } catch {
+      // 取消重命名：静默
+    }
+    return
+  }
+  if (cmd === 'delete') {
+    try {
+      await ElMessageBox.confirm(
+        t('chat.sessions.deleteConfirm', { title: sessionTitle(active) }),
+        t('chat.sessions.more'),
+        { type: 'warning' },
+      )
+    } catch {
+      return
+    }
+    store.removeSession(active.id)
+    ElMessage.success(t('chat.sessions.deleted'))
+    return
+  }
+}
 </script>
 
 <template>
   <div class="chat-panel">
+    <!-- 会话栏：横向滚动会话 chip + 新建 + 当前会话更多操作（置顶/重命名/删除） -->
+    <div class="session-bar">
+      <div class="session-strip">
+        <button
+          v-for="s in store.orderedSessions"
+          :key="s.id"
+          type="button"
+          class="session-chip"
+          :class="{ active: s.id === store.activeId }"
+          :title="sessionTitle(s)"
+          @click="store.switchTo(s.id)"
+        >
+          <el-icon v-if="s.pinned" class="pin-icon"><StarFilled /></el-icon>
+          <span class="chip-text">{{ sessionTitle(s) }}</span>
+        </button>
+      </div>
+      <el-button text size="small" class="new-btn" @click="store.newSession()">
+        <el-icon><Plus /></el-icon>
+      </el-button>
+      <el-dropdown trigger="click" @command="onMore">
+        <el-button text size="small" :disabled="!store.activeSession">
+          <el-icon><MoreFilled /></el-icon>
+        </el-button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="pin">
+              <el-icon><StarFilled /></el-icon>
+              {{ store.activeSession?.pinned ? t('chat.sessions.unpin') : t('chat.sessions.pin') }}
+            </el-dropdown-item>
+            <el-dropdown-item command="rename">
+              <el-icon><EditPen /></el-icon> {{ t('chat.sessions.rename') }}
+            </el-dropdown-item>
+            <el-dropdown-item command="delete" divided>
+              <el-icon><Delete /></el-icon> {{ t('chat.sessions.delete') }}
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+    </div>
+
     <div ref="messagesContainer" class="messages">
+      <!-- 空态：欢迎语 + 启动卡片（由 t() 现算，切换语言即时变；不写进会话消息） -->
+      <div v-if="isEmptyState" class="empty-state">
+        <p class="empty-greeting">{{ t('chat.greeting') }}</p>
+        <div v-for="g in starterGroups" :key="g.title" class="starter-group">
+          <div class="starter-group-title">{{ t(g.title) }}</div>
+          <button
+            v-for="c in g.cards"
+            :key="c.q"
+            type="button"
+            class="starter-card"
+            :disabled="loading"
+            @click="onStart(c.q)"
+          >
+            <el-icon class="starter-icon"><component :is="c.icon" /></el-icon>
+            <span class="starter-body">
+              <span class="starter-label">{{ t(`${c.q}.label`) }}</span>
+              <span class="starter-desc">{{ t(`${c.q}.desc`) }}</span>
+            </span>
+          </button>
+        </div>
+      </div>
+
       <div
         v-for="(msg, i) in messages"
         :key="i"
@@ -197,6 +316,141 @@ watch(
   flex-direction: column;
   gap: 16px;
 }
+/* ===== 会话栏（抽屉标题下方一条：横向滚动 chip + 新建 + 更多操作） ===== */
+.session-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+.session-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.session-strip::-webkit-scrollbar {
+  display: none;
+}
+.session-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  max-width: 132px;
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.session-chip:hover {
+  border-color: var(--brand-start);
+  color: var(--text);
+}
+.session-chip.active {
+  background: var(--brand-start);
+  border-color: var(--brand-start);
+  color: #fff;
+}
+.session-chip .pin-icon {
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.new-btn,
+.session-bar :deep(.el-button) {
+  flex-shrink: 0;
+}
+/* ===== 空态：欢迎语 + 启动卡片（按组） ===== */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.empty-greeting {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.starter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.starter-group-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+/* 启动卡片与 AI 工具卡（ChatToolCard .tool-card）同一套面：surface 底 + border + 10px 圆角，
+   hover 同为品牌描边 + shadow-sm（不位移，与工具卡观感一致） */
+.starter-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.starter-card:hover:not(:disabled) {
+  border-color: var(--brand-start);
+  box-shadow: var(--shadow-sm);
+}
+.starter-card:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.starter-icon {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--brand-grad);
+  color: #fff;
+  font-size: 14px;
+}
+.starter-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.starter-label {
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+.starter-desc {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .msg-row {
   display: flex;
   gap: 10px;
@@ -239,7 +493,7 @@ watch(
   word-break: break-word;
 }
 .bubble.assistant {
-  background: #f4f5f7;
+  background: var(--surface-weak);
   color: var(--text);
   border-top-left-radius: 4px;
 }
@@ -283,7 +537,7 @@ watch(
 .tool-section pre {
   margin: 4px 0;
   padding: 6px;
-  background: #f0f2f5;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
   border-radius: 4px;
   max-height: 120px;
   overflow: auto;
@@ -291,7 +545,7 @@ watch(
   word-break: break-all;
 }
 .tool-section code {
-  background: #f0f2f5;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
   padding: 2px 4px;
   border-radius: 3px;
 }
@@ -304,21 +558,21 @@ watch(
 }
 .markdown-body :deep(th),
 .markdown-body :deep(td) {
-  border: 1px solid #d0d3d8;
+  border: 1px solid var(--border);
   padding: 4px 8px;
   text-align: left;
 }
 .markdown-body :deep(th) {
-  background: #e8eaef;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
 }
 .markdown-body :deep(code) {
-  background: rgba(0,0,0,0.06);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 0.88em;
 }
 .markdown-body :deep(pre) {
-  background: rgba(0,0,0,0.06);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
   padding: 8px;
   border-radius: 6px;
   overflow-x: auto;

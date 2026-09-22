@@ -50,6 +50,18 @@ const router = createRouter({
       meta: { titleKey: 'tuning.title' },
     },
     {
+      path: '/tunings',
+      name: 'tunings',
+      component: () => import('@/views/TuningListView.vue'),
+      meta: { titleKey: 'layout.nav.tuningTasks' },
+    },
+    {
+      path: '/market',
+      name: 'market',
+      component: () => import('@/views/MarketView.vue'),
+      meta: { titleKey: 'layout.nav.market' },
+    },
+    {
       path: '/sentiment',
       name: 'sentiment',
       component: () => import('@/views/SentimentView.vue'),

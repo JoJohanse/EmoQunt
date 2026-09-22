@@ -44,6 +44,13 @@ async def lifespan(app: FastAPI):
     # 策略列表缓存归 src.services.strategies 所有（读走缓存、变更自动失效）
     from src.services.strategies import ensure_loaded as _ensure_strategies_loaded
     _ensure_strategies_loaded()
+    _ensure_strategies_loaded()
+    # 行情首屏预热（后台守护线程填 quote_cache，空缓存首次访问也毫秒级；QDT_STARTUP_WARMUP=0 关闭）
+    try:
+        from src.services.warmup import start_warmup as _start_warmup
+        _start_warmup()
+    except Exception as e:
+        logger.debug(f"行情预热启动失败（已降级为按需拉取）: {e}")
     # 业务库（策略库/运行历史）：幂等建表 + 遗留运行清扫（queued/running → failed）
     try:
         from src.store.db import init_db as _init_store
@@ -705,6 +712,26 @@ def refresh_daily_recommend_api():
     except Exception as e:
         logger.error(f"刷新每日推荐失败: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/market/overview")
+def market_overview_api(watch: str = ""):
+    """首页首屏聚合行情（W1：单请求替代 N+1 突刺）。
+
+    指数速览 + 自选行情（watch=AAPL@us,MSFT@us 逗号分隔，≤10）+ 市场宽度 + 板块，
+    各分量走各自 SWR 缓存（quote_cache/进程 TTL），启动预热会提前填热。
+    """
+    items = []
+    for part in (watch or "").split(","):
+        code, _, mkt = part.strip().partition("@")
+        if code:
+            items.append({"code": code, "market": mkt.strip() or "zh_a"})
+    try:
+        from src.services.market import get_market_overview
+        return get_market_overview(items)
+    except Exception as e:
+        logger.error(f"获取首屏聚合行情失败: {e}", exc_info=True)
+        return JSONResponse({"error": tr_error("获取行情数据失败，请稍后重试")}, status_code=500)
 
 
 @app.get("/api/market/sectors")

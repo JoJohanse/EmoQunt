@@ -19,6 +19,8 @@ export const zh: Messages = {
     strategyLibrary: '策略库',
     runHistory: '运行历史',
     factorLibrary: '因子库',
+    tuningTasks: '调优任务',
+    market: '行情终端',
   },
   group: {
     research: '回测研究',
@@ -62,6 +64,8 @@ export const en: Messages = {
     strategyLibrary: 'Strategy Library',
     runHistory: 'Run History',
     factorLibrary: 'Factor Library',
+    tuningTasks: 'Tuning Tasks',
+    market: 'Market',
   },
   group: {
     research: 'Backtesting',

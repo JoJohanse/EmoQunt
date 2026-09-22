@@ -9,9 +9,16 @@
   --neutral: #6c757d;
   --bg: #f5f7fa;
   --surface: #ffffff;
+  /* 中性弱底：比 surface 低一档（聊天气泡、内嵌代码块等「凹面」） */
+  --surface-weak: #f4f5f7;
   --border: #e9ecef;
   --text: #1f2937;
   --text-muted: #6b7280;
+  /* 涨跌徽章淡底（tone 语义 = danger/success；方向→色调映射在 lib/marketColors） */
+  --tone-danger-bg: #fef2f2;
+  --tone-danger-border: #fecaca;
+  --tone-success-bg: #f0fdf4;
+  --tone-success-border: #bbf7d0;
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
   --shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
   --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.12);
@@ -26,9 +33,15 @@
 html.dark {
   --bg: #111827;
   --surface: #1f2937;
+  /* 暗色下弱底取「高于 surface 一档」：深底 UI 的凹面靠提亮而不是压暗才可读 */
+  --surface-weak: #263244;
   --border: #374151;
   --text: #e5e7eb;
   --text-muted: #9ca3af;
+  --tone-danger-bg: rgba(239, 68, 68, 0.16);
+  --tone-danger-border: rgba(239, 68, 68, 0.4);
+  --tone-success-bg: rgba(34, 197, 94, 0.16);
+  --tone-success-border: rgba(34, 197, 94, 0.4);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
   --shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
   --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.6);
@@ -77,6 +90,31 @@ a {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+/* 卡片头标题（el-card header 内使用）：统一的紧凑节奏，
+   替代此前逐处内联重置 margin/border/padding 的 .section-title 写法 */
+.card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* el-table 全局表头节奏：弱底 + 弱化文字 + 半粗，全站表格（/runs、/tunings 等）一套观感 */
+.el-table {
+  --el-table-header-bg-color: var(--bg);
+  --el-table-header-text-color: var(--text-muted);
+}
+.el-table th.el-table__cell > .cell {
+  font-weight: 600;
+}
+
+/* el-empty 内边距统一（EP 默认 40px 0 偏松，列表页/卡内空态共用一档） */
+.el-empty {
+  --el-empty-padding: 32px 0;
 }
 
 /* 空状态 */

@@ -38,6 +38,8 @@ const favTitleMap = computed<Record<string, string>>(() => ({
   '/strategy-library': t('layout.nav.strategyLibrary'),
   '/runs': t('layout.nav.runHistory'),
   '/factor-library': t('layout.nav.factorLibrary'),
+  '/tunings': t('layout.nav.tuningTasks'),
+  '/market': t('layout.nav.market'),
 }))
 
 /** 语言切换按钮标签显示「目标语言」：中文界面显示 EN，英文界面显示 中文 */
@@ -127,6 +129,15 @@ const langLabel = computed(() => (uiStore.lang === 'en-US' ? '中文' : 'EN'))
               <el-icon><View /></el-icon>
               <span>{{ t('layout.group.insight') }}</span>
             </template>
+            <el-menu-item index="/market">
+              <el-icon><CandlestickChart /></el-icon>
+              <template #title>
+                <span class="menu-label">{{ t('layout.nav.market') }}</span>
+                <el-button text size="small" class="fav-btn" @click.stop="favoritesStore.toggle('/market')">
+                  <el-icon><StarFilled v-if="favoritesStore.isFavorite('/market')" /><Star v-else /></el-icon>
+                </el-button>
+              </template>
+            </el-menu-item>
             <el-menu-item index="/sentiment">
               <el-icon><ChatDotRound /></el-icon>
               <template #title>
@@ -176,6 +187,15 @@ const langLabel = computed(() => (uiStore.lang === 'en-US' ? '中文' : 'EN'))
                 <span class="menu-label">{{ t('layout.nav.runHistory') }}</span>
                 <el-button text size="small" class="fav-btn" @click.stop="favoritesStore.toggle('/runs')">
                   <el-icon><StarFilled v-if="favoritesStore.isFavorite('/runs')" /><Star v-else /></el-icon>
+                </el-button>
+              </template>
+            </el-menu-item>
+            <el-menu-item index="/tunings">
+              <el-icon><SetUp /></el-icon>
+              <template #title>
+                <span class="menu-label">{{ t('layout.nav.tuningTasks') }}</span>
+                <el-button text size="small" class="fav-btn" @click.stop="favoritesStore.toggle('/tunings')">
+                  <el-icon><StarFilled v-if="favoritesStore.isFavorite('/tunings')" /><Star v-else /></el-icon>
                 </el-button>
               </template>
             </el-menu-item>
