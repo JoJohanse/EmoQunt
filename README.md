@@ -105,6 +105,16 @@ Jinja2 frontend (`/`).
     </td>
   </tr>
   <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/spa-market-en.png" alt="Market terminal" width="100%"/><br/>
+      <b>Market terminal</b> — searchable symbol list, big-quote header, multi-period K-lines
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/spa-tunings-en.png" alt="Tuning tasks" width="100%"/><br/>
+      <b>Tuning tasks</b> — every parameter-tuning run with combo progress and best combo
+    </td>
+  </tr>
+  <tr>
     <td colspan="2" align="center">
       <img src="docs/screenshots/web-sentiment-en.png" alt="Sentiment analysis" width="100%"/><br/>
       <b>Classic sentiment analysis</b> (Jinja2, <code>/sentiment</code>)
@@ -128,6 +138,7 @@ Jinja2 frontend (`/`).
 - **US two-tier fallback**: yfinance (primary) → akshare Sina
 - **Data-source health beats**: every fetch layer records success/failure (in-process, last 7 per source) exposed at `GET /api/data/source-health` and rendered as a homepage heartbeat bar
 - **Local quote cache (SQLite + SWR)**: quote reads (`/api/kline` tail mode, market breadth, sector board) persist to `data/market_cache.db`; a fresh hit answers in milliseconds, a stale hit returns the old value immediately and refreshes in the background (de-duplicated per key) — the homepage first screen stays instant even right after a restart, where a cold fetch used to take 5–7 s
+- **First-paint acceleration**: a startup warm-up thread (disable with `QDT_STARTUP_WARMUP=0`) prefetches index quotes, market breadth and the sector board into the local cache, so even the first visit on an empty cache skips the cold crawl; the homepage first paint is one aggregate `GET /api/market/overview` request (indices + watchlist + breadth + sectors) instead of 8+ parallel calls — ~4 ms warm
 - **Optional PostgreSQL + Redis cache** (one-command `docker-compose.yml`): read order Redis → PG → CSV → network; silently degrades to pure network mode
 - Market data cached under `stock_data/`; sentiment snapshots at `nes_data/sentiment_results/{YYYYMMDD}.json` feed the homepage calendar and the backtest sentiment filter
 
@@ -135,6 +146,9 @@ Jinja2 frontend (`/`).
 - **Navigation**: collapsible grouped sidebar + breadcrumbs + dark mode + global command palette `Cmd+K` + top tab bar + sidebar favorites + first-visit tour (driver.js, replayable)
 - **Global up/down colour scheme**: header dropdown — follow market (A-share red-up/green-down, US green-up/red-down) / red-up / green-up; applied at once to every K-line, sparkline and change badge, persisted to localStorage
 - **Home dashboard**: quick entries, index strip (inline sparklines; click to open the chart; **includes S&P 500 / NASDAQ with a US badge**), watchlist panel (add/remove, inline sparklines, animated price & change flash; click to switch chart), recent backtests (one-click re-run with parameter refill), top sectors, news with source filter tabs, recommendations (click to drill into the chart), allocation donut (market / daily change / industry), data-source heartbeat bar, sentiment calendar; **draggable grid layout** persisted; SWR-style polling for quotes, backed by the local quote cache below
+- **Market terminal** (`/market`): searchable symbol list (indices + watchlist), big-quote header with change badge, and multi-period candlestick chart (day/week/month)
+- **Tuning tasks** (`/tunings`): every parameter-tuning task at a glance — combo progress bars, best combo, status filters and one-click access to the detail page
+- **Multi-session AI chat**: session chips (new / switch / pin / rename / delete) with auto-generated titles, plus starter prompt cards grouped by Stocks / A-share factors / Data lookups — click one to start instantly
 - **Dynamic ECharts**: equity/drawdown/daily-return curves; candlestick K-line + volume + indicator overlays + pinned tooltip panel
 - **Code strategy library** (`/strategy-library`): user Python strategies validated by an AST whitelist, with version snapshots/rollback and detail tabs for parameters, source (lazy-loaded CodeMirror 6), versions, backtests and tuning
 - **Run history & parameter tuning**: `/runs` lists async backtest runs with status filters, equity thumbnails and a detail dialog; `/tuning/:taskId` compares normalized equity curves of every grid combination (≤63 + baseline), shows a per-combination metrics table and applies the best set back to the strategy — the only write-back path to strategy parameters

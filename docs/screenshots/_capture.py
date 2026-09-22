@@ -183,6 +183,14 @@ def main() -> int:
         page.wait_for_timeout(3500)
         shot(page, "spa-tuning", full_page=True)
 
+        # 4c-b) Round2 新页：行情终端 + 调优任务列表
+        page.goto(f"{BASE}/spa/market", wait_until="domcontentloaded")
+        page.wait_for_timeout(6000)
+        shot(page, "spa-market")
+        page.goto(f"{BASE}/spa/tunings", wait_until="domcontentloaded")
+        page.wait_for_timeout(3000)
+        shot(page, "spa-tunings", full_page=True)
+
         # 4d) 因子库：列表 + 详情（代码 Tab；id=1 动量因子）
         page.goto(f"{BASE}/spa/factor-library", wait_until="domcontentloaded")
         page.wait_for_timeout(2500)
