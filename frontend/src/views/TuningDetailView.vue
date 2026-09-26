@@ -143,6 +143,57 @@ function comboMetrics(c: TuningCombo) {
   return c.metrics ?? null
 }
 
+// ---- 样本外验证（Round3）：OOS 双列 + 过拟合警示 ----
+const hasOos = computed(() => (task.value?.oos_total ?? 0) > 0)
+function comboOos(c: TuningCombo) {
+  return c.oos?.status === 'succeeded' ? c.oos.metrics ?? null : null
+}
+function oosFailed(c: TuningCombo): string | null {
+  return c.oos && c.oos.status !== 'succeeded' ? c.oos.error ?? t('tuning.table.oosFailed') : null
+}
+function metricVal(c: TuningCombo, key: string, oos = false): number | null {
+  const m = (oos ? comboOos(c) : comboMetrics(c)) as Record<string, number | undefined> | null
+  const v = m?.[key]
+  return typeof v === 'number' ? v : null
+}
+const sortByMetric = (key: string, oos = false) => (a: TuningCombo, b: TuningCombo) =>
+  (metricVal(a, key, oos) ?? -Infinity) - (metricVal(b, key, oos) ?? -Infinity)
+
+/** 过拟合警示：OOS 相对 IS 显著退化（>50%）或 IS argmax ≠ 终最优 */
+const overfitWarning = computed<string | null>(() => {
+  const tk = task.value
+  if (!tk || !hasOos.value || !tk.combos?.length || tk.status !== 'succeeded') return null
+  const key = tk.target_metric
+  const fmt = (v: number) => (key === '夏普比率' ? fmtNum(v) : fmtPct(v))
+  const best = tk.combos.find((c) => c.combo_index === tk.best_combo_index)
+  if (best) {
+    const isVal = metricVal(best, key)
+    const oosVal = metricVal(best, key, true)
+    if (isVal !== null && oosVal !== null && Math.abs(isVal) > 1e-9) {
+      const worse = (tk.target_metric_desc ? isVal - oosVal : oosVal - isVal) / Math.abs(isVal)
+      if (worse > 0.5) {
+        return t('tuning.overfit.degraded', {
+          metric: t(`backtest.metric.${key}`),
+          oos: fmt(oosVal), is: fmt(isVal),
+          drop: (worse * 100).toFixed(0),
+        })
+      }
+    }
+  }
+  // IS argmax 与终最优不一致 → 重排提示
+  const scored = tk.combos
+    .filter((c) => c.status === 'succeeded' && metricVal(c, key) !== null)
+    .map((c) => ({ idx: c.combo_index, v: metricVal(c, key)! }))
+  if (scored.length) {
+    const isBest = scored.reduce((a, b) =>
+      (tk.target_metric_desc ? b.v > a.v : b.v < a.v) ? b : a).idx
+    if (tk.best_combo_index !== null && isBest !== tk.best_combo_index) {
+      return t('tuning.overfit.reranked', { isIdx: isBest, bestIdx: tk.best_combo_index })
+    }
+  }
+  return null
+})
+
 function strategyPath(): string {
   const tk = task.value
   return tk?.strategy_kind === 'code' && tk.strategy_id ? `/strategy-library/${tk.strategy_id}` : '/strategies'
@@ -188,17 +239,33 @@ onBeforeUnmount(() => {
           />
           <span class="progress-text">{{ t('tuning.head.combos') }} {{ task.done_combos }}/{{ task.total_combos }}</span>
         </span>
+        <span v-if="hasOos" class="progress-cell">
+          <el-progress
+            :percentage="task.oos_total ? Math.round((task.oos_done ?? 0) / task.oos_total * 100) : 0"
+            :stroke-width="8"
+            class="progress-bar"
+          />
+          <span class="progress-text">{{ t('tuning.head.oos') }} {{ task.oos_done ?? 0 }}/{{ task.oos_total }}</span>
+        </span>
       </div>
       <el-alert v-if="task.error" type="error" :title="task.error" :closable="false" class="task-error" />
+      <el-alert
+        v-if="overfitWarning"
+        type="warning"
+        :title="t('tuning.overfit.title')"
+        :description="overfitWarning"
+        :closable="false"
+        class="task-error"
+      />
 
       <el-card shadow="never" class="chart-card">
-        <template #header>{{ t('tuning.chartTitle') }}</template>
+        <template #header>{{ hasOos ? `${t('tuning.chartTitle')} · ${t('tuning.isWindow')}` : t('tuning.chartTitle') }}</template>
         <v-chart v-if="Object.keys(compareOption).length" :option="compareOption" autoresize class="compare-chart" />
         <el-empty v-else :description="t('common.noData')" :image-size="72" />
       </el-card>
 
       <el-table :data="task.combos ?? []" size="small" class="combo-table" :row-class-name="rowClass">
-        <el-table-column prop="combo_index" :label="t('tuning.table.index')" width="56" />
+        <el-table-column prop="combo_index" :label="t('tuning.table.index')" width="56" sortable />
         <el-table-column :label="t('tuning.table.params')" min-width="220">
           <template #default="{ row }">
             <el-tag v-if="row.is_baseline" size="small" type="info" class="param-tag">{{ t('tuning.baseline') }}</el-tag>
@@ -206,14 +273,25 @@ onBeforeUnmount(() => {
             <span class="param-text">{{ gridParams(row) }}</span>
           </template>
         </el-table-column>
-        <el-table-column :label="t('backtest.metric.总收益率')" width="106">
+        <el-table-column :label="t('backtest.metric.总收益率')" width="106" sortable :sort-method="sortByMetric('总收益率')">
           <template #default="{ row }">{{ comboMetrics(row) ? fmtPct(comboMetrics(row)!['总收益率']) : '—' }}</template>
         </el-table-column>
-        <el-table-column :label="t('backtest.metric.夏普比率')" width="96">
+        <el-table-column :label="t('backtest.metric.夏普比率')" width="96" sortable :sort-method="sortByMetric('夏普比率')">
           <template #default="{ row }">{{ comboMetrics(row) ? fmtNum(comboMetrics(row)!['夏普比率']) : '—' }}</template>
         </el-table-column>
-        <el-table-column :label="t('backtest.metric.最大回撤')" width="106">
+        <el-table-column :label="t('backtest.metric.最大回撤')" width="106" sortable :sort-method="sortByMetric('最大回撤')">
           <template #default="{ row }">{{ comboMetrics(row) ? fmtPct(comboMetrics(row)!['最大回撤']) : '—' }}</template>
+        </el-table-column>
+        <el-table-column v-if="hasOos" :label="t('tuning.table.oosReturn')" width="106" sortable :sort-method="sortByMetric('总收益率', true)">
+          <template #default="{ row }">
+            <el-tooltip v-if="oosFailed(row)" :content="oosFailed(row)!" placement="top">
+              <el-tag size="small" type="danger">{{ t('tuning.table.oosFailed') }}</el-tag>
+            </el-tooltip>
+            <span v-else>{{ comboOos(row) ? fmtPct(comboOos(row)!['总收益率']) : '—' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column v-if="hasOos" :label="t('tuning.table.oosSharpe')" width="96" sortable :sort-method="sortByMetric('夏普比率', true)">
+          <template #default="{ row }">{{ comboOos(row) ? fmtNum(comboOos(row)!['夏普比率']) : '—' }}</template>
         </el-table-column>
         <el-table-column :label="t('tuning.table.status')" width="96">
           <template #default="{ row }">

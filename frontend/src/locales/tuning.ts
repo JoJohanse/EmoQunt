@@ -21,10 +21,12 @@ export const zh: Messages = {
     duration: '总耗时',
     created: '创建时间',
     combos: '组合进度',
+    oos: '样本外进度',
   },
   best: '最优',
   baseline: '基准',
   chartTitle: '净值对比（归一化起点 = 1）',
+  isWindow: '样本内窗口',
   // 组合表
   table: {
     index: '#',
@@ -39,6 +41,14 @@ export const zh: Messages = {
     applied: '已应用到策略',
     applyFailed: '应用失败',
     viewParam: '参数',
+    oosReturn: 'OOS 总收益率',
+    oosSharpe: 'OOS 夏普',
+    oosFailed: '失败',
+  },
+  overfit: {
+    title: '过拟合警示',
+    degraded: '最优组合的样本外{metric}为 {oos}，较样本内 {is} 退化 {drop}%——参数网格可能拟合了噪声，应用前请谨慎评估。',
+    reranked: '终排名按样本外指标重排：样本内最优 #{isIdx} 并非最终最优 #{bestIdx}——IS argmax 存在过拟合迹象。',
   },
   // 新建调优对话框（StrategyDetailView 调优 Tab 内）
   create: {
@@ -104,10 +114,12 @@ export const en: Messages = {
     duration: 'Total Time',
     created: 'Created',
     combos: 'Combos',
+    oos: 'OOS Progress',
   },
   best: 'Best',
   baseline: 'Baseline',
   chartTitle: 'Equity Comparison (normalized to 1)',
+  isWindow: 'in-sample window',
   table: {
     index: '#',
     params: 'Parameters',
@@ -121,6 +133,14 @@ export const en: Messages = {
     applied: 'Applied to strategy',
     applyFailed: 'Failed to apply',
     viewParam: 'Params',
+    oosReturn: 'OOS Total Return',
+    oosSharpe: 'OOS Sharpe',
+    oosFailed: 'Failed',
+  },
+  overfit: {
+    title: 'Overfitting Warning',
+    degraded: "The best combo's out-of-sample {metric} is {oos}, down {drop}% from in-sample {is} — the grid may have fit noise. Evaluate before applying.",
+    reranked: 'Final ranking follows out-of-sample metrics: in-sample best #{isIdx} is not the final best #{bestIdx} — the IS argmax shows overfitting signs.',
   },
   create: {
     title: 'New Tuning Task',

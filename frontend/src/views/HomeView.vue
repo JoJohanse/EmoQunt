@@ -45,7 +45,8 @@ import { calcMA, calcBOLL, calcMACD, calcKDJ, calcRSI } from '@/lib/indicators'
 import { useHomeLayoutStore } from '@/stores/homeLayout'
 import { useUiStore } from '@/stores/ui'
 import { usePolling } from '@/composables/usePolling'
-import { VChart } from '@/composables/useECharts'
+import LazyChart from '@/components/LazyChart.vue'
+import { chartTheme } from '@/lib/chartTheme'
 import SentimentCalendar from '@/components/SentimentCalendar.vue'
 import MiniSparkline from '@/components/MiniSparkline.vue'
 import AnimNumber from '@/components/AnimNumber.vue'
@@ -53,6 +54,7 @@ import AnimNumber from '@/components/AnimNumber.vue'
 const router = useRouter()
 const watchlistStore = useWatchlistStore()
 const historyStore = useBacktestHistoryStore()
+const th = chartTheme()
 const homeLayoutStore = useHomeLayoutStore()
 const uiStore = useUiStore()
 
@@ -150,7 +152,7 @@ const kline = ref<KlineData | null>(null)
 const sentiment = ref<SentimentData | null>(null)
 const recommend = ref<DailyRecommendData | null>(null)
 const loadingKline = ref(false)
-const klineChartRef = ref<InstanceType<typeof VChart> | null>(null)
+const klineChartRef = ref<InstanceType<typeof LazyChart> | null>(null)
 
 // ===== K线工具栏偏好（周期/复权/主图叠加/副图指标），收在 stores/klinePrefs =====
 // （persist 插件持久化 + 旧裸键迁移；storeToRefs 保持既有 .value 写法与模板 v-model 不变）
@@ -740,10 +742,10 @@ const klineOption = computed(() => {
         const x = Math.min(Math.max((point[0] ?? 0) - w / 2, 8), Math.max(8, viewW - w - 8))
         return [x, 8]
       },
-      backgroundColor: 'rgba(255,255,255,0.97)',
-      borderColor: '#e5e7eb',
+      backgroundColor: th.tooltipBg.value,
+      borderColor: th.dark.value ? 'rgba(255,255,255,0.14)' : '#e5e7eb',
       borderWidth: 1,
-      textStyle: { color: '#1f2937', fontSize: 12 },
+      textStyle: { color: th.text.value, fontSize: 12 },
       formatter(params: any) {
         const arr: any[] = Array.isArray(params) ? params : [params]
         const idx = arr[0]?.dataIndex ?? 0
@@ -857,9 +859,9 @@ const heatmapOption = computed(() => {
   const top = [...sectors].sort((a, b) => b.turnover - a.turnover).slice(0, 28)
   return {
     tooltip: {
-      backgroundColor: 'rgba(255,255,255,0.97)',
-      borderColor: '#e5e7eb',
-      textStyle: { color: '#1f2937', fontSize: 12 },
+      backgroundColor: th.tooltipBg.value,
+      borderColor: th.dark.value ? 'rgba(255,255,255,0.14)' : '#e5e7eb',
+      textStyle: { color: th.text.value, fontSize: 12 },
       formatter(info: any) {
         const c = info.data as any
         // 后端 总成交额 单位为亿元（见 services/market.py），×1e8 后交给 fmtBigNum 按语言缩写
@@ -1218,7 +1220,7 @@ const sectorFallbackList = computed(() => {
               <div class="kline-body">
                 <el-skeleton v-if="loadingKline" animated :rows="5" style="padding: 16px" />
                 <template v-else>
-                  <v-chart
+                  <LazyChart
                     ref="klineChartRef"
                     v-if="kline && kline.dates.length"
                     class="kline-chart"
@@ -1385,7 +1387,7 @@ const sectorFallbackList = computed(() => {
             <el-skeleton animated :rows="6" />
           </div>
           <template v-else-if="sectorBoard?.sectors?.length">
-            <v-chart class="heatmap-chart" :option="heatmapOption" autoresize />
+            <LazyChart class="heatmap-chart" :option="heatmapOption" autoresize />
             <div class="heatmap-legend">
               <span class="hl" style="background:#14532d"></span> {{ t('home.heatmap.legendDown3') }}
               <span class="hl" style="background:#4ade80"></span> {{ t('home.heatmap.legendDown') }}
@@ -1505,7 +1507,7 @@ const sectorFallbackList = computed(() => {
               </el-radio-group>
             </div>
           </template>
-          <v-chart
+          <LazyChart
             v-if="watchlistStore.items.length && Object.keys(allocationOption).length"
             class="allocation-chart"
             :option="allocationOption"

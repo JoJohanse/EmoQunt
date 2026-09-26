@@ -19,6 +19,7 @@ import type { KlineData, Market } from '@/api/types'
 import type { KlineAdjust, KlinePeriod } from '@/stores/klinePrefs'
 import { useWatchlistStore, targetKey, watchDisplayName } from '@/stores/watchlist'
 import { chartPalette, deltaColor } from '@/lib/marketColors'
+import { chartTheme } from '@/lib/chartTheme'
 import {
   candleItemStyle,
   chgVsPrevClose,
@@ -37,6 +38,7 @@ import { VChart } from '@/composables/useECharts'
 import AnimNumber from '@/components/AnimNumber.vue'
 
 const watchlistStore = useWatchlistStore()
+const th = chartTheme()
 
 // ===== 指数预设（与 HomeView 的 INDEX_PRESETS 同源五条；000001 二义性必须带 kind） =====
 const INDEX_PRESETS: { code: string; market: Market; nameKey: string; kind: 'index' }[] = [
@@ -358,10 +360,10 @@ const chartOption = computed(() => {
         const x = Math.min(Math.max((point[0] ?? 0) - w / 2, 8), Math.max(8, viewW - w - 8))
         return [x, 8]
       },
-      backgroundColor: 'rgba(255,255,255,0.97)',
-      borderColor: '#e5e7eb',
+      backgroundColor: th.tooltipBg.value,
+      borderColor: th.dark.value ? 'rgba(255,255,255,0.14)' : '#e5e7eb',
       borderWidth: 1,
-      textStyle: { color: '#1f2937', fontSize: 12 },
+      textStyle: { color: th.text.value, fontSize: 12 },
       formatter(params: any) {
         const arr: any[] = Array.isArray(params) ? params : [params]
         const idx = arr[0]?.dataIndex ?? 0

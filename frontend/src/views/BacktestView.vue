@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { backtestApi, strategyApi, klineApi } from '@/api'
 import type { BacktestMetrics, BacktestRequest, BacktestResult, BacktestTrade, KlineData, Market, StrategyDetail } from '@/api/types'
-import { chartPalette, deltaTone } from '@/lib/marketColors'
+import { deltaColor, chartPalette, deltaTone } from '@/lib/marketColors'
 import {
   candleItemStyle,
   chgVsPrevClose,
@@ -17,6 +17,7 @@ import { useBacktestHistoryStore } from '@/stores/backtestHistory'
 import { t } from '@/locales'
 import { fmtCurrency, fmtNum } from '@/lib/format'
 import { VChart } from '@/composables/useECharts'
+import { chartTheme } from '@/lib/chartTheme'
 
 const route = useRoute()
 const historyStore = useBacktestHistoryStore()
@@ -119,6 +120,7 @@ const metricLabel = computed<Record<string, string>>(() => ({
   信息比率: t('backtest.metric.信息比率'),
   年化波动率: t('backtest.metric.年化波动率'),
   卡玛比率: t('backtest.metric.卡玛比率'),
+  索提诺比率: t('backtest.metric.sortino'),
   下行标准差: t('backtest.metric.下行标准差'),
   'VaR (95%)': t('backtest.metric.var95'),
   'CVaR (95%)': t('backtest.metric.cvar95'),
@@ -151,6 +153,7 @@ const metricCards = computed(() => {
     // 完整绩效报告新增指标（可选）
     ...opt('年化波动率', fmtPct, (v) => (v <= 0.25 ? 'success' : 'danger'), 'risk'),
     ...opt('卡玛比率', fmtFixed, (v) => (v >= 1 ? 'success' : 'danger'), 'return'),
+    ...opt('索提诺比率', fmtFixed, (v) => (v >= 1 ? 'success' : 'danger'), 'risk'),
     ...opt('下行标准差', fmtPct, () => 'neutral', 'risk'),
     ...opt('VaR (95%)', fmtFixed, () => 'danger', 'risk'),
     ...opt('CVaR (95%)', fmtFixed, () => 'danger', 'risk'),
@@ -171,6 +174,30 @@ const stressRows = computed(() => {
 })
 
 // 收益曲线 ECharts 配置（动态，可缩放）
+// ===== 三图联动 + 暗色适配（Round3） =====
+// 净值/回撤/日收益共享 dataZoom 窗口：任一图缩放经 @datazoom 回写 zoomRange，
+// 其余两图 option 由 computed 依赖重算自动同步（跨实例联动不依赖 echarts.connect）。
+const th = chartTheme()
+const zoomRange = ref<[number, number]>([0, 100])
+const linkedDataZoom = () => [
+  { type: 'inside' as const, start: zoomRange.value[0], end: zoomRange.value[1] },
+  { type: 'slider' as const, start: zoomRange.value[0], end: zoomRange.value[1], height: 18, bottom: 0 },
+]
+function onLinkedZoom(e: unknown) {
+  const ev = e as { batch?: { start?: number; end?: number }[]; start?: number; end?: number }
+  const first = ev.batch?.[0]
+  const s = first?.start ?? ev.start
+  const en = first?.end ?? ev.end
+  if (typeof s === 'number' && typeof en === 'number') zoomRange.value = [s, en]
+}
+/** 百分比轴 tooltip（暗色底/文字随主题） */
+const pctTooltip = () => ({
+  trigger: 'axis' as const,
+  backgroundColor: th.tooltipBg.value,
+  textStyle: { color: th.text.value },
+  valueFormatter: (v: number) => (v * 100).toFixed(2) + '%',
+})
+
 const equityOption = computed(() => {
   if (!result.value) return {}
   const r = result.value
@@ -203,20 +230,23 @@ const equityOption = computed(() => {
     })
   }
   return {
-    tooltip: { trigger: 'axis', valueFormatter: (v: number) => fmtMoney(v) },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: th.tooltipBg.value,
+      textStyle: { color: th.text.value },
+      valueFormatter: (v: number) => fmtMoney(v),
+    },
     legend: { data: series.map((s) => s.name), top: 0 },
     grid: { left: '3%', right: '3%', bottom: '15%', containLabel: true },
     toolbox: { feature: { dataZoom: { yAxisIndex: 'none' }, saveAsImage: {} } },
-    dataZoom: [
-      { type: 'inside', start: 0, end: 100 },
-      { type: 'slider', start: 0, end: 100 },
-    ],
+    dataZoom: linkedDataZoom(),
     xAxis: { type: 'category', data: r.dates, boundaryGap: false },
     yAxis: {
       type: 'value',
       scale: true,
-      axisLabel: { formatter: (v: number) => fmtNum(v, { maximumFractionDigits: 0 }) },
+      axisLabel: { color: th.subText.value, formatter: (v: number) => fmtNum(v, { maximumFractionDigits: 0 }) },
       name: currencyLabel.value,
+      splitLine: { lineStyle: { color: th.splitLine.value } },
     },
     series,
   }
@@ -227,14 +257,11 @@ const drawdownOption = computed(() => {
   if (!result.value) return {}
   const r = result.value
   return {
-    tooltip: { trigger: 'axis', valueFormatter: (v: number) => (v * 100).toFixed(2) + '%' },
+    tooltip: pctTooltip(),
     grid: { left: '3%', right: '3%', bottom: '15%', containLabel: true },
-    dataZoom: [
-      { type: 'inside', start: 0, end: 100 },
-      { type: 'slider', start: 0, end: 100 },
-    ],
+    dataZoom: linkedDataZoom(),
     xAxis: { type: 'category', data: r.dates, boundaryGap: false },
-    yAxis: { type: 'value', axisLabel: { formatter: (v: number) => (v * 100).toFixed(0) + '%' } },
+    yAxis: { type: 'value', axisLabel: { color: th.subText.value, formatter: (v: number) => (v * 100).toFixed(0) + '%' }, splitLine: { lineStyle: { color: th.splitLine.value } } },
     series: [
       {
         name: t('backtest.series.drawdown'),
@@ -255,14 +282,11 @@ const returnsOption = computed(() => {
   // 日收益柱涨跌色按回测市场取 token：A股红涨绿跌 / 美股绿涨红跌（此前固定绿涨）
   const { up, down } = chartPalette(r.market)
   return {
-    tooltip: { trigger: 'axis', valueFormatter: (v: number) => (v * 100).toFixed(2) + '%' },
+    tooltip: pctTooltip(),
     grid: { left: '3%', right: '3%', bottom: '15%', containLabel: true },
-    dataZoom: [
-      { type: 'inside', start: 0, end: 100 },
-      { type: 'slider', start: 0, end: 100 },
-    ],
+    dataZoom: linkedDataZoom(),
     xAxis: { type: 'category', data: r.dates },
-    yAxis: { type: 'value', axisLabel: { formatter: (v: number) => (v * 100).toFixed(1) + '%' } },
+    yAxis: { type: 'value', axisLabel: { color: th.subText.value, formatter: (v: number) => (v * 100).toFixed(1) + '%' }, splitLine: { lineStyle: { color: th.splitLine.value } } },
     series: [
       {
         name: t('backtest.series.dailyReturns'),
@@ -274,6 +298,76 @@ const returnsOption = computed(() => {
       },
     ],
   }
+})
+
+// ===== 月度收益热力图（Round3）：后端 monthly_returns 进 payload 即出图 =====
+const hasMonthlyData = computed(() => (result.value?.monthly_returns?.length ?? 0) > 0)
+const monthlyHeatmapOption = computed(() => {
+  const rows = result.value?.monthly_returns ?? []
+  if (!rows.length) return {}
+  const years = [...new Set(rows.map((r) => r.year))].sort()
+  const data = rows.map((r) => [r.month - 1, years.indexOf(r.year), +(r.ret * 100).toFixed(2)])
+  // visualMap 以 0 为中心对称：全正收益区间里 0% 才落在中性色而非"最差"色端
+  const bound = Math.max(...data.map((d) => Math.abs(d[2])), 0.01)
+  const vmin = -bound
+  const vmax = bound
+  const { up, down } = chartPalette(result.value!.market)
+  return {
+    tooltip: {
+      position: 'top',
+      backgroundColor: th.tooltipBg.value,
+      textStyle: { color: th.text.value },
+      formatter: (p: { value: [number, number, number] }) =>
+        `${years[p.value[1]]}-${String(p.value[0] + 1).padStart(2, '0')}: ${p.value[2]}%`,
+    },
+    grid: { left: '3%', right: '4%', top: 8, bottom: 42, containLabel: true },
+    xAxis: { type: 'category', data: Array.from({ length: 12 }, (_, i) => String(i + 1)), splitArea: { show: true } },
+    yAxis: { type: 'category', data: years.map(String), axisLabel: { color: th.subText.value } },
+    visualMap: {
+      min: vmin, max: vmax, calculable: true, orient: 'horizontal', left: 'center', bottom: 0,
+      inRange: { color: [down, th.neutral.value, up] },
+      textStyle: { color: th.subText.value },
+    },
+    series: [{
+      type: 'heatmap',
+      label: { show: true, color: th.text.value, formatter: (p: { value: [number, number, number] }) => `${p.value[2]}%` },
+      data,
+    }],
+  }
+})
+
+// ===== 交易明细表（Round3）：fills FIFO 配对成 round-trip（持仓天数/单笔盈亏） =====
+interface RoundTrip {
+  openDate: string; closeDate: string; entry: number; exit: number
+  size: number; pnl: number; pnlPct: number; holdingDays: number
+}
+const roundTrips = computed<RoundTrip[]>(() => {
+  const fills = result.value?.trades ?? []
+  const lots: { date: string; price: number; size: number }[] = []
+  const out: RoundTrip[] = []
+  const dayDiff = (a: string, b: string) =>
+    Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86400000)
+  for (const f of fills) {
+    if (f.side === 'buy') {
+      lots.push({ date: f.date, price: f.price, size: f.size })
+      continue
+    }
+    let remaining = f.size
+    while (remaining > 1e-9 && lots.length) {
+      const lot = lots[0]
+      const matched = Math.min(lot.size, remaining)
+      out.push({
+        openDate: lot.date, closeDate: f.date, entry: lot.price, exit: f.price, size: matched,
+        pnl: (f.price - lot.price) * matched,
+        pnlPct: lot.price ? (f.price / lot.price - 1) * 100 : 0,
+        holdingDays: Math.max(0, dayDiff(lot.date, f.date)),
+      })
+      lot.size -= matched
+      remaining -= matched
+      if (lot.size <= 1e-9) lots.shift()
+    }
+  }
+  return out
 })
 
 // ===== 回测 K 线（买卖点标注，P0-5） =====
@@ -485,17 +579,56 @@ const tradesKlineOption = computed(() => {
 
       <div class="section-title"><el-icon><TrendCharts /></el-icon> {{ t('backtest.section.equity') }}</div>
       <el-card shadow="never" class="chart-card">
-        <v-chart class="chart" :option="equityOption" autoresize />
+        <v-chart class="chart" :option="equityOption" autoresize @datazoom="onLinkedZoom" />
       </el-card>
 
       <div class="section-title"><el-icon><Bottom /></el-icon> {{ t('backtest.section.drawdown') }}</div>
       <el-card shadow="never" class="chart-card">
-        <v-chart class="chart" :option="drawdownOption" autoresize />
+        <v-chart class="chart" :option="drawdownOption" autoresize @datazoom="onLinkedZoom" />
       </el-card>
 
       <div class="section-title"><el-icon><Histogram /></el-icon> {{ t('backtest.section.dailyReturns') }}</div>
       <el-card shadow="never" class="chart-card">
-        <v-chart class="chart" :option="returnsOption" autoresize />
+        <v-chart class="chart" :option="returnsOption" autoresize @datazoom="onLinkedZoom" />
+      </el-card>
+
+      <div class="section-title"><el-icon><Histogram /></el-icon> {{ t('backtest.section.monthlyHeatmap') }}</div>
+      <el-card shadow="never" class="chart-card">
+        <v-chart v-if="hasMonthlyData" class="chart" :option="monthlyHeatmapOption" autoresize />
+        <el-empty v-else :description="t('backtest.monthly.empty')" :image-size="60" />
+      </el-card>
+
+      <div class="section-title"><el-icon><List /></el-icon> {{ t('backtest.section.tradeList') }}</div>
+      <el-card shadow="never" class="chart-card">
+        <el-table
+          :data="roundTrips"
+          size="small"
+          stripe
+          max-height="360"
+          :empty-text="t('backtest.trades.empty')"
+          :default-sort="{ prop: 'openDate', order: 'ascending' }"
+        >
+          <el-table-column prop="openDate" :label="t('backtest.trades.openDate')" sortable width="110" />
+          <el-table-column prop="closeDate" :label="t('backtest.trades.closeDate')" sortable width="110" />
+          <el-table-column prop="entry" :label="t('backtest.trades.price')" sortable align="right" width="90">
+            <template #default="{ row }">{{ row.entry.toFixed(2) }}</template>
+          </el-table-column>
+          <el-table-column prop="exit" :label="t('backtest.trades.price')" sortable align="right" width="90">
+            <template #default="{ row }">{{ row.exit.toFixed(2) }}</template>
+          </el-table-column>
+          <el-table-column prop="size" :label="t('backtest.trades.size')" sortable align="right" width="90" />
+          <el-table-column prop="pnl" :label="t('backtest.trades.pnl')" sortable align="right" width="100">
+            <template #default="{ row }">
+              <span :style="{ color: deltaColor(result.market, row.pnl >= 0 ? 'up' : 'down') }">{{ row.pnl.toFixed(2) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="pnlPct" :label="t('backtest.trades.pnlPct')" sortable align="right" width="90">
+            <template #default="{ row }">
+              <span :style="{ color: deltaColor(result.market, row.pnlPct >= 0 ? 'up' : 'down') }">{{ row.pnlPct.toFixed(2) }}%</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="holdingDays" :label="t('backtest.trades.holdingDays')" sortable align="right" width="100" />
+        </el-table>
       </el-card>
 
       <!-- 风险分析面板（激活 RiskManager）-->

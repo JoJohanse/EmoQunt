@@ -58,6 +58,8 @@ export const zh: Messages = {
     equity: '累计收益曲线',
     drawdown: '最大回撤曲线',
     dailyReturns: '日收益率分布',
+    monthlyHeatmap: '月度收益热力图',
+    tradeList: '交易明细',
   },
   empty: {
     kline: 'K线数据加载失败或回测区间无效',
@@ -73,6 +75,7 @@ export const zh: Messages = {
     信息比率: '信息比率',
     年化波动率: '年化波动率',
     卡玛比率: '卡玛比率',
+    sortino: '索提诺比率',
     下行标准差: '下行标准差',
     var95: 'VaR(95%)',
     cvar95: 'CVaR(95%)',
@@ -92,6 +95,19 @@ export const zh: Messages = {
     low: '低',
     high: '高',
     change: '涨跌',
+  },
+  trades: {
+    openDate: '开仓日期',
+    closeDate: '平仓日期',
+    price: '价格',
+    size: '数量',
+    pnl: '盈亏',
+    pnlPct: '盈亏%',
+    holdingDays: '持仓天数',
+    empty: '回测期间无成交',
+  },
+  monthly: {
+    empty: '暂无月度收益数据',
   },
   risk: {
     title: '风险分析',
@@ -156,6 +172,8 @@ export const en: Messages = {
     equity: 'Cumulative Return',
     drawdown: 'Max Drawdown Curve',
     dailyReturns: 'Daily Return Distribution',
+    monthlyHeatmap: 'Monthly Returns Heatmap',
+    tradeList: 'Trade Details',
   },
   empty: {
     kline: 'K-line data failed to load, or the backtest range is invalid',
@@ -171,6 +189,7 @@ export const en: Messages = {
     信息比率: 'Information Ratio',
     年化波动率: 'Annualized Volatility',
     卡玛比率: 'Calmar Ratio',
+    sortino: 'Sortino Ratio',
     下行标准差: 'Downside Deviation',
     var95: 'VaR (95%)',
     cvar95: 'CVaR (95%)',
@@ -190,6 +209,19 @@ export const en: Messages = {
     low: 'Low',
     high: 'High',
     change: 'Change',
+  },
+  trades: {
+    openDate: 'Open Date',
+    closeDate: 'Close Date',
+    price: 'Price',
+    size: 'Size',
+    pnl: 'P&L',
+    pnlPct: 'P&L %',
+    holdingDays: 'Holding Days',
+    empty: 'No trades in the backtest period',
+  },
+  monthly: {
+    empty: 'No monthly return data',
   },
   risk: {
     title: 'Risk Analysis',

@@ -49,6 +49,7 @@ export interface BacktestMetrics {
   // 完整绩效报告新增（可选）
   年化波动率?: number
   卡玛比率?: number
+  索提诺比率?: number
   下行标准差?: number
   'VaR (95%)'?: number
   'CVaR (95%)'?: number
@@ -106,6 +107,15 @@ export interface BacktestResult {
   daily_returns: number[] // 日收益率
   /** 逐笔成交（买卖点标注；后端截断至 500 条） */
   trades?: BacktestTrade[]
+  /** 月度收益（Round3：前端 month×year 热力图数据源；ret 为该月复合收益率） */
+  monthly_returns?: MonthlyReturn[]
+}
+
+/** 月度收益单条（后端 resample('M') 月末复合口径） */
+export interface MonthlyReturn {
+  year: number
+  month: number
+  ret: number
 }
 
 /** 板块情绪得分 */
@@ -443,6 +453,8 @@ export interface TuningCombo {
   dates?: string[]
   equity_curve?: number[]
   duration_ms: number | null
+  /** 样本外（OOS）复跑结果（Round3；网格阶段跑 IS 窗口，Top-K+基准在 OOS 复跑） */
+  oos?: { status: 'succeeded' | 'failed'; error?: string | null; metrics?: BacktestMetrics } | null
 }
 
 /** 调优任务（列表项与详情共用；列表不含 combos） */
@@ -465,6 +477,11 @@ export interface TuningTask {
   total_combos: number
   done_combos: number
   succeeded_combos: number
+  /** 样本外验证（Round3）：ratio/IS 终点/OOS 进度 */
+  oos_ratio?: number
+  is_end_date?: string | null
+  oos_done?: number
+  oos_total?: number
   best_combo_index: number | null
   error: string | null
   duration_ms: number | null
