@@ -34,6 +34,8 @@ T = {
         "run_backtest": "运行回测",
         "equity_ready": "累计收益曲线",
         "trades_section": "买卖点标注",
+        "report_section": "交易明细",
+        "monthly_section": "月度收益热力图",
         "ai_button": "AI 助手",
         "chat_placeholder": "输入问题，回车发送（Shift+回车换行）",
         "tool_card_link": "在首页查看主图",
@@ -49,6 +51,8 @@ T = {
         "run_backtest": "Run Backtest",
         "equity_ready": "Cumulative Return",
         "trades_section": "Backtest K-line · Trade Markers",
+        "report_section": "Trade Details",
+        "monthly_section": "Monthly Returns Heatmap",
         "ai_button": "AI Assistant",
         "chat_placeholder": "Ask a question, press Enter to send (Shift+Enter for a new line)",
         "tool_card_link": "View main chart on Home",
@@ -161,6 +165,12 @@ def main() -> int:
         trades_title.scroll_into_view_if_needed()
         page.wait_for_timeout(800)
         shot(page, "spa-backtest-trades")
+        # Round3 特写：月度收益热力图 + 交易明细表（fills 前端 FIFO 配对成 round-trip，可排序）
+        # 从热力图标题起滚——整屏同时入镜热力图与交易明细
+        monthly_title = page.locator(".section-title", has_text=T["monthly_section"])
+        monthly_title.scroll_into_view_if_needed()
+        page.wait_for_timeout(1200)
+        shot(page, "spa-backtest-report")
 
         # 4) SPA 策略列表
         page.goto(f"{BASE}/spa/strategies", wait_until="domcontentloaded")
@@ -175,11 +185,12 @@ def main() -> int:
         page.wait_for_timeout(3500)
         shot(page, "spa-strategy-detail", full_page=True)
 
-        # 4c) 运行历史 + 调优任务详情（归一化净值对比 + 组合表；task 3 为浏览器实测产物）
+        # 4c) 运行历史 + 调优任务详情（Round3：IS/OOS 双列 + 过拟合警示；task 4 为 OOS 实测产物
+        #     —— 2024 全年 + oos_ratio 0.3，IS 终点 2024-09-12，终排名按 OOS 指标）
         page.goto(f"{BASE}/spa/runs", wait_until="domcontentloaded")
         page.wait_for_timeout(2500)
         shot(page, "spa-runs", full_page=True)
-        page.goto(f"{BASE}/spa/tuning/3", wait_until="domcontentloaded")
+        page.goto(f"{BASE}/spa/tuning/4", wait_until="domcontentloaded")
         page.wait_for_timeout(3500)
         shot(page, "spa-tuning", full_page=True)
 

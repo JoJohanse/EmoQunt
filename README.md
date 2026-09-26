@@ -91,7 +91,7 @@ Jinja2 frontend (`/`).
     </td>
     <td width="50%" valign="top">
       <img src="docs/screenshots/spa-tuning-en.png" alt="Tuning detail" width="100%"/><br/>
-      <b>Parameter tuning</b> — normalized equity comparison, per-combination metrics table, apply the best set
+      <b>Parameter tuning</b> — IS/OOS dual metric columns + overfitting warning, final ranking by out-of-sample metrics, apply the best set
     </td>
   </tr>
   <tr>
@@ -106,16 +106,20 @@ Jinja2 frontend (`/`).
   </tr>
   <tr>
     <td width="50%" valign="top">
+      <img src="docs/screenshots/spa-backtest-report-en.png" alt="Backtest report: monthly heatmap and trade details" width="100%"/><br/>
+      <b>Backtest report · Round3</b> — monthly-returns heatmap (month×year) + trade-details table (FIFO round-trips with per-trade P&amp;L / holding days, all sortable)
+    </td>
+    <td width="50%" valign="top">
       <img src="docs/screenshots/spa-market-en.png" alt="Market terminal" width="100%"/><br/>
       <b>Market terminal</b> — searchable symbol list, big-quote header, multi-period K-lines
     </td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">
       <img src="docs/screenshots/spa-tunings-en.png" alt="Tuning tasks" width="100%"/><br/>
       <b>Tuning tasks</b> — every parameter-tuning run with combo progress and best combo
     </td>
-  </tr>
-  <tr>
-    <td colspan="2" align="center">
+    <td width="50%" valign="top">
       <img src="docs/screenshots/web-sentiment-en.png" alt="Sentiment analysis" width="100%"/><br/>
       <b>Classic sentiment analysis</b> (Jinja2, <code>/sentiment</code>)
     </td>
@@ -131,14 +135,15 @@ Jinja2 frontend (`/`).
 - **Benchmark & risk-adjusted returns**: CSI 300 (A-share) / S&P 500 (US) benchmarks with Alpha / Beta / Information Ratio and overlay curves
 - **Sentiment-filtered strategies**: crossover signals filtered by historical sentiment snapshots ("latest snapshot on or before the day" — look-ahead safe)
 - **Trade-level win rate & trade markers**: per-fill `trades` passed to the SPA, rendered as B/S arrows plus an average-cost line on the backtest K-line
-- **Performance & risk analytics**: total/annualized return, Sharpe, max drawdown, Calmar, VaR/CVaR, downside deviation, stress-test scenarios
+- **Performance & risk analytics**: total/annualized return, Sharpe, Sortino, max drawdown, Calmar, VaR/CVaR, downside deviation, stress-test scenarios; monthly returns (month×year) ship in the JSON payload and render as a heatmap
+- **Tuning out-of-sample validation (OOS, anti-overfitting)**: the parameter grid backtests on the in-sample window only (default first 70%, tunable via `oos_ratio`); the IS top-5 plus baseline re-run on the **untouched** out-of-sample window and the final ranking follows OOS metrics; the detail page shows IS/OOS dual columns and an overfitting warning (OOS degrades >50% vs IS, or the IS argmax differs from the final best)
 
 ### 🗄 Data layer (multi-source failover)
-- **A-share fallback chain**: Tushare Pro (optional, needs `TUSHARE_TOKEN`) → akshare Sina → Eastmoney → baostock, driven by a unified FetchRunner with automatic degradation
+- **A-share fallback chain**: Tushare Pro (optional, needs `TUSHARE_TOKEN`) → akshare Sina → Eastmoney → baostock, driven by a unified FetchRunner with **a per-source 30s hard timeout** (`QDT_SOURCE_TIMEOUT`) — a hung source degrades to the next instead of stalling the whole chain
 - **US two-tier fallback**: yfinance (primary) → akshare Sina
 - **Data-source health beats**: every fetch layer records success/failure (in-process, last 7 per source) exposed at `GET /api/data/source-health` and rendered as a homepage heartbeat bar
 - **Local quote cache (SQLite + SWR)**: quote reads (`/api/kline` tail mode, market breadth, sector board) persist to `data/market_cache.db`; a fresh hit answers in milliseconds, a stale hit returns the old value immediately and refreshes in the background (de-duplicated per key) — the homepage first screen stays instant even right after a restart, where a cold fetch used to take 5–7 s
-- **First-paint acceleration**: a startup warm-up thread (disable with `QDT_STARTUP_WARMUP=0`) prefetches index quotes, market breadth and the sector board into the local cache, so even the first visit on an empty cache skips the cold crawl; the homepage first paint is one aggregate `GET /api/market/overview` request (indices + watchlist + breadth + sectors) instead of 8+ parallel calls — ~4 ms warm
+- **First-paint acceleration**: a startup warm-up thread (disable with `QDT_STARTUP_WARMUP=0`) prefetches index quotes, market breadth and the sector board into the local cache, so even the first visit on an empty cache skips the cold crawl; the homepage first paint is one aggregate `GET /api/market/overview` request (indices + watchlist + breadth + sectors instead of 8+ parallel calls; components fetched concurrently) — ~4 ms warm; with the PG/Redis cache, hits detect head/tail coverage gaps and **incrementally backfill only the missing window** (10-minute throttle), so a partial hit no longer serves stale data forever
 - **Optional PostgreSQL + Redis cache** (one-command `docker-compose.yml`): read order Redis → PG → CSV → network; silently degrades to pure network mode
 - Market data cached under `stock_data/`; sentiment snapshots at `nes_data/sentiment_results/{YYYYMMDD}.json` feed the homepage calendar and the backtest sentiment filter
 
@@ -149,9 +154,10 @@ Jinja2 frontend (`/`).
 - **Market terminal** (`/market`): searchable symbol list (indices + watchlist), big-quote header with change badge, and multi-period candlestick chart (day/week/month)
 - **Tuning tasks** (`/tunings`): every parameter-tuning task at a glance — combo progress bars, best combo, status filters and one-click access to the detail page
 - **Multi-session AI chat**: session chips (new / switch / pin / rename / delete) with auto-generated titles, plus starter prompt cards grouped by Stocks / A-share factors / Data lookups — click one to start instantly
-- **Dynamic ECharts**: equity/drawdown/daily-return curves; candlestick K-line + volume + indicator overlays + pinned tooltip panel
+- **Dynamic ECharts**: equity/drawdown/daily-return **three-chart zoom linking** + monthly-returns heatmap + trade-details table (per-trade P&L / holding days); candlestick K-line + volume + indicator overlays + pinned tooltip panel; **dark-theme adaptation** for chart text/axes/tooltips (single source `lib/chartTheme.ts`)
+- **Leaner first paint**: ECharts (~232 KB gz) loads as an async chunk via `LazyChart` — not downloaded until a chart page is visited
 - **Code strategy library** (`/strategy-library`): user Python strategies validated by an AST whitelist, with version snapshots/rollback and detail tabs for parameters, source (lazy-loaded CodeMirror 6), versions, backtests and tuning
-- **Run history & parameter tuning**: `/runs` lists async backtest runs with status filters, equity thumbnails and a detail dialog; `/tuning/:taskId` compares normalized equity curves of every grid combination (≤63 + baseline), shows a per-combination metrics table and applies the best set back to the strategy — the only write-back path to strategy parameters
+- **Run history & parameter tuning**: `/runs` lists async backtest runs with status filters, equity thumbnails and a detail dialog; `/tuning/:taskId` compares normalized equity curves of every grid combination (≤63 + baseline), shows an **IS/OOS dual-metric table (sortable)** with an out-of-sample progress bar and an **overfitting warning**, and applies the best set back to the strategy — the only write-back path to strategy parameters
 - **Factor library** (`/factor-library`): author Python factors (top-level `compute(df) -> pd.Series` over one symbol's Chinese-column daily bars), same AST sandbox + version history, then run one-click cross-sectional analysis over the HS300 universe (IC / RankIC / ICIR / quantile returns / monotonicity) from the detail page's three tabs; A-shares only
 - **SPA-exclusive pages**: strategy comparison (overlaid equity + metrics table), factor analysis (IC / quantile returns / monotonicity)
 - **Browser-local persistence**: UI prefs (incl. the colour scheme), watchlist, backtest history & form, AI chat, favorites/tabs/layout/K-line preferences — all survive a refresh
@@ -204,7 +210,7 @@ docker compose up -d         # PostgreSQL 16 + Redis 7 (via domestic mirror dock
 ### 6. Tests
 ```bash
 pytest test/test_backtest.py test/test_tuning.py test/test_factor_library.py \
-       test/test_quote_cache.py test/test_agent_p4.py test/test_agent_tools.py -v   # 122 cases
+       test/test_quote_cache.py test/test_agent_p4.py test/test_agent_tools.py -v   # 700+ cases in the full suite
 ```
 Pick test files explicitly — `test/` also contains manual scripts.
 
@@ -221,7 +227,7 @@ Pick test files explicitly — `test/` also contains manual scripts.
 | `/spa/strategies` | Strategy list (view/delete) |
 | `/spa/strategy-library` · `/spa/strategy-library/:id` | Code strategy library and detail (parameters / source / versions / backtests / tuning) |
 | `/spa/runs` | Run history — async backtest runs with status filters, equity thumbnails and a detail dialog |
-| `/spa/tuning/:taskId` | Tuning detail — normalized equity comparison, per-combination metrics table, apply the best parameters |
+| `/spa/tuning/:taskId` | Tuning detail — normalized equity comparison, IS/OOS metrics table with overfitting warning, apply the best parameters |
 | `/spa/sentiment` | Sentiment analysis (news + sector scores) |
 | `/spa/daily-recommend` | Daily recommendations |
 | `/spa/strategy-compare` | Strategy comparison (2–5 equity curves + metrics table) |
@@ -321,7 +327,7 @@ EmoQunt/
 | Backtesting | backtrader + custom dual-market cost models |
 | Analysis & viz | pandas, numpy, scipy, scikit-learn; ECharts (SPA), matplotlib / seaborn / plotly (server) |
 | AI | OpenAI-compatible LLM + LangChain + LangGraph (ReAct agent) |
-| Testing | pytest (122 cases across the backtest / tuning / factor-library / quote-cache / agent suites) |
+| Testing | pytest (700+ cases across the backtest / tuning / factor-library / quote-cache / agent suites) |
 
 ---
 

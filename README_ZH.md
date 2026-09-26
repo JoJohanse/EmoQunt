@@ -89,7 +89,7 @@
     </td>
     <td width="50%" valign="top">
       <img src="docs/screenshots/spa-tuning.png" alt="参数调优" width="100%"/><br/>
-      <b>参数调优</b> — 归一化净值对比 + 组合指标表，一键应用最优参数
+      <b>参数调优</b> — IS/OOS 双列指标 + 过拟合警示，终排名按样本外指标，一键应用最优参数
     </td>
   </tr>
   <tr>
@@ -104,16 +104,20 @@
   </tr>
   <tr>
     <td width="50%" valign="top">
+      <img src="docs/screenshots/spa-backtest-report.png" alt="回测报告：月度热力图与交易明细" width="100%"/><br/>
+      <b>回测报告 · Round3</b> — 月度收益热力图（month×year）+ 交易明细表（FIFO 配对单笔盈亏/持仓天数，全列可排序）
+    </td>
+    <td width="50%" valign="top">
       <img src="docs/screenshots/spa-market.png" alt="行情终端" width="100%"/><br/>
       <b>行情终端</b> — 标的搜索列表、大字报价头、多周期 K 线
     </td>
+  </tr>
+  <tr>
     <td width="50%" valign="top">
       <img src="docs/screenshots/spa-tunings.png" alt="调优任务" width="100%"/><br/>
       <b>调优任务</b> — 全部调优任务的组合进度与最优组合
     </td>
-  </tr>
-  <tr>
-    <td colspan="2" align="center">
+    <td width="50%" valign="top">
       <img src="docs/screenshots/web-sentiment.png" alt="舆情分析" width="100%"/><br/>
       <b>经典版舆情分析</b>（Jinja2，<code>/sentiment</code>）
     </td>
@@ -129,14 +133,15 @@
 - **基准与风险调整收益**：A股自动对比沪深300、美股对比标普500，计算 Alpha / Beta / 信息比率并绘制对比曲线
 - **情绪过滤策略**：均线交叉信号可由历史情绪快照过滤（"截至当日最近快照"，避免未来函数）
 - **交易级胜率与买卖点**：胜率按已平仓交易计算；逐笔成交透传前端，回测 K 线标注 B/S 买卖点与成本均价线
-- **绩效与风险分析**：总/年化收益率、夏普、最大回撤、卡玛比率、VaR/CVaR、下行标准差、压力测试场景
+- **绩效与风险分析**：总/年化收益率、夏普、索提诺比率、最大回撤、卡玛比率、VaR/CVaR、下行标准差、压力测试场景；月度收益（month×year）随 JSON 返回，前端渲染为热力图
+- **调优样本外验证（OOS，防过拟合）**：参数网格只在样本内窗口（默认前 70%，`oos_ratio` 可调）回测，IS 排名 Top-5 + 基准在**未触碰**的样本外窗口复跑，终排名按 OOS 指标；详情页给出 IS/OOS 双列与过拟合警示（OOS 相对 IS 退化 >50% 或 IS argmax ≠ 终最优）
 
 ### 🗄 数据层（多源容错）
-- **A股回退链**：Tushare Pro（可选，需 `TUSHARE_TOKEN`）→ akshare 新浪源 → 东财源 → baostock，由统一 FetchRunner 驱动，任一环节失败自动降级
+- **A股回退链**：Tushare Pro（可选，需 `TUSHARE_TOKEN`）→ akshare 新浪源 → 东财源 → baostock，由统一 FetchRunner 驱动（**每源 30s 硬超时**，`QDT_SOURCE_TIMEOUT` 可调——挂死源自动降级下一源，不再拖垮整链），任一环节失败自动降级
 - **美股两级回退**：yfinance（主）→ akshare 新浪源
 - **数据源健康心跳**：每个取数层的成败被记录（进程内、每源近 7 次），`GET /api/data/source-health` 暴露并在首页渲染为心跳条——"为何某股无数据"一目了然
 - **行情本地持久化缓存（SQLite + SWR）**：行情读取（`/api/kline` tail 模式、市场宽度、行业板块）落 `data/market_cache.db`；新鲜命中毫秒返回，过期则先回旧值再后台刷新（同 key 在途去重）——服务重启后首页首屏依旧毫秒级，此前冷加载需 5~7 秒
-- **首屏再提速**：启动预热线程（`QDT_STARTUP_WARMUP=0` 关闭）预取指数行情/市场宽度/板块进本地缓存，空缓存的首次访问也不再吃冷爬；首页首屏改为单次聚合请求 `GET /api/market/overview`（指数+自选+宽度+板块一把抓，替代 8+ 并发请求）——热后约 4 毫秒
+- **首屏再提速**：启动预热线程（`QDT_STARTUP_WARMUP=0` 关闭）预取指数行情/市场宽度/板块进本地缓存，空缓存的首次访问也不再吃冷爬；首页首屏改为单次聚合请求 `GET /api/market/overview`（指数+自选+宽度+板块一把抓，替代 8+ 并发请求，分量内部并发取数）——热后约 4 毫秒；**DB 缓存增量补拉**：命中后检测头/尾覆盖缺口，只向网络补缺口窗口（10 分钟节流），部分覆盖不再"永远返回旧数据"
 - **可选 PostgreSQL + Redis 缓存**（`docker-compose.yml` 一键启动）：读序 Redis → PG → CSV → 网络，不可用时静默降级为纯网络模式
 - 行情结果缓存至本地 `stock_data/`；情绪快照位于 `nes_data/sentiment_results/{YYYYMMDD}.json`，供情绪日历与回测情绪过滤使用
 
@@ -147,9 +152,10 @@
 - **行情终端**（`/market`）：可搜索的标的列表（指数+自选）、大字报价头与涨跌徽章、多周期蜡烛图（日/周/月）
 - **调优任务**（`/tunings`）：全部参数调优任务一览——组合进度条、最优组合、状态筛选，一键进入详情页
 - **多会话 AI 对话**：会话 chips（新建/切换/置顶/重命名/删除，标题自动生成）+ 按组分类的启动提问卡片（股票策略 / A股因子 / 数据查询），点击即发送
-- **动态 ECharts**：回测收益/回撤/日收益曲线；K 线蜡烛图 + 成交量 + 指标叠加 + 吸顶数值面板
+- **动态 ECharts**：回测收益/回撤/日收益**三图缩放联动** + 月度收益热力图 + 交易明细表（单笔盈亏/持仓天数）；K 线蜡烛图 + 成交量 + 指标叠加 + 吸顶数值面板；**图表暗色适配**（tooltip/轴色随主题，`lib/chartTheme.ts` 单点）
+- **首屏瘦身**：ECharts（~232KB gz）经 `LazyChart` 异步分块，首屏不再下载，进到图表页才加载
 - **代码策略库**（`/strategy-library`）：用户 Python 策略经 AST 白名单校验后入库，更新即自动快照版本（可回滚）；详情页分「参数/源码（CodeMirror 6 懒加载）/版本/回测/调优」Tab
-- **运行历史与参数调优**：`/runs` 展示异步回测记录（状态筛选、净值缩略图、详情弹窗）；`/tuning/:taskId` 对比每组网格参数的归一化净值（网格 ≤63 组合 + 基准），列出组合指标表并可一键应用最优参数——这是回写策略参数的唯一入口
+- **运行历史与参数调优**：`/runs` 展示异步回测记录（状态筛选、净值缩略图、详情弹窗）；`/tuning/:taskId` 对比每组网格参数的归一化净值（网格 ≤63 组合 + 基准），组合表 **IS/OOS 双列指标（可排序）**、样本外进度条与**过拟合警示**，并可一键应用最优参数——这是回写策略参数的唯一入口
 - **因子库**（`/factor-library`）：用户 Python 因子（顶层 `compute(df) -> pd.Series`，df 为单标的中文列日线），复用同一套 AST 沙箱与版本历史；详情页三 Tab（代码 / 分析 / 版本），一键跑 HS300 全样本横截面分析（IC / RankIC / ICIR / 分层收益 / 单调性）。本期限定 A 股
 - **SPA 独有页面**：策略对比（多策略净值叠加 + 指标表）、因子分析（IC / 分层 / 单调性）
 - **浏览器本地持久化**：UI 偏好（含涨跌配色）、自选股、回测历史与表单、AI 对话、收藏/标签页/布局/K 线偏好——刷新全部保持
@@ -202,7 +208,7 @@ docker compose up -d         # PostgreSQL 16 + Redis 7（国内源 docker.m.daoc
 ### 6. 运行测试
 ```bash
 pytest test/test_backtest.py test/test_tuning.py test/test_factor_library.py \
-       test/test_quote_cache.py test/test_agent_p4.py test/test_agent_tools.py -v   # 122 例
+       test/test_quote_cache.py test/test_agent_p4.py test/test_agent_tools.py -v   # 全量 700+ 例
 ```
 测试文件需显式指定（`test/` 下另有手动脚本）。
 
@@ -219,7 +225,7 @@ pytest test/test_backtest.py test/test_tuning.py test/test_factor_library.py \
 | `/spa/strategies` | 策略列表（查看/删除） |
 | `/spa/strategy-library` · `/spa/strategy-library/:id` | 代码策略库与详情（参数/源码/版本/回测/调优 Tab） |
 | `/spa/runs` | 运行历史（异步回测记录 + 状态筛选 + 净值缩略图 + 详情弹窗） |
-| `/spa/tuning/:taskId` | 调优详情（归一化净值对比 + 组合指标表 + 一键应用最优参数） |
+| `/spa/tuning/:taskId` | 调优详情（归一化净值对比 + IS/OOS 双列指标表 + 过拟合警示 + 一键应用最优参数） |
 | `/spa/sentiment` | 舆情分析（新闻 + 板块得分） |
 | `/spa/daily-recommend` | 每日推荐 |
 | `/spa/strategy-compare` | 多策略对比（2~5 个策略净值叠加 + 指标表） |
@@ -319,7 +325,7 @@ EmoQunt/
 | 回测 | backtrader + 自定义双市场成本模型 |
 | 分析与可视化 | pandas, numpy, scipy, scikit-learn；ECharts（SPA）、matplotlib / seaborn / plotly（服务端） |
 | AI | OpenAI 兼容 LLM + LangChain + LangGraph（ReAct agent） |
-| 测试 | pytest（回测/调优/因子库/行情缓存/Agent 套件共 122 例） |
+| 测试 | pytest（回测/调优/因子库/行情缓存/Agent 套件共 700+ 例） |
 
 ---
 
