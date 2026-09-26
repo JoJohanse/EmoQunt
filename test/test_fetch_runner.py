@@ -12,6 +12,7 @@
 import logging
 import os
 import sys
+import time
 
 import pandas as pd
 import pytest
@@ -168,6 +169,73 @@ class TestAllFailAndEmptyChain:
         assert isinstance(out, pd.DataFrame)
         assert out.empty
         assert _health_recorder == [], "空链不应产生任何打点"
+
+
+class TestSourceTimeout:
+    """每源硬超时（Round3）：挂死源超时后按失败回退，不拖垮整条链。"""
+
+    def test_timeout_falls_back_to_next_source(self, _health_recorder):
+        out = run_source_chain(
+            [
+                ("hang", lambda: time.sleep(2) or _df("hang")),
+                ("good", lambda: _df("good")),
+            ],
+            logger=logging.getLogger("test.fetch_runner"),
+            context="超时测试",
+            timeout=0.2,
+        )
+        assert not out.empty and out["src"].iloc[0] == "good"
+        assert _health_recorder == [("hang", False), ("good", True)]
+
+    def test_timeout_within_budget(self, _health_recorder):
+        start = time.perf_counter()
+        run_source_chain(
+            [("hang", lambda: time.sleep(5) or _df())],
+            logger=logging.getLogger("test.fetch_runner"),
+            context="超时预算",
+            timeout=0.2,
+        )
+        elapsed = time.perf_counter() - start
+        assert elapsed < 2.0, f"超时后应立即推进而非等待挂死源结束（实测 {elapsed:.2f}s）"
+
+    def test_timeout_zero_disables_wrapper(self, _health_recorder):
+        """timeout<=0 同步直调（关闭超时），正常返回。"""
+        out = run_source_chain(
+            [("a", lambda: _df("sync"))],
+            logger=logging.getLogger("test.fetch_runner"),
+            context="关闭超时",
+            timeout=0,
+        )
+        assert not out.empty and out["src"].iloc[0] == "sync"
+        assert _health_recorder == [("a", True)]
+
+    def test_timeout_source_exception_propagates_as_failure(self, _health_recorder):
+        """超时包装下的源内异常仍按单源失败回退（异常从后台线程带回）。"""
+        out = run_source_chain(
+            [
+                ("exc", lambda: (_ for _ in ()).throw(RuntimeError("boom"))),
+                ("good", lambda: _df()),
+            ],
+            logger=logging.getLogger("test.fetch_runner"),
+            context="线程内异常",
+            timeout=1.0,
+        )
+        assert not out.empty
+        assert _health_recorder == [("exc", False), ("good", True)]
+
+    def test_env_default_timeout(self, _health_recorder, monkeypatch):
+        """未显式传 timeout 时读 QDT_SOURCE_TIMEOUT。"""
+        monkeypatch.setenv("QDT_SOURCE_TIMEOUT", "0.2")
+        out = run_source_chain(
+            [
+                ("hang", lambda: time.sleep(2) or _df()),
+                ("good", lambda: _df("good")),
+            ],
+            logger=logging.getLogger("test.fetch_runner"),
+            context="env 超时",
+        )
+        assert not out.empty and out["src"].iloc[0] == "good"
+        assert _health_recorder == [("hang", False), ("good", True)]
 
 
 class TestLogging:

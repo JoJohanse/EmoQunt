@@ -33,6 +33,14 @@ MESSAGES = {
         "zh": "参数 {name} 不在该策略的参数中",
         "en": "Parameter \"{name}\" is not part of this strategy",
     },
+    "tuning.badOosRatio": {
+        "zh": "oos_ratio 必须是 0~{max} 之间的数字（0 关闭样本外验证）",
+        "en": "oos_ratio must be a number between 0 and {max} (0 disables out-of-sample validation)",
+    },
+    "tuning.rangeTooShortForOos": {
+        "zh": "回测区间过短（{days} 天），开启样本外验证至少需要 {min} 天",
+        "en": "Backtest range too short ({days} days); out-of-sample validation needs at least {min} days",
+    },
     "tuning.gridValuesEmpty": {
         "zh": "参数 {name} 的取值列表为空",
         "en": "Value list for parameter \"{name}\" is empty",

@@ -237,7 +237,11 @@ class TestStockIntegrationDBHit:
     """get_stock_data 命中 DB 缓存时应跳过网络回退链。"""
 
     def test_db_hit_skips_network(self, tmp_path):
-        """DB 命中时不应调用任何网络数据源。"""
+        """DB 全覆盖命中时不应调用任何网络数据源。
+
+        Round3 起部分覆盖命中会触发增量补拉（见 provider._topup_gap）——
+        "命中即免网"只对请求窗口被完整覆盖的情形成立，本用例相应收紧。
+        """
         # 用一个不存在的本地 CSV 路径，强制走到 DB 检查分支
         cached = _sample_zh_df()
         from src.data import db as _db
@@ -253,7 +257,8 @@ class TestStockIntegrationDBHit:
              patch.object(Stock, '_fetch_ashare_tushare') as mock_ts, \
              patch.object(Stock, '_fetch_ashare_hist_em') as mock_em, \
              patch.object(Stock, '_fetch_ashare_baostock') as mock_bs:
-            df = stock.get_stock_data('20240101', '20240131', adjust='hfq', type='daily')
+            # 请求窗口与缓存覆盖完全一致（_sample_zh_df = 0102..0104，无头/尾缺口）
+            df = stock.get_stock_data('20240102', '20240104', adjust='hfq', type='daily')
 
         assert mock_get.called, "应查询 DB 缓存"
         assert not mock_sina.called, "DB 命中时不应触网络"

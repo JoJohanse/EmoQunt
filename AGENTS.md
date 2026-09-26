@@ -68,6 +68,14 @@ Guidance for OpenCode agents working in this repo. EmoQunt is a sentiment-driven
 - First backtest fetch of market/index data needs network access (akshare); results cache to `stock_data/` (subdirs `zh_a/`, `us/`, `stock_cache/`).
 - `logs/`, `output/`, `nes_data/sentiment_results/`, `nes_data/trendradar/output/`, `stock_data/zh_a/`, `stock_data/stock_cache/` are gitignored runtime dirs auto-created on first run.
 
+## Round3 规则（2026-09-26：行情速度 / 策略有效性）
+
+- **数据源每源硬超时**：`fetch_runner.run_source_chain` 逐源包 `_call_with_timeout`（daemon 线程 + `join(timeout)`，`QDT_SOURCE_TIMEOUT` 默认 30s，0 关闭）——超时=该源失败记 health 进下一源；Python 线程不可强杀，弃等的挂死调用留在后台自然消亡。`market._call_with_timeout` 同款非阻塞实现——**禁止再用 `ThreadPoolExecutor` 上下文管理器包装可能挂死的 akshare 调用**（退出时 `shutdown(wait=True)` 会等挂死线程，超时形同虚设）；THS 板块爬取同样包 20s。
+- **overview 并行化**：`get_market_overview` 指数+自选+宽度+板块用 ThreadPoolExecutor 并发（分量各自降级：行情 error 占位、宽度/板块 None），嵌套 `_dispatch` 收口单分量异常——**不要把分量执行器提为模块级函数**（会引用不到闭包内的占位构造）。warmup 默认自选并行预热。
+- **KlineProvider 增量补拉**：DB 命中≠免网——`_topup_gap` 检查头/尾覆盖缺口，只向网络补缺口窗口并合并回填（同 key 10 分钟节流，`TTLCache.mark` 原语）；补拉失败/空静默回旧缓存，合并后裁剪回 [start,end]（新浪等无区间参数源会整段返回）。**全覆盖命中才免网**（test_db_cache 前提已同步）。已知权衡：qfq/hfq 补拉行与存量行可能跨源、除权基准或有微差。
+- **调优样本外验证（OOS）**：`tuning_tasks` 新列 `oos_ratio/is_end_date/oos_done/oos_total`、`tuning_runs.oos_metrics_json`，存量库经 `_migrate_columns` 幂等 ALTER（新库 `_SCHEMA` 直接带全）。网格阶段只跑 IS 窗口 `[start, is_end]`；IS 排名 Top-K（`OOS_TOP_K=5`）+ 基准在未触碰的 OOS 窗口复跑（`_run_oos_combo`，结果写 `oos_metrics_json` 不动 IS 终态），**终排名按 OOS 指标**（`_best_index(..., src_key="oos")`），OOS 全败回退 IS。默认 `oos_ratio=0.3`（0 关闭，>0.5 拒绝，区间 <120 天拒绝——`MIN_DAYS_FOR_OOS`）；错误文案 `tuning.badOosRatio`/`tuning.rangeTooShortForOos` 已入 i18n_data/tuning.py。agent `create_tuning_task` 工具有 `oos_ratio` 参数（默认 0.3），prompts 双语工作流已含 IS/OOS 解读说明。**给调优写测试注意**：OOS 候选=IS Top-K+基准，IS 排名靠后的组合不会被 OOS 复跑；`_fake_core_factory` 指标随 window 递增（IS 最优=基准 w10），相位感知 fake 用 `_oos_fake_core_factory`（OOS 峰值 w8）。
+- **回测 JSON 契约新增**：`metrics["索提诺比率"]`（PerformanceAnalyzer 全样本下行偏差口径，MAR=0，与夏普同 3% 无风险利率；inf 经 safe_float 归 0）与 `payload["monthly_returns"]=[{year, month, ret}]`（`resample('M')` 月末复合，与 matplotlib 路径同口径）。前端已落地：Sortino 卡片（backtest.metric.sortino，zh/en 双树）、月度热力图（monthly_returns + HeatmapChart，visualMap 中性色走 chartTheme.neutral）、交易明细表（fills 前端 FIFO 配对成 round-trip，deltaColor 语义色）、三图 dataZoom 联动（@datazoom 回写 zoomRange，跨实例不依赖 echarts.connect）；图表暗色统一走 lib/chartTheme.ts（tooltip/轴文字/分隔线，新图表禁止再写裸白底 hex）；ECharts 懒加载走 components/LazyChart.vue（defineAsyncComponent，实例经 defineExpose getter 转发 .chart，HomeView 的 dispatchAction 依赖它）——首屏直减 ~232KB gz；调优详情 OOS 双列（tuning.table.oos*）+ 过拟合警示（tuning.overfit.*，退化>50% 或 IS argmax≠终最优时出条）。
+
 ## Workflow
 
 - Branch from `main`; PRs need at least one maintainer approval (per `CONTRIBUTING.md`).

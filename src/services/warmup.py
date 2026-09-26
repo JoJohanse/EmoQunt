@@ -4,6 +4,7 @@
 overview 单请求毫秒级返回，不再吃 5-7 秒冷爬。预热失败静默（守护线程，
 不影响服务可用性）；环境变量 QDT_STARTUP_WARMUP=0 可关闭。
 """
+import concurrent.futures
 import logging
 import threading
 from typing import Optional
@@ -49,9 +50,16 @@ def _warm() -> None:
     except Exception:
         logger.warning("行情预热失败（首次访问将同步拉取）", exc_info=True)
         return
-    for code, market in DEFAULT_WATCH_CODES:
-        try:
-            get_kline(code, market, days=30)
-        except Exception as e:
-            logger.warning("预热默认自选 %s 失败: %s", code, e)
+    # Round3 并行预热：默认自选逐只串行改为并发（get_kline 内部走 SWR，
+    # 并发只是把冷缓存预热窗口从各 fetch 之和压到最慢一只）
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(4, len(DEFAULT_WATCH_CODES)), thread_name_prefix="qdt-warmup") as pool:
+        futs = {pool.submit(get_kline, code, market, days=30): (code, market)
+                for code, market in DEFAULT_WATCH_CODES}
+        for fut in concurrent.futures.as_completed(futs):
+            code, market = futs[fut]
+            try:
+                fut.result()
+            except Exception as e:
+                logger.warning("预热默认自选 %s 失败: %s", code, e)
     logger.info("默认自选预热完成")

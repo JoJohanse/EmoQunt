@@ -20,6 +20,7 @@ import json
 import logging
 import math
 import time
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -40,6 +41,14 @@ TARGET_METRICS: Dict[str, bool] = {
     "夏普比率": True,
     "最大回撤": False,
 }
+
+# 样本外验证（Round3，对标 freqtrade「IS 优化 + 未触碰 OOS 验证」实践）：
+# IS=前 (1-ratio)，OOS=后 ratio；ratio=0 关闭。OOS 组合数 = Top-K + 基准。
+DEFAULT_OOS_RATIO = 0.3
+MAX_OOS_RATIO = 0.5
+OOS_TOP_K = 5
+# 开 OOS 的最短总天数：IS/OOS 两段各自至少约一个季度，结论才有统计意义
+MIN_DAYS_FOR_OOS = 120
 
 
 def _per_combo_timeout() -> float:
@@ -143,6 +152,33 @@ def create_tuning_task(payload: Dict[str, Any]) -> Dict[str, Any]:
     if error:
         raise ValueError(error)
 
+    # 样本外验证（Round3）：默认 0.3；0 关闭。区间太短拒绝——两段各自不足
+    # 约一个季度时 OOS 结论无统计意义
+    from datetime import datetime, timedelta
+
+    oos_ratio_raw = payload.get("oos_ratio", DEFAULT_OOS_RATIO)
+    try:
+        oos_ratio = float(oos_ratio_raw) if oos_ratio_raw is not None else DEFAULT_OOS_RATIO
+    except (TypeError, ValueError):
+        raise ValueError(vmsg("tuning.badOosRatio",
+                              "oos_ratio 必须是 0~{max} 之间的数字（0 关闭样本外验证）",
+                              max=MAX_OOS_RATIO))
+    if not (0.0 <= oos_ratio <= MAX_OOS_RATIO):
+        raise ValueError(vmsg("tuning.badOosRatio",
+                              "oos_ratio 必须是 0~{max} 之间的数字（0 关闭样本外验证）",
+                              max=MAX_OOS_RATIO))
+    is_end_date: Optional[str] = None
+    if oos_ratio > 0:
+        start_d = datetime.strptime(params["start_date"], "%Y-%m-%d").date()
+        end_d = datetime.strptime(params["end_date"], "%Y-%m-%d").date()
+        total_days = (end_d - start_d).days
+        if total_days < MIN_DAYS_FOR_OOS:
+            raise ValueError(vmsg("tuning.rangeTooShortForOos",
+                                  "回测区间过短（{days} 天），开启样本外验证至少需要 {min} 天",
+                                  days=total_days, min=MIN_DAYS_FOR_OOS))
+        is_end = start_d + timedelta(days=round(total_days * (1.0 - oos_ratio)))
+        is_end_date = is_end.strftime("%Y-%m-%d")
+
     # 组合 0 = 基准（当前生效参数），其后为网格笛卡尔积（完整参数 = 基底 + 覆盖）
     combos: List[Dict[str, Any]] = [
         {"combo_index": 0, "is_baseline": 1, "params": dict(baseline)}
@@ -167,13 +203,16 @@ def create_tuning_task(payload: Dict[str, Any]) -> Dict[str, Any]:
             "grid_keys_json": json.dumps(keys, ensure_ascii=False),
             "target_metric": target_metric,
             "target_metric_desc": 1 if TARGET_METRICS[target_metric] else 0,
+            "oos_ratio": oos_ratio,
+            "is_end_date": is_end_date,
         },
         combos,
     )
 
     # 看门狗上限按组合数/并发数放宽（"放弃等待"语义，见模块 docstring）
     workers = max(1, get_env_int("QDT_TASK_WORKERS", 2))
-    leash = 30 + math.ceil(len(combos) * _per_combo_timeout() / workers)
+    oos_runs = (min(OOS_TOP_K, len(combos) - 1) + 1) if oos_ratio > 0 else 0
+    leash = 30 + math.ceil((len(combos) + oos_runs) * _per_combo_timeout() / workers)
     submit_task(task_id, lambda: _execute_tuning(task_id), leash, on_abandon=_abandon_tuning)
     logger.info("调优任务已提交: task=%s strategy=%s 组合数=%s", task_id, strategy_name, len(combos))
     return {"id": task_id, "status": "queued", "total_combos": len(combos)}
@@ -204,24 +243,39 @@ def _execute_tuning(task_id: int) -> None:
                                       "代码策略不存在（需提供有效的 strategy_id）"))
 
         workers = max(1, min(get_env_int("QDT_TASK_WORKERS", 2), len(combos)))
+        oos_ratio = float(task_row["oos_ratio"] or 0.0)
+        is_end = task_row["is_end_date"]
+        # Round3 OOS：网格阶段只跑样本内窗口 [start, is_end]，样本外留给复跑
+        grid_end = is_end if (oos_ratio > 0 and is_end) else task_row["end_date"]
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="qdt-tune") as pool:
-            list(pool.map(lambda row: _run_combo(task_row, row), combos))
+            list(pool.map(lambda row: _run_combo(task_row, row, grid_end), combos))
 
         # 汇总：按目标指标挑最优组合（基准同样参与排名）
         rows = store.list_tuning_run_rows(task_id)
         desc = bool(task_row["target_metric_desc"])
-        best_index: Optional[int] = None
-        best_value: Optional[float] = None
-        for r in rows:
-            if r["status"] != "succeeded" or not r["metrics_json"]:
-                continue
-            metrics = json.loads(r["metrics_json"])
-            value = metrics.get(task_row["target_metric"])
-            if value is None:
-                continue
-            value = float(value)
-            if best_value is None or (value > best_value if desc else value < best_value):
-                best_value, best_index = value, int(r["combo_index"])
+        best_index, best_value = _best_index(rows, task_row["target_metric"], desc)
+
+        # ---- 样本外（OOS）阶段：IS 排名 Top-K + 基准，在未触碰的 OOS 窗口复跑，
+        # 最终排名按 OOS 指标——in-sample argmax 的过拟合防线（freqtrade 实践）----
+        if oos_ratio > 0 and is_end:
+            oos_start = (datetime.strptime(is_end, "%Y-%m-%d")
+                         + timedelta(days=1)).strftime("%Y-%m-%d")
+            ranked = _rank_rows(rows, task_row["target_metric"], desc)
+            cand = [ci for ci, _ in ranked[:OOS_TOP_K]]
+            base_idx = next((int(r["combo_index"]) for r in rows
+                             if int(r["is_baseline"]) == 1 and r["status"] == "succeeded"), None)
+            if base_idx is not None and base_idx not in cand:
+                cand.append(base_idx)
+            if cand:
+                store.set_tuning_oos_total(task_id, len(cand))
+                by_index = {int(r["combo_index"]): r for r in rows}
+                with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="qdt-oos") as pool:
+                    list(pool.map(lambda ci: _run_oos_combo(task_row, by_index[ci], oos_start), cand))
+                rows = store.list_tuning_run_rows(task_id)
+                oos_best, oos_value = _best_index(rows, task_row["target_metric"], desc, src_key="oos")
+                if oos_best is not None:
+                    best_index, best_value = oos_best, oos_value
+                logger.info("调优 OOS 完成: task=%s OOS最优组合=%s", task_id, best_index)
 
         duration_ms = int((time.perf_counter() - start) * 1000)
         if best_index is None:
@@ -236,8 +290,12 @@ def _execute_tuning(task_id: int) -> None:
         store.fail_tuning_runs_if_active(task_id, "任务中断")
 
 
-def _run_combo(task_row: Any, combo_row: Any) -> None:
-    """执行单个组合：running → 回测（strategy_params 覆盖）→ 组合终态落库。"""
+def _run_combo(task_row: Any, combo_row: Any, end_date: Optional[str] = None) -> None:
+    """执行单个组合：running → 回测（strategy_params 覆盖）→ 组合终态落库。
+
+    :param end_date: 窗口覆盖（Round3 OOS：网格阶段传 IS 终点，样本外复跑传 OOS 终点）；
+                     None 用任务原区间
+    """
     from src.backtest.backtest_manager import _format_metrics_json, _run_backtest_core
     from src.store import db as store
 
@@ -249,7 +307,7 @@ def _run_combo(task_row: Any, combo_row: Any) -> None:
     try:
         core = _run_backtest_core(
             strategy_name=task_row["strategy_name"], stock_code=task_row["stock_code"],
-            start_date=task_row["start_date"], end_date=task_row["end_date"],
+            start_date=task_row["start_date"], end_date=end_date or task_row["end_date"],
             initial_capital=task_row["initial_capital"], commission_rate=task_row["commission_rate"],
             benchmark_index="SP500" if task_row["market"] == "us" else "000300",
             slippage_rate=0.0005, market=task_row["market"],
@@ -303,6 +361,79 @@ def _downsample_xy(dates: List[str], values: List[float], max_points: int) -> Tu
     step = (n - 1) / (max_points - 1)
     idx = [int(i * step) for i in range(max_points)]
     return [dates[i] for i in idx], [values[i] for i in idx]
+
+
+# ---------------------------------------------------------------------------
+# 样本外验证（Round3，对标 freqtrade「IS 优化 + 未触碰 OOS 验证」）
+# ---------------------------------------------------------------------------
+def _metrics_source(row: Any, src_key: str) -> Optional[Dict[str, Any]]:
+    """按阶段取组合指标：metrics=样本内（既有列），oos=样本外（oos_metrics_json）。"""
+    if src_key == "oos":
+        raw = row["oos_metrics_json"]
+        if not raw:
+            return None
+        parsed = json.loads(raw)
+        return parsed.get("metrics") if parsed.get("status") == "succeeded" else None
+    return json.loads(row["metrics_json"]) if row["metrics_json"] else None
+
+
+def _rank_rows(rows: List[Any], target_metric: str, desc: bool,
+               src_key: str = "metrics") -> List[Tuple[int, float]]:
+    """按目标指标排名返回 [(combo_index, value)]（指标缺失的行不参与）。"""
+    scored: List[Tuple[int, float]] = []
+    for r in rows:
+        metrics = _metrics_source(r, src_key)
+        if not metrics:
+            continue
+        value = metrics.get(target_metric)
+        if value is None:
+            continue
+        scored.append((int(r["combo_index"]), float(value)))
+    scored.sort(key=lambda t: t[1], reverse=desc)
+    return scored
+
+
+def _best_index(rows: List[Any], target_metric: str, desc: bool,
+                src_key: str = "metrics") -> Tuple[Optional[int], Optional[float]]:
+    """目标指标最优组合（同 _rank_rows 口径，返回 (index, value)）。"""
+    ranked = _rank_rows(rows, target_metric, desc, src_key=src_key)
+    return ranked[0] if ranked else (None, None)
+
+
+def _run_oos_combo(task_row: Any, combo_row: Any, oos_start: str) -> None:
+    """OOS 窗口复跑单个组合：结果写 oos_metrics_json，不触碰 IS 终态/参数存储。
+
+    进度经 bump_tuning_oos_progress 推进（finally 保证失败也计数，进度条不卡死）。
+    """
+    from src.backtest.backtest_manager import _format_metrics_json, _run_backtest_core
+    from src.store import db as store
+
+    task_id = int(task_row["id"])
+    combo_index = int(combo_row["combo_index"])
+    combo_params = json.loads(combo_row["params_json"] or "{}")
+    try:
+        core = _run_backtest_core(
+            strategy_name=task_row["strategy_name"], stock_code=task_row["stock_code"],
+            start_date=oos_start, end_date=task_row["end_date"],
+            initial_capital=task_row["initial_capital"], commission_rate=task_row["commission_rate"],
+            benchmark_index="SP500" if task_row["market"] == "us" else "000300",
+            slippage_rate=0.0005, market=task_row["market"],
+            strategy_kind=task_row["strategy_kind"], strategy_id=task_row["strategy_id"],
+            strategy_params=combo_params,
+        )
+        metrics, _risk = _format_metrics_json(
+            core["metrics_raw"], core.get("performance_report"), core.get("risk_report"),
+            alpha=core["alpha"], beta=core["beta"], info_ratio=core["info_ratio"],
+        )
+        store.update_tuning_run_oos(task_id, combo_index,
+                                    {"status": "succeeded", "error": None, "metrics": metrics})
+        logger.debug("调优 OOS 完成: task=%s combo=%s", task_id, combo_index)
+    except Exception as e:
+        logger.warning("调优 OOS 复跑失败: task=%s combo=%s err=%s", task_id, combo_index, e)
+        store.update_tuning_run_oos(task_id, combo_index,
+                                    {"status": "failed", "error": str(e), "metrics": None})
+    finally:
+        store.bump_tuning_oos_progress(task_id)
 
 
 # ---------------------------------------------------------------------------

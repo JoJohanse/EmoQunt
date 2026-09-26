@@ -64,6 +64,24 @@ class TTLCache:
         with self._lock:
             self._store[key] = (_now(), value)
 
+    def mark(self, key, ttl: Optional[float] = None) -> bool:
+        """节流原语：ttl 窗口内已标记过返回 True，否则记录当前时刻并返回 False。
+
+        与 get_or_set 的"惰性加载"不同——这里没有值要加载，只需要
+        "同 key 每 ttl 至多放行一次"的判定（如行情增量补拉 10 分钟节流）。
+        """
+        if ttl is None:
+            ttl = self._default_ttl
+        if ttl is None:
+            raise TypeError("mark 需要显式 ttl 或构造时设置 default_ttl")
+        now = _now()
+        with self._lock:
+            hit = self._store.get(key)
+            if hit is not None and now - hit[0] < ttl:
+                return True
+            self._store[key] = (now, True)
+            return False
+
     def invalidate(self, key) -> None:
         """显式失效单个 key（不存在时静默）。"""
         with self._lock:

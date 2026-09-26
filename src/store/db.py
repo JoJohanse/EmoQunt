@@ -106,6 +106,10 @@ CREATE TABLE IF NOT EXISTS tuning_tasks (
     grid_keys_json TEXT NOT NULL DEFAULT '[]',
     target_metric TEXT NOT NULL DEFAULT '总收益率',
     target_metric_desc INTEGER NOT NULL DEFAULT 1,
+    oos_ratio REAL NOT NULL DEFAULT 0,
+    is_end_date TEXT,
+    oos_done INTEGER NOT NULL DEFAULT 0,
+    oos_total INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'queued',
     total_combos INTEGER NOT NULL DEFAULT 0,
     done_combos INTEGER NOT NULL DEFAULT 0,
@@ -127,6 +131,7 @@ CREATE TABLE IF NOT EXISTS tuning_runs (
     status TEXT NOT NULL DEFAULT 'queued',
     error TEXT,
     metrics_json TEXT,
+    oos_metrics_json TEXT,
     dates_json TEXT,
     equity_zlib TEXT,
     duration_ms INTEGER,
@@ -205,12 +210,39 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+# Round3 存量库迁移：CREATE TABLE IF NOT EXISTS 不会给老表补列，逐列 ALTER
+# （列已存在时 SQLite 报 duplicate column name，静默跳过）
+_MIGRATION_COLUMNS = {
+    "tuning_tasks": [
+        ("oos_ratio", "REAL NOT NULL DEFAULT 0"),
+        ("is_end_date", "TEXT"),
+        ("oos_done", "INTEGER NOT NULL DEFAULT 0"),
+        ("oos_total", "INTEGER NOT NULL DEFAULT 0"),
+    ],
+    "tuning_runs": [
+        ("oos_metrics_json", "TEXT"),
+    ],
+}
+
+
+def _migrate_columns(conn: sqlite3.Connection) -> None:
+    """给既有库补 Round3 新列（幂等；新库由 _SCHEMA 直接带全）。"""
+    for table, columns in _MIGRATION_COLUMNS.items():
+        for name, decl in columns:
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+            except sqlite3.OperationalError as e:
+                if "duplicate column name" not in str(e).lower():
+                    raise
+
+
 def init_db() -> None:
     """幂等建表 + 启动清扫（遗留 queued/running 标 failed）。线程安全。"""
     global _initialized
     with _init_lock:
         conn = get_conn()
         conn.executescript(_SCHEMA)
+        _migrate_columns(conn)
         conn.commit()
         if not _initialized:
             cur = conn.execute(
@@ -530,13 +562,14 @@ def create_tuning_task(fields: Dict[str, Any], combos: List[Dict[str, Any]]) -> 
         cur = conn.execute(
             "INSERT INTO tuning_tasks (strategy_kind, strategy_id, strategy_name, market, stock_code, "
             "start_date, end_date, initial_capital, commission_rate, param_grid_json, grid_keys_json, "
-            "target_metric, target_metric_desc, status, total_combos, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)",
+            "target_metric, target_metric_desc, oos_ratio, is_end_date, status, total_combos, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)",
             (fields["strategy_kind"], fields.get("strategy_id"), fields["strategy_name"],
              fields["market"], fields["stock_code"], fields["start_date"], fields["end_date"],
              fields["initial_capital"], fields["commission_rate"],
              fields["param_grid_json"], fields["grid_keys_json"],
              fields["target_metric"], int(fields.get("target_metric_desc", 1)),
+             float(fields.get("oos_ratio", 0.0) or 0.0), fields.get("is_end_date"),
              len(combos), _now(), _now()),
         )
         task_id = int(cur.lastrowid)
@@ -659,6 +692,50 @@ def update_tuning_run_result(task_id: int, combo_index: int, status: str, error:
     conn.commit()
 
 
+def update_tuning_run_oos(task_id: int, combo_index: int, oos: Dict[str, Any]) -> None:
+    """组合的样本外（OOS）结果落库：只写 oos_metrics_json，不动 IS 终态。"""
+    _ensure_init()
+    conn = get_conn()
+    conn.execute(
+        "UPDATE tuning_runs SET oos_metrics_json=?, updated_at=? WHERE task_id=? AND combo_index=?",
+        (json.dumps(oos, ensure_ascii=False), _now(), task_id, combo_index),
+    )
+    conn.commit()
+
+
+def set_tuning_oos_total(task_id: int, total: int) -> None:
+    """OOS 阶段开跑前登记候选总数（前端进度条分母；0 关闭样本外验证）。"""
+    _ensure_init()
+    conn = get_conn()
+    conn.execute(
+        "UPDATE tuning_tasks SET oos_total=?, updated_at=? WHERE id=?",
+        (int(total), _now(), task_id),
+    )
+    conn.commit()
+
+
+def bump_tuning_oos_progress(task_id: int) -> None:
+    """OOS 阶段进度自增（oos_done+1；oos_total 创建任务时已定）。"""
+    _ensure_init()
+    conn = get_conn()
+    conn.execute(
+        "UPDATE tuning_tasks SET oos_done = oos_done + 1, updated_at=? WHERE id=?",
+        (_now(), task_id),
+    )
+    conn.commit()
+
+
+def set_tuning_oos_total(task_id: int, total: int) -> None:
+    """OOS 阶段开跑前登记候选总数（进度条分母）。"""
+    _ensure_init()
+    conn = get_conn()
+    conn.execute(
+        "UPDATE tuning_tasks SET oos_total=?, updated_at=? WHERE id=?",
+        (int(total), _now(), task_id),
+    )
+    conn.commit()
+
+
 def row_to_tuning_task_dict(row: sqlite3.Row) -> Dict[str, Any]:
     return {
         "id": row["id"],
@@ -675,6 +752,10 @@ def row_to_tuning_task_dict(row: sqlite3.Row) -> Dict[str, Any]:
         "grid_keys": json.loads(row["grid_keys_json"] or "[]"),
         "target_metric": row["target_metric"],
         "target_metric_desc": bool(row["target_metric_desc"]),
+        "oos_ratio": float(row["oos_ratio"] or 0.0),
+        "is_end_date": row["is_end_date"],
+        "oos_done": row["oos_done"],
+        "oos_total": row["oos_total"],
         "status": row["status"],
         "total_combos": row["total_combos"],
         "done_combos": row["done_combos"],
@@ -698,6 +779,8 @@ def row_to_tuning_run_dict(row: sqlite3.Row, unpack_series: bool = False) -> Dic
     }
     if row["metrics_json"]:
         out["metrics"] = json.loads(row["metrics_json"])
+    if row["oos_metrics_json"]:
+        out["oos"] = json.loads(row["oos_metrics_json"])
     if unpack_series:
         out["dates"] = json.loads(row["dates_json"]) if row["dates_json"] else []
         out["equity_curve"] = _unpack_series(row["equity_zlib"]) if row["equity_zlib"] else []

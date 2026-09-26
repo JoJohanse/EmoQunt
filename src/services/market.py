@@ -18,8 +18,9 @@ sectors 并行请求各打一次 THS 全量爬取。
 """
 import concurrent.futures
 import logging
+import threading
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.data import quote_cache
 from src.utils.ttl_cache import TTLCache
@@ -46,20 +47,31 @@ def _to_num(value, default: float = 0.0):
 
 
 def _call_with_timeout(fn, timeout: float, *args, **kwargs):
-    """在独立线程中执行 fn，超过 timeout 秒则放弃并返回 None。
+    """在独立 daemon 线程中执行 fn，超过 timeout 秒则放弃并返回 None。
 
     akshare 底层 requests.get 未设置 timeout，网络异常时可能无限挂起；
-    用该包装避免占满 FastAPI 共享线程池。
+    用该包装避免占满 FastAPI 共享线程池。旧实现用 ThreadPoolExecutor 上下文
+    管理器，退出时 shutdown(wait=True) 会等挂死线程跑完——超时形同虚设；
+    改为 daemon 线程 + join(timeout) 非阻塞模式：超时后本函数立刻返回 None，
+    挂死的网络调用留在后台线程自然消亡（Python 线程不可强杀，属已知权衡）。
     """
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        fut = executor.submit(fn, *args, **kwargs)
+    outcome: Dict[str, Any] = {}
+
+    def _runner():
         try:
-            return fut.result(timeout=timeout)
-        except concurrent.futures.TimeoutError:
-            logger.warning(f"akshare 调用超时({timeout}s)已跳过: {fn.__name__}")
-            return None
-        except Exception:
-            raise
+            outcome["value"] = fn(*args, **kwargs)
+        except BaseException as e:  # noqa: BLE001 - 异常带回主线程统一处理
+            outcome["err"] = e
+
+    t = threading.Thread(target=_runner, daemon=True, name=f"qdt-timeout-{getattr(fn, '__name__', 'call')}")
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        logger.warning("akshare 调用超时(%ss)已跳过: %s", timeout, getattr(fn, "__name__", fn))
+        return None
+    if "err" in outcome:
+        raise outcome["err"]
+    return outcome.get("value")
 
 
 def _pool_size(fetcher, start: datetime, timeout: float = 5.0) -> Optional[int]:
@@ -83,8 +95,13 @@ def _pool_size(fetcher, start: datetime, timeout: float = 5.0) -> Optional[int]:
 
 
 def _load_sector_df():
+    """同花顺行业一览爬取（带 20s 硬超时——akshare 底层无 timeout，防挂死占线程）。"""
     import akshare as ak
-    return ak.stock_board_industry_summary_ths()
+
+    df = _call_with_timeout(ak.stock_board_industry_summary_ths, 20.0)
+    if df is None:
+        raise RuntimeError("同花顺行业一览爬取超时(20s)")
+    return df
 
 
 def _get_sector_df_cached():
@@ -225,26 +242,66 @@ def _overview_quote(code: str, market: str, kind: str = "") -> Dict[str, Any]:
 def get_market_overview(watch: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
     """首页首屏聚合：指数速览 + 自选行情 + 市场宽度 + 板块，一次请求全拿。
 
+    Round3 并行化：各分量取数互不依赖（各自走 SWR 缓存），冷缓存时串行延迟
+    为各 fetch 之和，改为 ThreadPoolExecutor 并发——最慢分量决定整体延迟。
+    任意分量失败各自降级（error 占位/None），不整体失败。
+
     :param watch: 自选标的 [{code, market}]（kind=index 条目不必传——指数走固定预设），最多 10 个
     :return: {indices, watch, breadth, sectors, generated_at}；分量失败各自置 None/占位，不整体失败
     """
-    indices = [_overview_quote(c, m, k) for c, m, k in OVERVIEW_INDEXES]
+
+    def _safe_quote(code: str, market: str, kind: str = "") -> Dict[str, Any]:
+        try:
+            return _overview_quote(code, market, kind)
+        except Exception as e:  # 防御性兜底（_overview_quote 内部已捕获）
+            logger.warning("overview 行情异常: %s %s: %s", code, market, e)
+            return {"code": code, "market": market, "kind": kind, "name": code,
+                    "close": None, "chg_pct": None, "closes": [], "error": str(e)}
+
+    def _dispatch(kind: str, args: tuple) -> Any:
+        """单分量执行器：行情失败回 error 占位；宽度/板块失败回 None（沿用旧降级语义）。"""
+        try:
+            if kind == "breadth":
+                return get_market_breadth()
+            if kind == "sectors":
+                return get_sector_board()
+            return _safe_quote(*args)
+        except Exception as e:
+            logger.warning("overview 分量 %s 失败: %s", kind, e)
+            return None
+
+    jobs: List[Tuple[str, tuple]] = [
+        *(("index", (c, m, k)) for c, m, k in OVERVIEW_INDEXES),
+        *(("watch", (str((item or {}).get("code", "")).strip(),
+                     str((item or {}).get("market") or "zh_a")))
+          for item in (watch or [])[:10] if str((item or {}).get("code", "")).strip()),
+        ("breadth", ()),
+        ("sectors", ()),
+    ]
+
+    results: Dict[Tuple[str, str], Any] = {}
+    workers = max(1, min(8, len(jobs)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers, thread_name_prefix="qdt-overview") as pool:
+        future_map = {pool.submit(_dispatch, kind, args): (kind, args) for kind, args in jobs}
+        for fut in concurrent.futures.as_completed(future_map):
+            kind, args = future_map[fut]
+            key = (kind, args[0] if args else kind)
+            try:
+                results[key] = fut.result()
+            except Exception as e:  # 双保险：_dispatch 已兜底，这里防意外穿透
+                logger.warning("overview 分量 %s 意外失败: %s", kind, e)
+                results[key] = None
+
+    indices = [results.get(("index", c)) or _safe_quote(c, m, k) for c, m, k in OVERVIEW_INDEXES]
     watch_quotes: List[Dict[str, Any]] = []
     for item in (watch or [])[:10]:
         code = str((item or {}).get("code", "")).strip()
         if not code:
             continue
-        watch_quotes.append(_overview_quote(code, str((item or {}).get("market") or "zh_a")))
-    breadth: Optional[Dict[str, Any]] = None
-    sectors: Optional[Dict[str, Any]] = None
-    try:
-        breadth = get_market_breadth()
-    except Exception as e:
-        logger.warning("overview 市场宽度失败: %s", e)
-    try:
-        sectors = get_sector_board()
-    except Exception as e:
-        logger.warning("overview 板块失败: %s", e)
+        watch_quotes.append(results.get(("watch", code))
+                            or _safe_quote(code, str((item or {}).get("market") or "zh_a")))
+    breadth = results.get(("breadth", "breadth"))
+    sectors = results.get(("sectors", "sectors"))
     return {
         "indices": indices, "watch": watch_quotes,
         "breadth": breadth, "sectors": sectors,

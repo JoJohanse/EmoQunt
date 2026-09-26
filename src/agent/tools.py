@@ -394,7 +394,7 @@ def get_strategy(strategy_id: int) -> str:
 def create_tuning_task(strategy_kind: str, stock_code: str, start_date: str, end_date: str,
                        param_grid: str, strategy_id: int = 0, strategy_name: str = "",
                        target_metric: str = "总收益率", initial_capital: float = 100000.0,
-                       market: str = "zh_a") -> str:
+                       market: str = "zh_a", oos_ratio: float = 0.3) -> str:
     """创建参数调优任务（后台并发回测所有参数组合，需用 get_tuning_status 轮询进度）。
 
     任务会先跑一组"基准"（当前生效参数），再跑参数网格的笛卡尔积（候选 ≤63 组，共 ≤64 组），
@@ -412,6 +412,9 @@ def create_tuning_task(strategy_kind: str, stock_code: str, start_date: str, end
         target_metric: 优化目标，'总收益率'（默认）/ '夏普比率' / '最大回撤'（越小越好自动识别）。
         initial_capital: 初始资金，默认 100000。
         market: 市场，'zh_a'（默认）或 'us'。
+        oos_ratio: 样本外验证比例 0~0.5（默认 0.3）——网格只在样本内窗口跑，IS 排名
+                   Top-K + 基准在未触碰的样本外窗口复跑，最终排名按 OOS 指标（防过拟合）；
+                   0 关闭。区间 <120 天时开 OOS 会被拒绝。
     """
     try:
         from src.services.tuning import create_tuning_task as _create
@@ -426,6 +429,7 @@ def create_tuning_task(strategy_kind: str, stock_code: str, start_date: str, end
             "start_date": start_date, "end_date": end_date,
             "param_grid": grid, "target_metric": target_metric,
             "initial_capital": initial_capital, "market": market,
+            "oos_ratio": oos_ratio,
         }
         result = _create(payload)
         result["note"] = vmsg("agentTool.tuningSubmittedNote",

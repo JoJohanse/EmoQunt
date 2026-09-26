@@ -48,6 +48,9 @@ def _make_strategy(name: str) -> int:
 
 
 def _payload(strategy_id: int, grid: dict, **kw) -> dict:
+    # 默认 oos_ratio=0：既有用例只关心网格语义（90 天区间会被 OOS 最短天数拦下）；
+    # OOS 用例经 kw 显式传 ratio
+    kw.setdefault("oos_ratio", 0)
     return {
         "strategy_kind": "code",
         "strategy_id": strategy_id,
@@ -293,3 +296,114 @@ class TestLifecycle:
 
     def test_get_tuning_detail_missing(self):
         assert tuning.get_tuning_detail(999999) is None
+
+
+# ---------------------------------------------------------------------------
+# 样本外验证（Round3，对标 freqtrade「IS 优化 + 未触碰 OOS 验证」实践）
+# ---------------------------------------------------------------------------
+OOS_END = "2024-12-31"
+
+
+def _oos_fake_core_factory():
+    """相位感知 fake：IS 指标 = 100-window（window 越小越优）；
+    OOS 指标 = 100-10×|window-8|（样本外峰值在 w8——IS 次优组合，
+    IS argmax(w=3) 在样本外塌陷，OOS 复排名应把它顶下来）。"""
+    def _fake_core(**kwargs):
+        params = kwargs.get("strategy_params") or {}
+        window = float(params.get("window", 1))
+        is_oos = str(kwargs.get("end_date", "")) == OOS_END
+        value = ((100.0 - 10.0 * abs(window - 8.0)) if is_oos
+                 else 100.0 - window) / 100.0
+        return {
+            "metrics_raw": {"总收益率": value, "夏普比率": value, "最大回撤": -0.2},
+            "performance_report": None, "risk_report": None,
+            "alpha": None, "beta": None, "info_ratio": None,
+            "daily_returns": pd.Series([0.001] * 30, index=pd.date_range("2024-01-01", periods=30)),
+            "equity": pd.Series([100000.0 * (1 + value * i / 100) for i in range(30)]),
+            "stages": [],
+        }
+    return _fake_core
+
+
+class TestOosValidation:
+    """创建期校验：ratio 合法性、区间最短天数、切分日期。"""
+
+    def test_default_ratio_enabled_and_split(self, fake_core):
+        sid = _make_strategy("oos-default")
+        detail = _wait_terminal(tuning.create_tuning_task(_payload(
+            sid, {"window": [3, 5]},
+            start_date="2024-01-01", end_date="2024-12-31",
+            # 显式 0.3（helper 对既有用例 setdefault 0）：365×0.7=256 天 → IS 终点 2024-09-13
+            oos_ratio=0.3,
+        ))["id"])
+        assert detail["oos_ratio"] == pytest.approx(0.3)
+        assert detail["is_end_date"] == "2024-09-12"  # 2024 闰年：+256 天
+        assert detail["status"] == "succeeded"
+
+    def test_ratio_zero_disables(self, fake_core):
+        sid = _make_strategy("oos-off")
+        detail = _wait_terminal(tuning.create_tuning_task(_payload(
+            sid, {"window": [3, 5]},
+            start_date="2024-01-01", end_date="2024-12-31", oos_ratio=0,
+        ))["id"])
+        assert detail["oos_ratio"] == 0.0 and detail["is_end_date"] is None
+        assert detail["oos_total"] == 0
+
+    def test_ratio_out_of_range_rejected(self, fake_core):
+        sid = _make_strategy("oos-bad-ratio")
+        with pytest.raises(ValueError, match="oos_ratio"):
+            tuning.create_tuning_task(_payload(
+                sid, {"window": [3]}, start_date="2024-01-01",
+                end_date="2024-12-31", oos_ratio=0.7))
+
+    def test_short_range_rejected(self, fake_core):
+        """90 天区间开 OOS（默认 0.3）应被最短天数拦截。"""
+        sid = _make_strategy("oos-short")
+        with pytest.raises(ValueError, match="区间过短"):
+            tuning.create_tuning_task(_payload(sid, {"window": [3]}, oos_ratio=0.3))
+
+
+class TestOosExecution:
+    """OOS 阶段执行：Top-K+基准复跑、OOS 指标终排名、进度计数。"""
+
+    def test_oos_rerank_beats_in_sample_argmax(self, monkeypatch):
+        """IS 最优组合在 OOS 崩掉时，终排名应落到 OOS 最优（过拟合防线生效）。"""
+        import src.backtest.backtest_manager as bm
+        monkeypatch.setattr(bm, "_run_backtest_core", _oos_fake_core_factory())
+        sid = _make_strategy("oos-rerank")
+        detail = _wait_terminal(tuning.create_tuning_task(_payload(
+            sid,
+            {"window": [3, 5, 8, 10, 13, 21]},
+            start_date="2024-01-01", end_date=OOS_END,
+            # ratio 0.5（上限）：IS/OOS 各半年，OOS 候选含全部高 IS 组合
+            oos_ratio=0.5,
+        ))["id"])
+        assert detail["status"] == "succeeded"
+        by_idx = {c["combo_index"]: c for c in detail["combos"]}
+        # IS 最优 = w3（combo 1）；OOS 峰值 = w8（combo 3，必在 IS Top-5 内）
+        assert detail["best_combo_index"] == 3, "终排名必须按 OOS 指标而非 IS argmax"
+        assert by_idx[3]["oos"]["status"] == "succeeded"
+        assert by_idx[3]["oos"]["metrics"]["总收益率"] == pytest.approx(1.0)
+        assert detail["oos_total"] == len([c for c in detail["combos"] if c.get("oos")])
+        assert detail["oos_done"] == detail["oos_total"]
+
+    def test_oos_all_failed_falls_back_to_is(self, monkeypatch):
+        """OOS 复跑全失败时回退 IS 排名（可用性优先，任务不 failed）。"""
+        import src.backtest.backtest_manager as bm
+
+        def _oos_always_fail(**kwargs):
+            if str(kwargs.get("end_date", "")) == OOS_END:
+                raise RuntimeError("oos source down")
+            return _fake_core_factory()(**kwargs)
+
+        monkeypatch.setattr(bm, "_run_backtest_core", _oos_always_fail)
+        sid = _make_strategy("oos-fallback")
+        detail = _wait_terminal(tuning.create_tuning_task(_payload(
+            sid, {"window": [3, 5]},
+            start_date="2024-01-01", end_date=OOS_END, oos_ratio=0.3,
+        ))["id"])
+        assert detail["status"] == "succeeded"
+        # 全部 OOS failed → 回退 IS 最优（_fake_core_factory 指标随 window 递增
+        # → IS 最优 = 基准 w10 = combo 0）
+        assert detail["best_combo_index"] == 0
+        assert all(c["oos"]["status"] == "failed" for c in detail["combos"] if c.get("oos"))

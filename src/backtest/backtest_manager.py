@@ -53,6 +53,7 @@ class PerformanceAnalyzer:
         self.alpha = None
         self.beta = None
         self.information_ratio = None
+        self.sortino_ratio = None
         
     def calculate_total_return(self) -> float:
         """计算总收益率"""
@@ -232,6 +233,17 @@ class PerformanceAnalyzer:
         
         # 风险指标
         report['下行标准差'] = self.returns[self.returns < 0].std() * np.sqrt(252) if len(self.returns[self.returns < 0]) > 0 else 0.0
+        # 索提诺比率（Round3）：下行偏差用全样本"低于 MAR=0 部分"的平方均值口径
+        # （非仅负收益样本的 std——后者对无回撤期不敏感），与夏普同用 3% 无风险利率
+        downside = np.minimum(self.returns, 0.0)
+        downside_dev = float(np.sqrt((downside ** 2).mean()) * np.sqrt(252))
+        annual_ret = self.annualized_return if self.annualized_return is not None \
+            else self.calculate_annualized_return()
+        if downside_dev > 0:
+            self.sortino_ratio = (annual_ret - 0.03) / downside_dev
+        else:
+            self.sortino_ratio = np.inf if annual_ret > 0.03 else (-np.inf if annual_ret < 0.03 else 0.0)
+        report['索提诺比率'] = self.sortino_ratio
         report['VaR (95%)'] = np.percentile(self.returns.dropna(), 5)
         report['CVaR (95%)'] = self.returns[self.returns <= np.percentile(self.returns.dropna(), 5)].mean()
         
@@ -865,9 +877,9 @@ def _format_metrics_json(
     if info_ratio is not None:
         metrics["信息比率"] = safe_float(info_ratio, 4)
 
-    # ---- 追加完整绩效报告的新增指标（波动率/卡玛/下行差/VaR/CVaR/交易统计）----
+    # ---- 追加完整绩效报告的新增指标（波动率/卡玛/索提诺/下行差/VaR/CVaR/交易统计）----
     pr = performance_report or {}
-    for k in ("年化波动率", "卡玛比率", "下行标准差", "VaR (95%)", "CVaR (95%)",
+    for k in ("年化波动率", "卡玛比率", "索提诺比率", "下行标准差", "VaR (95%)", "CVaR (95%)",
               "交易次数", "盈利交易数", "亏损交易数", "平均盈利", "平均亏损",
               "最大回撤开始时间", "最大回撤结束时间"):
         if k in pr and pr[k] is not None:
@@ -1005,6 +1017,18 @@ def run_backtest_json(
     dates = [d.strftime('%Y-%m-%d') for d in daily_returns.index]
     benchmark_curve = core["benchmark_curve"]
 
+    # 月度收益（Round3）：前端 month×year 热力图数据源；{'M'} 月末重采样与
+    # matplotlib 路径（plot_performance）口径一致
+    monthly_returns = []
+    try:
+        monthly = daily_returns.resample('M').apply(lambda x: (1 + x).prod() - 1)
+        monthly_returns = [
+            {"year": int(ts.year), "month": int(ts.month), "ret": safe_float(v, 6)}
+            for ts, v in monthly.items()
+        ]
+    except Exception as e:
+        logger.warning(f"月度收益计算失败: {e}")
+
     return {
         "strategy_name": strategy_name,
         "stock_code": stock_code,
@@ -1017,4 +1041,5 @@ def run_backtest_json(
         "drawdown": [safe_float(v, 6) for v in drawdown.tolist()],
         "daily_returns": [safe_float(v, 6) for v in daily_returns.tolist()],
         "trades": core.get("trades", []),
+        "monthly_returns": monthly_returns,
     }

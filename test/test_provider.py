@@ -48,21 +48,22 @@ def _sample_zh_df(n=2):
 
 
 class TestProviderCacheHit:
-    """缓存命中不调 fetcher。"""
+    """缓存命中不调 fetcher（请求窗口被完整覆盖时）。"""
 
-    def test_cache_hit_skips_fetcher(self):
+    def test_full_coverage_hit_skips_fetcher(self):
         from src.data.provider import KlineProvider
         cached = _sample_zh_df()
         fetcher = MagicMock(return_value=_sample_en_df())
         with patch('src.data.db.get_cached_range', return_value=cached) as mock_get, \
              patch('src.data.db.save_daily') as mock_save:
             provider = KlineProvider(fetcher=fetcher)
-            df, fname = provider.fetch_daily('600938', 'zh_a', 'hfq', '20240101', '20240131')
+            # 请求窗口与缓存覆盖完全一致（首尾日期相同，无头/尾缺口）
+            df, fname = provider.fetch_daily('600938', 'zh_a', 'hfq', '20240102', '20240103')
         assert mock_get.called
-        assert not fetcher.called, "缓存命中时不应调 fetcher"
-        assert not mock_save.called, "缓存命中时不应回填"
+        assert not fetcher.called, "全覆盖命中时不应调 fetcher"
+        assert not mock_save.called, "全覆盖命中时不应回填"
         pd.testing.assert_frame_equal(df.reset_index(drop=True), cached.reset_index(drop=True))
-        assert fname == "600938_hfq_daily_20240101_20240131.csv"
+        assert fname == "600938_hfq_daily_20240102_20240103.csv"
 
 
 class TestProviderMissFetchAndBackfill:
@@ -219,6 +220,116 @@ class TestProviderRename:
             provider.fetch_daily('600938', 'zh_a', 'hfq', '20240101', '20240131', fetcher=call_fetcher)
         assert not ctor_fetcher.called
         assert call_fetcher.called
+
+
+class TestProviderTopup:
+    """增量补拉（Round3）：部分覆盖命中后只补缺口窗口。"""
+
+    @pytest.fixture(autouse=True)
+    def _reset_throttle(self):
+        """每个用例清空节流表，避免用例间串扰。"""
+        from src.data import provider as provider_mod
+        provider_mod._TOPUP_GATES.clear()
+
+    def test_tail_gap_tops_up_and_merges(self):
+        """尾部缺口：只补拉 [cov_end+1, end] 窗口，合并后按时间升序。"""
+        from src.data.provider import KlineProvider
+        cached = _sample_zh_df()  # 覆盖 01-02..01-03
+        gap = pd.DataFrame({
+            '时间': ['2024-01-04', '2024-01-05'],
+            '开盘': [12.0, 13.0], '最高': [12.5, 13.5],
+            '最低': [11.8, 12.8], '收盘': [12.2, 13.2],
+            '成交量': [120000.0, 130000.0], '成交额': [1.2e6, 1.3e6],
+        })
+        fetcher = MagicMock(return_value=gap)
+        with patch('src.data.db.get_cached_range', return_value=cached), \
+             patch('src.data.db.save_daily') as mock_save:
+            provider = KlineProvider(fetcher=fetcher)
+            df, _ = provider.fetch_daily('600938', 'zh_a', 'hfq', '20240101', '20240131')
+        assert fetcher.called, "尾部缺口应触发补拉"
+        args = fetcher.call_args[0]
+        assert args[0] == '20240104', f"补拉窗口应从覆盖末日+1 开始，实际 {args[0]}"
+        assert args[1] == '20240131'
+        assert [d.strftime('%Y-%m-%d') for d in df['时间']] == \
+            ['2024-01-02', '2024-01-03', '2024-01-04', '2024-01-05']
+        assert mock_save.called, "补拉新帧应回填 DB"
+
+    def test_head_gap_tops_up(self):
+        """头部缺口：补拉 [start, cov_start-1] 窗口。"""
+        from src.data.provider import KlineProvider
+        cached = _sample_zh_df()  # 覆盖 01-02..01-03
+        head = pd.DataFrame({
+            '时间': ['2023-12-29'], '开盘': [9.0], '最高': [9.5],
+            '最低': [8.8], '收盘': [9.2], '成交量': [90000.0], '成交额': [9e5],
+        })
+        fetcher = MagicMock(return_value=head)
+        with patch('src.data.db.get_cached_range', return_value=cached), \
+             patch('src.data.db.save_daily'):
+            provider = KlineProvider(fetcher=fetcher)
+            df, _ = provider.fetch_daily('600938', 'zh_a', 'hfq', '20231201', '20240103')
+        assert fetcher.called
+        args = fetcher.call_args[0]
+        assert args[0] == '20231201' and args[1] == '20240101', \
+            f"头部窗口应为 [start, cov_start-1]，实际 {args}"
+        assert [d.strftime('%Y-%m-%d') for d in df['时间']] == \
+            ['2023-12-29', '2024-01-02', '2024-01-03']
+
+    def test_topup_failure_returns_cached(self):
+        """补拉网络失败静默退回旧缓存（可用性优先）。"""
+        from src.data.provider import KlineProvider
+        cached = _sample_zh_df()
+        fetcher = MagicMock(side_effect=RuntimeError("network down"))
+        with patch('src.data.db.get_cached_range', return_value=cached), \
+             patch('src.data.db.save_daily'):
+            provider = KlineProvider(fetcher=fetcher)
+            df, fname = provider.fetch_daily('600938', 'zh_a', 'hfq', '20240101', '20240131')
+        assert fetcher.called
+        assert list(df['时间']) == ['2024-01-02', '2024-01-03']
+        assert fname == "600938_hfq_daily_20240101_20240131.csv"
+
+    def test_topup_throttled_within_window(self):
+        """同 key 10 分钟内只出网补拉一次，第二次直接回旧缓存。"""
+        from src.data.provider import KlineProvider
+        cached = _sample_zh_df()
+        fetcher = MagicMock(return_value=pd.DataFrame())
+        with patch('src.data.db.get_cached_range', return_value=cached), \
+             patch('src.data.db.save_daily'):
+            provider = KlineProvider(fetcher=fetcher)
+            # 请求窗口 [0102,0131]：仅尾部缺口 → 单窗口单次出网
+            provider.fetch_daily('600938', 'zh_a', 'hfq', '20240102', '20240131')
+            provider.fetch_daily('600938', 'zh_a', 'hfq', '20240102', '20240131')
+        assert fetcher.call_count == 1, "节流窗口内第二次命中不应再出网"
+
+    def test_merged_clipped_to_request_window(self):
+        """无区间参数的源整段返回时，合并结果必须裁剪回 [start,end]。"""
+        from src.data.provider import KlineProvider
+        cached = _sample_zh_df()
+        full_history = pd.DataFrame({
+            '时间': ['2023-06-01', '2024-01-04', '2024-02-01'],
+            '开盘': [1.0, 12.0, 14.0], '最高': [1.5, 12.5, 14.5],
+            '最低': [0.8, 11.8, 13.8], '收盘': [1.2, 12.2, 14.2],
+            '成交量': [1.0, 120000.0, 140000.0], '成交额': [1.0, 1.2e6, 1.4e6],
+        })
+        fetcher = MagicMock(return_value=full_history)
+        with patch('src.data.db.get_cached_range', return_value=cached), \
+             patch('src.data.db.save_daily'):
+            provider = KlineProvider(fetcher=fetcher)
+            df, _ = provider.fetch_daily('600938', 'zh_a', 'hfq', '20240101', '20240131')
+        assert [d.strftime('%Y-%m-%d') for d in df['时间']] == \
+            ['2024-01-02', '2024-01-03', '2024-01-04']
+        assert '2023-06-01' not in [d.strftime('%Y-%m-%d') for d in df['时间']] \
+            and '2024-02-01' not in [d.strftime('%Y-%m-%d') for d in df['时间']]
+
+    def test_no_fetcher_returns_cached_unchanged(self):
+        """无 fetcher（构造器也未注入）时命中直接返回，不做补拉。"""
+        from src.data.provider import KlineProvider
+        cached = _sample_zh_df()
+        with patch('src.data.db.get_cached_range', return_value=cached), \
+             patch('src.data.db.save_daily') as mock_save:
+            provider = KlineProvider()
+            df, _ = provider.fetch_daily('600938', 'zh_a', 'hfq', '20240101', '20240131')
+        assert not mock_save.called
+        assert list(df['时间']) == ['2024-01-02', '2024-01-03']
 
 
 if __name__ == '__main__':

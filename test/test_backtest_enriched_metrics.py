@@ -40,7 +40,7 @@ class TestPerformanceReport:
         daily_ret, _ = _synth_equity()
         pa = PerformanceAnalyzer(daily_ret)
         report = pa.generate_report()
-        for k in ("总收益率", "年化收益率", "年化波动率", "夏普比率", "最大回撤",
+        for k in ("总收益率", "年化收益率", "年化波动率", "夏普比率", "索提诺比率", "最大回撤",
                   "卡玛比率", "下行标准差", "VaR (95%)", "CVaR (95%)",
                   "Alpha", "Beta", "信息比率"):
             assert k in report, f"完整报告缺键: {k}"
@@ -70,7 +70,7 @@ class TestRunBacktestJsonSerialization:
                             "最大回撤": -0.08, "胜率": 0.55, "盈亏比": 1.8},
             "alpha": 0.03, "beta": 0.9, "info_ratio": 0.4,
             "performance_report": {
-                "年化波动率": 0.18, "卡玛比率": 1.5, "下行标准差": 0.14,
+                "年化波动率": 0.18, "卡玛比率": 1.5, "索提诺比率": 1.9, "下行标准差": 0.14,
                 "VaR (95%)": -2500.0, "CVaR (95%)": -3100.0,
                 "交易次数": 10, "盈利交易数": 6, "亏损交易数": 4,
                 "平均盈利": 500.0, "平均亏损": -300.0,
@@ -98,7 +98,7 @@ class TestRunBacktestJsonSerialization:
             )
 
         # 新指标键存在
-        for k in ("年化波动率", "卡玛比率", "下行标准差", "VaR (95%)", "CVaR (95%)",
+        for k in ("年化波动率", "卡玛比率", "索提诺比率", "下行标准差", "VaR (95%)", "CVaR (95%)",
                   "交易次数", "盈利交易数", "亏损交易数",
                   "最大回撤开始时间", "最大回撤结束时间"):
             assert k in out["metrics"], f"metrics 缺新键: {k}"
@@ -219,6 +219,99 @@ class TestEnrichmentWiring:
         with mock.patch.object(pa, 'generate_report', wraps=pa.generate_report) as spy:
             _build_enrichment_reports(daily_ret, equity, None, 100000.0, perf_analyzer=pa)
             assert spy.called, "应复用传入的 perf_analyzer"
+
+
+class TestSortinoRatio:
+    """索提诺比率（Round3）：MAR=0 全样本下行偏差口径。"""
+
+    def test_sortino_matches_manual_formula(self):
+        from src.backtest.backtest_manager import PerformanceAnalyzer
+        daily_ret, _ = _synth_equity()
+        pa = PerformanceAnalyzer(daily_ret)
+        report = pa.generate_report()
+        downside = np.minimum(daily_ret.dropna(), 0.0)
+        ddev = float(np.sqrt((downside ** 2).mean()) * np.sqrt(252))
+        expected = (pa.calculate_annualized_return() - 0.03) / ddev
+        assert report["索提诺比率"] == pytest.approx(expected, rel=1e-6)
+
+    def test_sortino_zero_downside_is_inf(self):
+        """无回撤（全正收益）→ 下行偏差 0 → 按年化收益方向给 ±inf。"""
+        from src.backtest.backtest_manager import PerformanceAnalyzer
+        idx = pd.date_range("2024-01-02", periods=10, freq="B")
+        pa = PerformanceAnalyzer(pd.Series(0.01, index=idx))
+        report = pa.generate_report()
+        assert np.isinf(report["索提诺比率"]) and report["索提诺比率"] > 0
+
+    def test_sortino_serialized_into_metrics(self):
+        """run_backtest_json 把索提诺从 performance_report 搬进 metrics（inf→0）。"""
+        from src.backtest.backtest_manager import run_backtest_json
+        daily_ret, equity = _synth_equity()
+        fake_core = {
+            "metrics_raw": {"总收益率": 0.1}, "alpha": None, "beta": None, "info_ratio": None,
+            "performance_report": {"索提诺比率": float("inf")},
+            "risk_report": None,
+            "daily_returns": daily_ret, "equity": equity,
+            "drawdown": pd.Series(np.zeros(len(daily_ret)), index=daily_ret.index),
+            "benchmark_curve": None,
+        }
+        with patch("src.backtest.backtest_manager._run_backtest_core", return_value=fake_core):
+            out = run_backtest_json(
+                strategy_name="t", stock_code="000001",
+                start_date="2024-01-01", end_date="2024-02-01",
+            )
+        assert out["metrics"]["索提诺比率"] == 0.0, "inf 应被 safe_float 归 0"
+
+
+class TestMonthlyReturns:
+    """月度收益进 run_backtest_json payload（Round3，前端热力图数据源）。"""
+
+    def _fake_core(self, daily_ret, equity):
+        return {
+            "metrics_raw": {"总收益率": 0.1}, "alpha": None, "beta": None, "info_ratio": None,
+            "performance_report": None, "risk_report": None,
+            "daily_returns": daily_ret, "equity": equity,
+            "drawdown": pd.Series(np.zeros(len(daily_ret)), index=daily_ret.index),
+            "benchmark_curve": None,
+        }
+
+    def test_monthly_returns_in_payload(self):
+        from src.backtest.backtest_manager import run_backtest_json
+        daily_ret, equity = _synth_equity()  # 2024-01-02 起 60 个交易日 → 1/2/3 月
+        with patch("src.backtest.backtest_manager._run_backtest_core",
+                   return_value=self._fake_core(daily_ret, equity)):
+            out = run_backtest_json(
+                strategy_name="t", stock_code="000001",
+                start_date="2024-01-01", end_date="2024-03-31",
+            )
+        assert out["monthly_returns"], "payload 应含月度收益"
+        months = {(m["year"], m["month"]) for m in out["monthly_returns"]}
+        assert months == {(2024, 1), (2024, 2), (2024, 3)}
+
+    def test_monthly_return_compounds_daily(self):
+        """某月 ret == 该月日收益复合（(1+r).prod()-1）。"""
+        from src.backtest.backtest_manager import run_backtest_json
+        daily_ret, equity = _synth_equity()
+        with patch("src.backtest.backtest_manager._run_backtest_core",
+                   return_value=self._fake_core(daily_ret, equity)):
+            out = run_backtest_json(
+                strategy_name="t", stock_code="000001",
+                start_date="2024-01-01", end_date="2024-03-31",
+            )
+        jan = daily_ret[daily_ret.index.month == 1]
+        expected = float((1 + jan).prod() - 1)
+        got = next(m["ret"] for m in out["monthly_returns"] if m["month"] == 1)
+        assert got == pytest.approx(expected, rel=1e-4)
+
+    def test_monthly_returns_json_serializable(self):
+        from src.backtest.backtest_manager import run_backtest_json
+        daily_ret, equity = _synth_equity()
+        with patch("src.backtest.backtest_manager._run_backtest_core",
+                   return_value=self._fake_core(daily_ret, equity)):
+            out = run_backtest_json(
+                strategy_name="t", stock_code="000001",
+                start_date="2024-01-01", end_date="2024-03-31",
+            )
+        json.dumps(out["monthly_returns"])  # 不抛即通过
 
 
 if __name__ == "__main__":

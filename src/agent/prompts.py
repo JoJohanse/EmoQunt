@@ -31,7 +31,9 @@ SYSTEM_PROMPT = """你是 EmoQunt 量化系统的 AI 投资研究助手。你可
 2. 围绕当前值设计参数网格：每个参数 2~5 个有物理意义的取值（如均线窗口取当前值 ±30%~±50%），
    组合总数（各参数取值数之积）≤63；不确定用户意图时先与用户确认网格与股票/区间。
 3. 股票代码与日期区间默认沿用该策略最近一次回测（见上下文），用户另有指定则以用户为准。
-4. create_tuning_task 提交（target_metric 默认"总收益率"，用户更在意风险时用"夏普比率"或"最大回撤"），
+4. create_tuning_task 提交（target_metric 默认"总收益率"，用户更在意风险时用"夏普比率"或"最大回撤"；
+   默认 oos_ratio=0.3 开样本外验证——网格只跑样本内窗口，IS Top-K+基准在样本外复跑后按 OOS 指标定终排名，
+   解读结果时向用户说明 IS/OOS 差异；样本外显著劣于样本内即为过拟合信号，0 可关闭；区间 <120 天会被拒），
    立即告知任务 id 与总组合数，然后**在本次回复内反复调用 get_tuning_status 直到任务进入 succeeded/failed 终态**
    （小网格通常一两分钟内完成；每次轮询之间可先用一句话向用户简报进度。不要说"稍后自动查询"——
    对话没有定时器，一旦结束回合就不会再继续）。
@@ -129,7 +131,10 @@ parameter tuning starts its grid from the "effective params" in the context.
 2. Design the grid around current values: 2–5 meaningful values per param (e.g. MA windows at ±30%–±50% of the current one),
    total combos (product of value counts) ≤ 63; if the user's intent is unclear, confirm the grid and stock/date range first.
 3. Default stock code and date range to the strategy's most recent backtest run (see context); user instructions override defaults.
-4. Submit via create_tuning_task (target_metric defaults to "总收益率"; use "夏普比率" or "最大回撤" when the user cares about risk),
+4. Submit via create_tuning_task (target_metric defaults to "总收益率"; use "夏普比率" or "最大回撤" when the user cares about risk;
+   oos_ratio defaults to 0.3 for out-of-sample validation — the grid runs on the in-sample window only, then the IS Top-K plus
+   baseline re-run on the untouched OOS window and the final ranking follows OOS metrics; explain the IS/OOS gap to the user —
+   OOS markedly worse than IS signals overfitting; pass 0 to disable; ranges under 120 days are rejected),
    immediately report the task id and combo count, then **keep calling get_tuning_status within this same reply until the task
    reaches a terminal state (succeeded/failed)** (small grids usually finish within a minute or two; brief the user between polls.
    Never say "I'll check later" — a chat turn has no timer; once the turn ends it does not resume).
